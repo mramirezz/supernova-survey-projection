@@ -1,0 +1,51 @@
+iteration_id,sn_name,sn_type,template_file,redshift,ebmv_host,ebmv_mw,extinction_total,survey,seed,batch_id,iteration_index,total_iterations,execution_time,method,n_detections,n_observations,ebmv_total,detection_rate_percent,status,success,error,stdout,stderr,returncode
+iter_0001_of_0010,SN2005hk,Ia,Ia/SN2005hk.dat,0.4758500101408589,0.1177990391968972,0.067,0.18479903919689722,ZTF,42,20250813_184803_a3cd2848,0,10,21.099255561828613,direct_import,0.0,12.0,0.1847990391968972,0.0,SUCCESS,True,,,,
+iter_0002_of_0010,SN1994D,Ia,Ia/SN1994D.dat,0.3084426042469459,0.0355113500059892,0.1496,0.1851113500059893,ZTF,43,20250813_184803_a3cd2848,1,10,6.771169185638428,direct_import,0.0,5.0,0.1851113500059893,0.0,SUCCESS,True,,,,
+iter_0003_of_0010,SN2007le,Ia,Ia/SN2007le.dat,0.4420938977666839,0.031042016265569152,0.138,0.16904201626556917,ZTF,44,20250813_184803_a3cd2848,2,10,5.986420154571533,subprocess_failed,,,,,,False,"Error en subprocess (código 1): Traceback (most recent call last):
+  File ""main.py"", line 311, in <module>
+    main()
+  File ""main.py"", line 29, in main
+    config = load_and_validate_config()
+  File ""G:\Mi unidad\Work\Universidad\Phd\paper2_ZTF\Codes\proyeccion\config_loader.py"", line 17, in load_and_validate_config
+    print(""\U0001f527 Cargando configuraci�n..."")
+  File ""C:\Users\mrami\anaconda3\envs\ALR_37\lib\encodings\cp1252.py"", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+UnicodeEncodeError: 'charmap' codec can't encode character '\U0001f527' in position 0: character maps to <undefined>
+",,"Traceback (most recent call last):
+  File ""main.py"", line 311, in <module>
+    main()
+  File ""main.py"", line 29, in main
+    config = load_and_validate_config()
+  File ""G:\Mi unidad\Work\Universidad\Phd\paper2_ZTF\Codes\proyeccion\config_loader.py"", line 17, in load_and_validate_config
+    print(""\U0001f527 Cargando configuraci�n..."")
+  File ""C:\Users\mrami\anaconda3\envs\ALR_37\lib\encodings\cp1252.py"", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+UnicodeEncodeError: 'charmap' codec can't encode character '\U0001f527' in position 0: character maps to <undefined>
+",1.0
+iter_0004_of_0010,SN1998dh,Ia,Ia/SN1998dh.dat,0.2792769161539155,0.0103793311522434,0.0393,0.049679331152243406,ZTF,45,20250813_184803_a3cd2848,3,10,7.368614435195923,direct_import,0.0,9.0,0.0496793311522434,0.0,SUCCESS,True,,,,
+iter_0005_of_0010,SN2012ht,Ia,Ia/SN2012ht.dat,0.3210685159658378,0.1831136893241685,0.0639,0.2470136893241685,ZTF,46,20250813_184803_a3cd2848,4,10,7.368479251861572,direct_import,0.0,6.0,0.2470136893241685,0.0,SUCCESS,True,,,,
+iter_0006_of_0010,SN2012fr,Ia,Ia/SN2012fr.dat,0.4874967162738637,0.0558765977418107,1.072,1.1278765977418108,ZTF,47,20250813_184803_a3cd2848,5,10,7.501332521438599,direct_import,4.0,8.0,1.1278765977418108,50.0,SUCCESS,True,,,,
+iter_0007_of_0010,SN2005hk,Ia,Ia/SN2005hk.dat,0.4468709009183266,0.0458340250540149,0.8486,0.8944340250540149,ZTF,48,20250813_184803_a3cd2848,6,10,5.600128173828125,direct_import,0.0,4.0,0.8944340250540149,0.0,SUCCESS,True,,,,
+iter_0008_of_0010,SN1994D,Ia,Ia/SN1994D.dat,0.4468856847561043,0.1079678982144264,0.3956,0.5035678982144265,ZTF,49,20250813_184803_a3cd2848,7,10,5.392328262329102,direct_import,0.0,5.0,0.5035678982144265,0.0,SUCCESS,True,,,,
+iter_0009_of_0010,SN2007af,Ia,Ia/SN2007af.dat,0.4983213727757781,0.1907025578274719,0.0303,0.22100255782747188,ZTF,50,20250813_184803_a3cd2848,8,10,5.93270468711853,direct_import,0.0,10.0,0.2210025578274718,0.0,SUCCESS,True,,,,
+iter_0010_of_0010,SN2011fe,Ia,Ia/SN2011fe.dat,0.32556966623971717,0.38484843094793864,0.331,0.7158484309479387,ZTF,51,20250813_184803_a3cd2848,9,10,8.726302146911621,subprocess_failed,,,,,,False,"Error en subprocess (código 1): Traceback (most recent call last):
+  File ""main.py"", line 311, in <module>
+    main()
+  File ""main.py"", line 29, in main
+    config = load_and_validate_config()
+  File ""G:\Mi unidad\Work\Universidad\Phd\paper2_ZTF\Codes\proyeccion\config_loader.py"", line 17, in load_and_validate_config
+    print(""\U0001f527 Cargando configuraci�n..."")
+  File ""C:\Users\mrami\anaconda3\envs\ALR_37\lib\encodings\cp1252.py"", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+UnicodeEncodeError: 'charmap' codec can't encode character '\U0001f527' in position 0: character maps to <undefined>
+",,"Traceback (most recent call last):
+  File ""main.py"", line 311, in <module>
+    main()
+  File ""main.py"", line 29, in main
+    config = load_and_validate_config()
+  File ""G:\Mi unidad\Work\Universidad\Phd\paper2_ZTF\Codes\proyeccion\config_loader.py"", line 17, in load_and_validate_config
+    print(""\U0001f527 Cargando configuraci�n..."")
+  File ""C:\Users\mrami\anaconda3\envs\ALR_37\lib\encodings\cp1252.py"", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+UnicodeEncodeError: 'charmap' codec can't encode character '\U0001f527' in position 0: character maps to <undefined>
+",1.0

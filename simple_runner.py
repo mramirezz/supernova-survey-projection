@@ -1,0 +1,186 @@
+# BATCH RUNNER SIMPLIFICADO
+# ==========================
+# Solo modo custom para simulaciones de supernovas
+# Código limpio y directo
+
+import os
+import sys
+import argparse
+from pathlib import Path
+from datetime import datetime
+
+# Importar solo lo esencial
+from batch_runner import ProfessionalBatchRunner, run_scientific_batch
+from simple_config import create_simple_config
+
+def print_banner():
+    """Banner simple del sistema"""
+    print("="*60)
+    print(" SIMULACIÓN DE DETECTABILIDAD DE SUPERNOVAS")
+    print("="*60)
+    print(f" Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("="*60)
+    print()
+
+def setup_environment():
+    """Configura directorios básicos"""
+    dirs_to_create = [
+        "outputs/batch_runs",
+        "logs"
+    ]
+    
+    for dir_path in dirs_to_create:
+        Path(dir_path).mkdir(parents=True, exist_ok=True)
+
+def run_custom_batch(n_runs: int, redshift_max: float = 0.3, 
+                    sn_types: list = None, survey: str = "ZTF", 
+                    seed: int = 42):
+    """
+    Ejecuta un batch personalizado de simulaciones
+    
+    Parameters:
+    -----------
+    n_runs : int
+        Número de simulaciones
+    redshift_max : float
+        Redshift máximo
+    sn_types : list
+        Lista de tipos de SN a incluir
+    survey : str
+        Survey principal
+    seed : int
+        Semilla para reproducibilidad
+    """
+    print(f"🔬 Configurando batch personalizado...")
+    
+    # Configurar tipos de SN
+    if sn_types is None:
+        sn_types = ["Ia"]
+    
+    # Crear distribución uniforme entre tipos
+    sn_distribution = {sn_type: 1.0/len(sn_types) for sn_type in sn_types}
+    
+    # Crear configuración simplificada
+    config = create_simple_config(
+        n_runs=n_runs,
+        redshift_max=redshift_max,
+        sn_types=sn_types,
+        survey=survey,
+        seed=seed
+    )
+    
+    # Actualizar descripción
+    config.description = f"Batch personalizado - {n_runs} simulaciones"
+    
+    print(f"📋 Configuración:")
+    print(f"   • Simulaciones: {n_runs}")
+    print(f"   • Redshift max: {redshift_max}")
+    print(f"   • Tipos SN: {sn_types}")
+    print(f"   • Survey: {survey}")
+    print(f"   • Semilla: {seed}")
+    print()
+    
+    # Ejecutar
+    try:
+        print("🚀 Iniciando simulaciones...")
+        results = run_scientific_batch(config)
+        
+        print("✅ Simulaciones completadas")
+        print(f"📊 Tasa de éxito: {results['run_statistics']['success_rate']:.1%}")
+        print(f"⏱️  Duración: {results['batch_metadata']['total_duration_formatted']}")
+        print(f"🔍 Detecciones: {results['detection_statistics']['total_detections']}")
+        print(f"📝 Observaciones: {results['detection_statistics']['total_observations']}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error durante las simulaciones: {str(e)}")
+        return False
+
+def list_recent_batches():
+    """Lista los últimos 10 batches"""
+    print("📋 Batches recientes:")
+    print("-" * 40)
+    
+    batch_dir = Path("outputs/batch_runs")
+    if not batch_dir.exists():
+        print("ℹ️  No hay batches disponibles")
+        return
+    
+    batch_dirs = sorted([d for d in batch_dir.iterdir() if d.is_dir()], reverse=True)[:10]
+    
+    if not batch_dirs:
+        print("ℹ️  No hay batches disponibles")
+        return
+    
+    for i, batch_path in enumerate(batch_dirs):
+        batch_id = batch_path.name
+        print(f"{i+1:2d}. {batch_id}")
+
+def main():
+    """Función principal simplificada"""
+    parser = argparse.ArgumentParser(
+        description="Sistema Simplificado de Simulación de Supernovas",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Ejemplos de uso:
+
+  # Batch básico
+  python simple_runner.py --runs 100
+
+  # Batch personalizado completo
+  python simple_runner.py --runs 500 --redshift-max 0.2 --sn-types Ia Ibc --survey ZTF
+
+  # Ver batches recientes
+  python simple_runner.py --list
+        """
+    )
+    
+    # Opciones principales
+    parser.add_argument("--runs", type=int, default=100,
+                       help="Número de simulaciones (default: 100)")
+    
+    parser.add_argument("--redshift-max", type=float, default=0.3,
+                       help="Redshift máximo (default: 0.3)")
+    
+    parser.add_argument("--sn-types", nargs="+", choices=["Ia", "Ibc", "II"],
+                       default=["Ia"], help="Tipos de SN a incluir")
+    
+    parser.add_argument("--survey", choices=["ZTF", "SUDARE"], default="ZTF",
+                       help="Survey principal (default: ZTF)")
+    
+    parser.add_argument("--seed", type=int, default=42,
+                       help="Semilla para reproducibilidad (default: 42)")
+    
+    parser.add_argument("--list", action="store_true",
+                       help="Listar batches recientes")
+    
+    args = parser.parse_args()
+    
+    # Mostrar banner
+    print_banner()
+    
+    # Configurar entorno
+    setup_environment()
+    
+    # Ejecutar acción
+    if args.list:
+        list_recent_batches()
+    else:
+        success = run_custom_batch(
+            n_runs=args.runs,
+            redshift_max=args.redshift_max,
+            sn_types=args.sn_types,
+            survey=args.survey,
+            seed=args.seed
+        )
+        
+        if success:
+            print("\n🎉 Operación completada exitosamente")
+            sys.exit(0)
+        else:
+            print("\n❌ Operación falló")
+            sys.exit(1)
+
+if __name__ == "__main__":
+    main()

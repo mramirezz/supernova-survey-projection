@@ -1,0 +1,2 @@
+survey,sn_name,sn_type,target,filter_photometry,filter_projection,redshift,ebmv_host,ebmv_mw,ebmv_total,total_points,detections,upper_limits,detection_rate_percent,mjd_start,mjd_end,maglimit_min,maglimit_max,noise_sigma,status,timestamp,run_directory,run_id
+ZTF,SN2005hk,Ia,ZTF19abyxsgn,r,r,0.19063571821788408,0.1177990391968972,0.067,0.18479903919689722,12,0,12,0.0,58711.401180599816,58741.1666203998,19.1769,20.9493,0.11354437387295874,SUCCESS,20250813_190936,outputs\Ia\SN2005hk\ZTF\filter_r\run_20250813_190936_d66cb456\target_ZTF19abyxsgn,run_20250813_190936_d66cb456

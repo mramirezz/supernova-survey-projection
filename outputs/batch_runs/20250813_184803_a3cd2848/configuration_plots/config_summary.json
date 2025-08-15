@@ -1,0 +1,1 @@
+"SimpleConfig(n_runs=10, redshift_range=(0.01, 0.5), sn_type_distribution={'Ia': 1.0}, survey_distribution={'ZTF': 1.0}, base_seed=42, volume_weighted=True, description='Batch personalizado - 10 simulaciones', pause_between_runs=0.0)"

@@ -1,0 +1,15 @@
+RESUMEN ESTADISTICO DEL BATCH RUN
+==================================================
+
+Batch ID: 20250813_184803_a3cd2848
+Duracion total: 1.6 minutes
+Runs completados: 8
+Runs fallidos: 2
+Tasa de exito: 80.0%
+Tiempo promedio por run: 8.38s
+Detecciones totales: 4
+Observaciones totales: 59
+Tasa de deteccion global: 0.068
+
+Tasas de deteccion por tipo de SN:
+  Ia: 0.062 +/- 0.165 (mediana: 0.000, n=8)

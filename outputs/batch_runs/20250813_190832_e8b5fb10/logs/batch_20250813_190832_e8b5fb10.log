@@ -1,0 +1,17 @@
+2025-08-13 19:08:32,606 - batch_20250813_190832_e8b5fb10 - INFO - Iniciando Professional Batch Runner
+2025-08-13 19:08:32,613 - batch_20250813_190832_e8b5fb10 - INFO - Batch ID: 20250813_190832_e8b5fb10
+2025-08-13 19:08:32,616 - batch_20250813_190832_e8b5fb10 - INFO - Directorio: outputs\batch_runs\20250813_190832_e8b5fb10
+2025-08-13 19:08:32,617 - batch_20250813_190832_e8b5fb10 - INFO - INICIANDO BATCH RUN PROFESIONAL
+2025-08-13 19:08:32,617 - batch_20250813_190832_e8b5fb10 - INFO - ================================================================================
+2025-08-13 19:08:32,617 - batch_20250813_190832_e8b5fb10 - INFO - Configuración del Batch:
+2025-08-13 19:08:32,617 - batch_20250813_190832_e8b5fb10 - INFO -    • Número de runs: 2
+2025-08-13 19:08:32,617 - batch_20250813_190832_e8b5fb10 - INFO -    • Tipos de SN: ['Ia']
+2025-08-13 19:08:32,617 - batch_20250813_190832_e8b5fb10 - INFO -    • Distribución SN: {'Ia': 1.0}
+2025-08-13 19:08:32,617 - batch_20250813_190832_e8b5fb10 - INFO -    • Rango redshift: (0.01, 0.2)
+2025-08-13 19:08:32,621 - batch_20250813_190832_e8b5fb10 - INFO -    • Rango extinción: N/A
+2025-08-13 19:08:32,621 - batch_20250813_190832_e8b5fb10 - INFO -    • Volume weighted: True
+2025-08-13 19:08:32,623 - batch_20250813_190832_e8b5fb10 - INFO -    • Surveys: ['ZTF']
+2025-08-13 19:08:32,624 - batch_20250813_190832_e8b5fb10 - INFO -    • Semilla base: 42
+2025-08-13 19:08:32,624 - batch_20250813_190832_e8b5fb10 - INFO -    • Batch ID: 20250813_190832_e8b5fb10
+2025-08-13 19:08:32,624 - batch_20250813_190832_e8b5fb10 - INFO - ================================================================================
+2025-08-13 19:08:32,627 - batch_20250813_190832_e8b5fb10 - INFO - DEBUG - Run 1: volume_weighted=True, z_sampled=0.190636

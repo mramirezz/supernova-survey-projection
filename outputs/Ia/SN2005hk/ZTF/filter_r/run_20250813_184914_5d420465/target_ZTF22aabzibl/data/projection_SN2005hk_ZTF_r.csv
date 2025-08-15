@@ -1,0 +1,5 @@
+oid,mjd,filter,maglimit,mjd_day,magnitud_proyectada,upperlimit,detected
+ZTF22aabzibl,59623.466886600014,r,20.047,59623,20.047,T,False
+ZTF22aabzibl,59625.48733799998,r,19.8294,59625,19.8294,T,False
+ZTF22aabzibl,59628.465682900045,r,19.3755,59628,19.3755,T,False
+ZTF22aabzibl,59630.50892359996,r,20.074,59630,20.074,T,False

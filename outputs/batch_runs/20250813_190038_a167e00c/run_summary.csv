@@ -1,0 +1,4 @@
+iteration_id,sn_name,sn_type,template_file,redshift,ebmv_host,ebmv_mw,extinction_total,survey,seed,batch_id,iteration_index,total_iterations,execution_time,method,n_detections,n_observations,ebmv_total,detection_rate_percent,status,success
+iter_0001_of_0003,SN2005hk,Ia,Ia/SN2005hk.dat,0.190635718217884,0.1177990391968972,0.067,0.18479903919689722,ZTF,42,20250813_190038_a167e00c,0,3,6.773450136184692,direct_import,0,12,0.1847990391968972,0.0,SUCCESS,True
+iter_0002_of_0003,SN1994D,Ia,Ia/SN1994D.dat,0.1257226424631014,0.0355113500059892,0.1496,0.1851113500059893,ZTF,43,20250813_190038_a167e00c,1,3,5.620257139205933,direct_import,2,5,0.1851113500059893,40.0,SUCCESS,True
+iter_0003_of_0003,SN1998dh,Ia,Ia/SN1998dh.dat,0.1257552923174488,0.0678789843159439,0.138,0.20587898431594395,ZTF,44,20250813_190038_a167e00c,2,3,5.9037134647369385,direct_import,0,11,0.2058789843159439,0.0,SUCCESS,True

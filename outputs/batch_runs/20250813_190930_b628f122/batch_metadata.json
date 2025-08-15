@@ -1,0 +1,104 @@
+{
+  "batch_id": "20250813_190930_b628f122",
+  "batch_config": {
+    "n_runs": 2,
+    "redshift_range": [
+      0.01,
+      0.2
+    ],
+    "sn_type_distribution": {
+      "Ia": 1.0
+    },
+    "survey_distribution": {
+      "ZTF": 1.0
+    },
+    "base_seed": 42,
+    "volume_weighted": true,
+    "description": "Batch personalizado - 2 simulaciones",
+    "pause_between_runs": 0.0
+  },
+  "statistics": {
+    "batch_metadata": {
+      "start_time": "2025-08-13T19:09:30.282059",
+      "end_time": "2025-08-13T19:09:44.509596",
+      "total_duration_seconds": 14.227537,
+      "total_duration_formatted": "0.2 minutes"
+    },
+    "run_statistics": {
+      "runs_completed": 2,
+      "runs_failed": 0,
+      "success_rate": 1.0,
+      "average_execution_time": 6.0832695960998535,
+      "std_execution_time": 0.6073787212371826
+    },
+    "detection_statistics": {
+      "total_detections": 2,
+      "total_observations": 17,
+      "global_detection_rate": 0.11764705882352941,
+      "detection_rates_by_type": {
+        "Ia": {
+          "mean": 0.2,
+          "std": 0.2,
+          "median": 0.2,
+          "n_runs": 2
+        }
+      }
+    },
+    "failed_runs": []
+  },
+  "run_registry": [
+    {
+      "iteration_id": "iter_0001_of_0002",
+      "sn_name": "SN2005hk",
+      "sn_type": "Ia",
+      "template_file": "Ia/SN2005hk.dat",
+      "redshift": 0.190635718217884,
+      "ebmv_host": 0.1177990391968972,
+      "ebmv_mw": 0.067,
+      "extinction_total": 0.18479903919689722,
+      "survey": "ZTF",
+      "seed": 42,
+      "batch_id": "20250813_190930_b628f122",
+      "iteration_index": 0,
+      "total_iterations": 2,
+      "execution_time": 6.690648317337036,
+      "method": "direct_import",
+      "n_detections": 0,
+      "n_observations": 12,
+      "ebmv_total": 0.1847990391968972,
+      "detection_rate_percent": 0.0,
+      "status": "SUCCESS",
+      "success": true
+    },
+    {
+      "iteration_id": "iter_0002_of_0002",
+      "sn_name": "SN1994D",
+      "sn_type": "Ia",
+      "template_file": "Ia/SN1994D.dat",
+      "redshift": 0.1257226424631014,
+      "ebmv_host": 0.0355113500059892,
+      "ebmv_mw": 0.1496,
+      "extinction_total": 0.1851113500059893,
+      "survey": "ZTF",
+      "seed": 43,
+      "batch_id": "20250813_190930_b628f122",
+      "iteration_index": 1,
+      "total_iterations": 2,
+      "execution_time": 5.475890874862671,
+      "method": "direct_import",
+      "n_detections": 2,
+      "n_observations": 5,
+      "ebmv_total": 0.1851113500059893,
+      "detection_rate_percent": 40.0,
+      "status": "SUCCESS",
+      "success": true
+    }
+  ],
+  "generation_info": {
+    "code_version": "1.0.0",
+    "python_version": "3.7.16 (default, Jan 17 2023, 16:06:28) [MSC v.1916 64 bit (AMD64)]",
+    "timestamp": "2025-08-13T19:09:44.509596",
+    "working_directory": "G:\\Mi unidad\\Work\\Universidad\\Phd\\paper2_ZTF\\Codes\\proyeccion",
+    "git_commit": null
+  }
+}

@@ -1,0 +1,2 @@
+survey,sn_name,sn_type,target,filter_photometry,filter_projection,redshift,ebmv_host,ebmv_mw,ebmv_total,total_points,detections,upper_limits,detection_rate_percent,mjd_start,mjd_end,maglimit_min,maglimit_max,noise_sigma,status,timestamp,run_directory,run_id
+ZTF,SN2005hk,Ia,ZTF22aabzibl,r,r,0.44687090091832665,0.04583402505401494,0.8486,0.8944340250540149,4,0,4,0.0,59623.466886600014,59630.50892359996,19.3755,20.074,0.10788388721729356,SUCCESS,20250813_184914,outputs\Ia\SN2005hk\ZTF\filter_r\run_20250813_184914_5d420465\target_ZTF22aabzibl,run_20250813_184914_5d420465
