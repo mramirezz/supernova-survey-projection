@@ -1,3 +1,0 @@
-iteration_id,sn_name,sn_type,template_file,redshift,ebmv_host,ebmv_mw,extinction_total,survey,seed,batch_id,iteration_index,total_iterations,execution_time,method,n_detections,n_observations,ebmv_total,detection_rate_percent,status,success
-iter_0001_of_0002,SN2005hk,Ia,Ia/SN2005hk.dat,0.190635718217884,0.1177990391968972,0.067,0.18479903919689722,ZTF,42,20250813_190930_b628f122,0,2,6.690648317337036,direct_import,0,12,0.1847990391968972,0.0,SUCCESS,True
-iter_0002_of_0002,SN1994D,Ia,Ia/SN1994D.dat,0.1257226424631014,0.0355113500059892,0.1496,0.1851113500059893,ZTF,43,20250813_190930_b628f122,1,2,5.475890874862671,direct_import,2,5,0.1851113500059893,40.0,SUCCESS,True
