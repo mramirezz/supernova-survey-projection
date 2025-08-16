@@ -1,4 +1,4 @@
-# 📚 IMPORTS MODULARES
+# IMPORTS MODULARES
 # =====================
 import os
 import numpy as np  
@@ -24,7 +24,7 @@ def main():
     """
     Función principal del pipeline de proyección de supernovas
     """
-    # 🔧 CARGAR CONFIGURACIÓN
+    # CARGAR CONFIGURACION
     # ========================
     config = load_and_validate_config()
     print_config_summary(config)
@@ -75,28 +75,28 @@ def main():
     if ebmv_host is not None:
         # Valor ya muestreado por batch_runner (evitar doble muestreo)
         ebmv_host_final = ebmv_host
-        print(f"   💨 Usando E(B-V) host del batch: {ebmv_host_final:.3f}")
+        print(f"   E(B-V) host: Usando valor del batch: {ebmv_host_final:.3f}")
     elif use_synthetic_extinction:
         # Solo muestrear si no viene del batch usando funciones específicas por tipo
-        print(f"   💨 Muestreando E(B-V) host para SN {tipo}...")
+        print(f"   E(B-V) host: Muestreando para SN {tipo}...")
         tau = 0.4  # Parámetro académicamente validado (Holwerda et al. 2014)
         Av_max = 3.0
         Rv = 3.1
         
         if tipo == 'Ia':
             ebmv_host_final = sample_host_extinction_SNIa(n_samples=1, tau=tau, Av_max=Av_max, Rv=Rv)[0]
-            print(f"      - Distribución: Exponencial en A_V (τ={tau}) - Holwerda et al. (2014)")
+            print(f"      - Distribución: Exponencial en A_V (tau={tau}) - Holwerda et al. (2014)")
         elif tipo in ['II', 'Ibc']:
             ebmv_host_final = sample_host_extinction_core_collapse(n_samples=1, sn_type=tipo, 
                                                                  tau=tau, Av_max=Av_max, Rv=Rv)[0]
-            print(f"      - Distribución: Exponencial unificada (τ={tau}) - Científicamente consistente")
+            print(f"      - Distribución: Exponencial unificada (tau={tau}) - Científicamente consistente")
         else:
             raise ValueError(f"Tipo de SN no reconocido: {tipo}")
             
-        print(f"   💨 E(B-V) host muestreado localmente: {ebmv_host_final:.3f}")
+        print(f"   E(B-V) host: Valor muestreado localmente: {ebmv_host_final:.3f}")
     else:
         ebmv_host_final = 0.0
-        print(f"   💨 Sin extinción sintética del host")
+        print(f"   E(B-V) host: Sin extinción sintética del host")
     
     print(f"   • Redshift proyectado: z = {z_proy}")
     print(f"   • E(B-V) host: {ebmv_host_final:.3f}")

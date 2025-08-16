@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 from enum import Enum
 import numpy as np
+import os
+import glob
 
 class SNType(Enum):
     IA = "Ia"
@@ -109,20 +111,34 @@ def create_cosmological_sample(redshift_range: Tuple[float, float],
         # Muestreo uniforme
         return np.random.uniform(z_min, z_max, n_samples)
 
-# Plantillas disponibles por tipo
-SN_TEMPLATES = {
-    "Ia": [
-        "ASASSN-14lp.dat", "SN1994D.dat", "SN1998aq.dat", "SN1998dh.dat",
-        "SN2001V.dat", "SN2003du.dat", "SN2005hk.dat", "SN2007af.dat",
-        "SN2007le.dat", "SN2009ig.dat", "SN2011fe.dat", "SN2012fr.dat", "SN2012ht.dat"
-    ],
-    "Ibc": [
-        "SN1994I.dat", "SN1998bw.dat", "SN2002ap.dat"  # Placeholder - agregar más
-    ],
-    "II": [
-        "SN1999em.dat", "SN2004et.dat", "SN2013ej.dat"  # Placeholder - agregar más
-    ]
-}
+def scan_sn_templates() -> Dict[str, List[str]]:
+    """Escanea automáticamente las carpetas data/ para encontrar plantillas de SN"""
+    base_path = os.path.dirname(os.path.abspath(__file__))
+    data_path = os.path.join(base_path, "data")
+    
+    templates = {
+        "Ia": [],
+        "Ibc": [], 
+        "II": []
+    }
+    
+    # Escanear cada tipo de SN
+    for sn_type in templates.keys():
+        type_path = os.path.join(data_path, sn_type)
+        if os.path.exists(type_path):
+            # Buscar archivos .dat
+            pattern = os.path.join(type_path, "*.dat")
+            files = glob.glob(pattern)
+            # Extraer solo los nombres de archivo
+            templates[sn_type] = [os.path.basename(f) for f in files]
+            print(f"✅ Encontradas {len(templates[sn_type])} SNe {sn_type}: {templates[sn_type]}")
+        else:
+            print(f"⚠️  Carpeta {type_path} no encontrada")
+    
+    return templates
+
+# Plantillas disponibles por tipo (escaneadas automáticamente)
+SN_TEMPLATES = scan_sn_templates()
 
 def get_sn_templates() -> Dict[SNType, List[str]]:
     """Retorna diccionario de plantillas por tipo usando SNType enum"""

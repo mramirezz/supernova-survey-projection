@@ -365,14 +365,20 @@ def Loess_fit(FILTRO_,V,mag_to_flux=False,interactive=False,fig_title='',use_cte
             ALR2=Automated_Loess_Regression(DJ2, flux2,err_y=flux_err2,alpha=alpha[1])
             
             if min(DJ1)<0 and max(DJ1)>0:x_interp1=np.arange(int(min(DJ1)),int(max(DJ1)+1)) # -> el +2 es para que calze con "sampleo"
-            if min(DJ1)>0 and max(DJ1)>0:x_interp1=np.arange(int(min(DJ1)),int(max(DJ1)+1))
-            if min(DJ1)<0 and max(DJ1)<0:x_interp1=np.arange(int(min(DJ1)+1),int(max(DJ1)))
-            if min(DJ1)>0 and max(DJ1)<0: print('Checkea los dias julianos')
+            elif min(DJ1)>0 and max(DJ1)>0:x_interp1=np.arange(int(min(DJ1)),int(max(DJ1)+1))
+            elif min(DJ1)<0 and max(DJ1)<=0:x_interp1=np.arange(int(min(DJ1)),int(max(DJ1)+1)) # Incluye el caso max=0
+            else: 
+                print(f'Error: Condición no contemplada en los días julianos DJ1: min={min(DJ1)}, max={max(DJ1)}')
+                ALR_df=[]
+                return ALR_df
                 
             if min(DJ2)<0 and max(DJ2)>0:x_interp2=np.arange(int(min(DJ2)),int(max(DJ2)+1)) # -> el +2 es para que calze con "sampleo"
-            if min(DJ2)>0 and max(DJ2)>0:x_interp2=np.arange(int(min(DJ2)),int(max(DJ2)+1))
-            if min(DJ2)<0 and max(DJ2)<0:x_interp2=np.arange(int(min(DJ2)+1),int(max(DJ2)))
-            if min(DJ2)>0 and max(DJ2)<0: print('Checkea los dias julianos')
+            elif min(DJ2)>0 and max(DJ2)>0:x_interp2=np.arange(int(min(DJ2)),int(max(DJ2)+1))
+            elif min(DJ2)<0 and max(DJ2)<=0:x_interp2=np.arange(int(min(DJ2)),int(max(DJ2)+1)) # Incluye el caso max=0
+            else: 
+                print(f'Error: Condición no contemplada en los días julianos DJ2: min={min(DJ2)}, max={max(DJ2)}')
+                ALR_df=[]
+                return ALR_df
             #print('DJ:',DJ)
             #print('flux;',flux)
             #print('x para interpolar:',x_interp)

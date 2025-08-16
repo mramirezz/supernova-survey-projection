@@ -170,13 +170,13 @@ def print_config_summary(config):
     """Imprime un resumen de la configuración cargada"""
     
     print("\n" + "="*60)
-    print("📋 RESUMEN DE CONFIGURACIÓN")
+    print("RESUMEN DE CONFIGURACION")
     print("="*60)
     
     # Survey
     survey_info = get_survey_info(config)
-    print(f"🔭 Survey: {survey_info['SURVEY']} - {survey_info['description']}")
-    print(f"   📡 Dataset: {os.path.basename(survey_info['path_obslog'])}")
+    print(f"Survey: {survey_info['SURVEY']} - {survey_info['description']}")
+    print(f"   Dataset: {os.path.basename(survey_info['path_obslog'])}")
     print(f"   Target column: {survey_info['target_column']}")
     print(f"   Projection filter: {survey_info['projection_filter']}")
     
@@ -189,21 +189,21 @@ def print_config_summary(config):
     # Extinción
     if sn_info['use_synthetic_extinction']:
         if sn_info['ebmv_host'] is None:
-            print(f"   💨 E(B-V) host: muestreado sintéticamente según tipo {sn_info['tipo']}")
+            print(f"   E(B-V) host: muestreado sinteticamente segun tipo {sn_info['tipo']}")
         else:
-            print(f"   💨 E(B-V) host: {sn_info['ebmv_host']} (fijo)")
-        print(f"   🌫️ E(B-V) MW: {sn_info['ebmv_mw']}")
+            print(f"   E(B-V) host: {sn_info['ebmv_host']} (fijo)")
+        print(f"   E(B-V) MW: {sn_info['ebmv_mw']}")
     else:
         ebmv_total = (sn_info['ebmv_host'] or 0) + sn_info['ebmv_mw']
-        print(f"   💨 E(B-V) total: {ebmv_total}")
+        print(f"   E(B-V) total: {ebmv_total}")
     
     # Procesamiento
     processing = config['processing']
-    print(f"\n⚙️ Procesamiento:")
-    print(f"   📊 Overlap threshold: {processing['overlap_threshold']}")
-    print(f"   🔄 LOESS alpha: {processing['loess_alpha_many']} / {processing['loess_alpha_few']}")
-    print(f"   🎲 Ruido: {processing['noise_level']*100}%")
-    print(f"   ⏱️ Offset range: {processing['offset_range'][0]} a {processing['offset_range'][1]} días")
-    print(f"   📈 Debug plots: {'ON' if processing['show_debug_plots'] else 'OFF'}")
+    print(f"\nProcesamiento:")
+    print(f"   Overlap threshold: {processing['overlap_threshold']}")
+    print(f"   LOESS alpha: {processing['loess_alpha_many']} / {processing['loess_alpha_few']}")
+    print(f"   Ruido: {processing['noise_level']*100}%")
+    print(f"   Offset range: {processing['offset_range'][0]} a {processing['offset_range'][1]} dias")
+    print(f"   Debug plots: {'ON' if processing['show_debug_plots'] else 'OFF'}")
     
     print("="*60)
