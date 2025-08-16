@@ -20,16 +20,16 @@ import traceback
 # Importar configuración simplificada
 try:
     from simple_config import (
-        SimpleConfig, SNType, Survey, 
-        create_cosmological_sample, get_sn_templates
+        SimpleConfig, SNType, Survey, get_sn_templates
     )
 except ImportError:
     SimpleConfig = None
 
-# Importar funciones científicas de extinción (sistema unificado)
+# Importar funciones científicas de extinción y cosmología (sistema unificado)
 from core.correction import (
     sample_host_extinction_SNIa,
-    sample_host_extinction_core_collapse
+    sample_host_extinction_core_collapse,
+    sample_cosmological_redshift
 )
 
 # Importar configuración base y ejecutor principal
@@ -197,26 +197,34 @@ class ProfessionalBatchRunner:
             p=list(batch_config.sn_type_distribution.values())
         )
         
-        # Muestreo cosmológico (compatible con ambas configuraciones)
+        # Muestreo cosmológico directo con argumentos correctos
+        z_min, z_max = batch_config.redshift_range
+        
         if hasattr(batch_config, 'cosmology'):
-            # Configuración completa
-            redshift_sample = create_cosmological_sample(
-                batch_config.redshift_range, 1, 
-                batch_config.cosmology, batch_config.volume_weighted
+            # Configuración completa con parámetros cosmológicos específicos
+            cosmology = batch_config.cosmology
+            redshift_sample = sample_cosmological_redshift(
+                n_samples=1,
+                z_min=z_min,
+                z_max=z_max,
+                H0=cosmology.get('H0', 70),
+                Om=cosmology.get('Om', 0.3),
+                OL=cosmology.get('OL', 0.7)
             )[0]
         else:
-            # Configuración simplificada
-            from simple_config import create_cosmological_sample as simple_cosmo
-            redshift_sample = simple_cosmo(
-                batch_config.redshift_range, 1, 
-                batch_config.volume_weighted
+            # Configuración simplificada con cosmología estándar
+            redshift_sample = sample_cosmological_redshift(
+                n_samples=1,
+                z_min=z_min,
+                z_max=z_max
+                # H0, Om, OL usan valores por defecto (70, 0.3, 0.7)
             )[0]
         
         # Debug: imprimir información del muestreo cada pocos runs
         if run_index < 3:  # Solo para los primeros runs
             self.logger.info(f"DEBUG - Run {run_index+1}: volume_weighted={batch_config.volume_weighted}, z_sampled={redshift_sample:.6f}")
         
-        # SISTEMA UNIFICADO: Muestreo de extinción académicamente correcto
+       
         # Extinción del host usando distribuciones exponenciales unificadas (Holwerda et al. 2014)
         if sn_type == 'Ia':
             ebmv_host_sample = sample_host_extinction_SNIa(n_samples=1, tau=0.4, Av_max=3.0, Rv=3.1)
@@ -570,7 +578,7 @@ class ProfessionalBatchRunner:
         """
         Ejecuta un batch completo de simulaciones
         """
-        self.logger.info("INICIANDO BATCH RUN PROFESIONAL")
+        self.logger.info("INICIANDO BATCH RUN")
         self.logger.info("="*80)
         self.logger.info(f"Configuración del Batch:")
         self.logger.info(f"   • Número de runs: {batch_config.n_runs}")
@@ -584,11 +592,11 @@ class ProfessionalBatchRunner:
         self.logger.info(f"   • Batch ID: {self.batch_id}")
         self.logger.info("="*80)
         
-        self.stats.start_batch()
+        self.stats.start_batch() #permite guardar la hora de inicio del batch para calcular el tiempo total
         
         for i in range(batch_config.n_runs):
             # Generar parámetros de la iteración
-            iteration_params = self.create_run_parameters(batch_config, i, batch_config.n_runs)
+            iteration_params = self.create_run_parameters(batch_config, i, batch_config.n_runs) #selecciona aleatoriamente parametros para cada iteracion
             
             # Ejecutar iteración (una supernova)
             success, iteration_results = self.execute_single_run(iteration_params)

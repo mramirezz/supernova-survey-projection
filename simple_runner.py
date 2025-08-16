@@ -10,13 +10,14 @@ from pathlib import Path
 from datetime import datetime
 
 # Importar solo lo esencial
-from batch_runner import ProfessionalBatchRunner, run_scientific_batch
+from batch_runner import run_scientific_batch
 from simple_config import create_simple_config
+
 
 def print_banner():
     """Banner simple del sistema"""
     print("="*60)
-    print(" SIMULACIÓN DE DETECTABILIDAD DE SUPERNOVAS")
+    print(" SIMULACIÓN DE PROYECCIÓN DE SUPERNOVAS")
     print("="*60)
     print(f" Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*60)
@@ -54,11 +55,10 @@ def run_custom_batch(n_runs: int, redshift_max: float = 0.3,
     print(f"🔬 Configurando batch personalizado...")
     
     # Configurar tipos de SN
-    if sn_types is None:
-        sn_types = ["Ia"]
-    
-    # Crear distribución uniforme entre tipos
-    sn_distribution = {sn_type: 1.0/len(sn_types) for sn_type in sn_types}
+    if sn_types is None or len(sn_types) == 0:
+        print("❌ Error: Debes especificar al menos un tipo de supernova con --sn-types (Ia, Ibc, II)")
+        return False
+
     
     # Crear configuración simplificada
     config = create_simple_config(

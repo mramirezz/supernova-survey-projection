@@ -7,91 +7,150 @@ from scipy import interpolate
 from .utils import DL_calculator
 
 
-def sample_host_extinction_SNIa(n_samples=1, tau=0.4, Av_max=3.0, Rv=3.1, random_state=None):
+def sample_host_extinction_mixture(n_samples=1, tau=0.4, Av_max=3.0, Rv=3.1,
+                                   frac_zero=0.4, sigma_zero=0.01, random_state=None):
     """
-    Genera muestras de extinción del host para SNe Ia usando distribución exponencial en A_V.
-    
-    JUSTIFICACIÓN ACADÉMICA:
-    Basado en Holwerda et al. (2014) "SNIa Host Galaxy Properties and the Dust Extinction Distribution"
-    P(A_V) ∝ exp(-A_V/τ) con τ=0.4 mag (estándar académico validado)
-    
+    Simula el enrojecimiento del host (E(B–V)) usando un modelo mixto:
+    una fracción de supernovas sin extinción (E(B–V) ≈ 0) y otra fracción con
+    extinción muestreada desde una distribución exponencial en A_V.
+
+    Justificación académica:
+    ------------------------
+    - Las distribuciones observadas de extinción en galaxias anfitrionas muestran
+      un exceso de supernovas con E(B–V) ≈ 0, especialmente en galaxias elípticas
+      o de baja masa (Hallgren et al. 2023, ApJ 949, 76; Holwerda et al. 2015).
+    - Simulaciones cosmológicas modernas y estudios de curvas de luz (e.g., Jha et al. 2007;
+      Kessler et al. 2009; Brout & Scolnic 2021) utilizan modelos de mezcla:
+        - Gauss estrecha centrada en 0 + cola exponencial para polvo.
+    - Escala típica para distribución exponencial en A_V: τ ≈ 0.4 mag
+      (Holwerda et al. 2015, MNRAS 449, 4277).
+    - Relación R_V ≈ 3.1 es estándar (Cardelli et al. 1989).
+    - σ ≈ 0.01–0.03 mag en la componente gaussiana es consistente con
+      los errores de color intrínseco (Jha et al. 2007; Scolnic et al. 2021, Pantheon+).
+
     Parámetros:
     -----------
     n_samples : int
-        Número de muestras a generar
+        Número de supernovas a simular.
     tau : float
-        Parámetro de escala según Holwerda et al. (2014): τ=0.4 mag
+        Parámetro de escala de la distribución exponencial de A_V (mag).
     Av_max : float
-        Valor máximo de A_V (corte físico)
+        Corte máximo para A_V (evita valores físicamente extremos).
     Rv : float
-        Relación R_V = A_V / E(B-V)
+        Relación entre A_V y E(B–V): A_V = R_V * E(B–V).
+    frac_zero : float
+        Fracción de eventos sin polvo (E(B–V) ≈ 0), típicamente 30%–50%.
+    sigma_zero : float
+        Dispersión (en mag) de la componente gaussiana centrada en 0.
     random_state : int, opcional
-        Semilla para reproducibilidad
-        
+        Semilla para reproducibilidad.
+
     Retorna:
     --------
-    ebmv_host : array
-        Valores de E(B-V) del host muestreados
+    ebmv_host : ndarray
+        Arreglo de valores de E(B–V)_host simulados.
     """
     if random_state is not None:
         np.random.seed(random_state)
-    
-    # Muestreo de distribución exponencial en A_V
-    Av_samples = np.random.exponential(tau, size=n_samples)
-    
-    # Aplicar corte físico
+
+    n_zero = int(frac_zero * n_samples)
+    n_dusty = n_samples - n_zero
+
+    # Parte sin polvo (Gauss centrada en 0)
+    ebmv_zeros = np.abs(np.random.normal(0, sigma_zero, size=n_zero))
+
+    # Parte con polvo (Exponencial en A_V, truncada)
+    Av_samples = np.random.exponential(tau, size=n_dusty)
     Av_samples = np.clip(Av_samples, 0, Av_max)
-    
-    # Convertir a E(B-V)
-    ebmv_host = Av_samples / Rv
-    
+    ebmv_dusty = Av_samples / Rv
+
+    ebmv_host = np.concatenate([ebmv_zeros, ebmv_dusty])
+    np.random.shuffle(ebmv_host)
     return ebmv_host
 
 
-def sample_host_extinction_core_collapse(n_samples=1, sn_type='II', tau=0.4, 
-                                        Av_max=3.0, Rv=3.1, random_state=None):
+def sample_extinction_by_type(sn_type="Ia", n_samples=1, random_state=None):
     """
-    Genera muestras de extinción del host para SNe core-collapse usando distribución exponencial.
-    
-    JUSTIFICACIÓN ACADÉMICA:
-    Por consistencia con Holwerda et al. (2014) y principio de parsimonia científica,
-    se usa la misma distribución exponencial P(A_V) ∝ exp(-A_V/τ) para todos los tipos de SN.
-    Eliminación de distribuciones mixtas por falta de justificación académica sólida.
-    
+    Despachador que llama a sample_host_extinction_mixture() con parámetros específicos
+    según el tipo de supernova (Ia o core-collapse: II, Ib, Ic, Ibc).
+
+    Justificación por tipo:
+    -----------------------
+
+     Tipo Ia:
+    - Basado en Holwerda et al. (2015), Hallgren et al. (2023), y Pantheon+, se sabe que:
+        • ~30–50% de SNe Ia ocurren en entornos sin polvo (galaxias elípticas o regiones limpias).
+        • La parte polvorienta se modela bien con una exponencial en A_V con τ ≈ 0.35 mag.
+    - Por eso se usa:
+        frac_zero = 0.4 (fracción sin polvo)
+        tau = 0.35 (escala de la exponencial en A_V, según README)
+
+     Tipos Core-Collapse (II, Ibc, Ib, Ic):
+    - Solo ocurren en galaxias con formación estelar → más polvo en promedio.
+    - Estudios como Hatano et al. (1998), Riello & Patat (2005), y Hallgren et al. (2023)
+      sugieren que:
+        • Hay menos fracción de eventos libres de polvo.
+        • SNe II: τ ≈ 0.25 mag
+        • SNe Ibc: τ ≈ 0.50 mag (según README)
+    - Se reduce frac_zero a 0.2 para reflejar mayor prevalencia de polvo.
+
     Parámetros:
     -----------
-    n_samples : int
-        Número de muestras a generar
     sn_type : str
-        Tipo de SN ('II', 'Ibc') - mantenido por compatibilidad
-    tau : float
-        Parámetro de escala exponencial (τ=0.4 según literatura)
-    Av_max : float
-        Valor máximo de A_V (corte físico)
-    Rv : float
-        Relación R_V = A_V / E(B-V)
-    random_state : int, opcional
-        Semilla para reproducibilidad
-        
+        Tipo de supernova. Acepta: 'Ia', 'II', 'Ib', 'Ic', 'Ibc'
+    n_samples : int
+        Número de muestras a generar.
+    random_state : int
+        Semilla para reproducibilidad.
+
     Retorna:
     --------
-    ebmv_host : array
-        Valores de E(B-V) del host muestreados
+    ebmv_host : ndarray
+        Arreglo de E(B–V) del host para las supernovas simuladas.
     """
-    if random_state is not None:
-        np.random.seed(random_state)
-    
-    # Distribución exponencial unificada para todos los tipos
-    # Científicamente justificada por Holwerda et al. (2014)
-    Av_samples = np.random.exponential(tau, size=n_samples)
-    
-    # Aplicar corte físico
-    Av_samples = np.clip(Av_samples, 0, Av_max)
-    
-    # Convertir a E(B-V)
-    ebmv_host = Av_samples / Rv
-    
-    return ebmv_host
+    sn_type = sn_type.upper()
+
+    if sn_type == "IA":
+        return sample_host_extinction_mixture(
+            n_samples=n_samples,
+            tau=0.35,          # Según README: Exp(Aᵥ/0.35)
+            frac_zero=0.4,     # Hallgren+2023; ~30–50% sin polvo
+            sigma_zero=0.01,   # Dispersión típica de color intrínseco
+            random_state=random_state
+        )
+
+    elif sn_type == "II":
+        return sample_host_extinction_mixture(
+            n_samples=n_samples,
+            tau=0.25,          # Según README: Mixed(τ=0.25)
+            frac_zero=0.2,     # CCSNe ocurren en hosts más polvorientos
+            sigma_zero=0.01,
+            random_state=random_state
+        )
+        
+    elif sn_type in ["IB", "IC", "IBC"]:
+        return sample_host_extinction_mixture(
+            n_samples=n_samples,
+            tau=0.50,          # Según README: Mixed(τ=0.50)
+            frac_zero=0.2,     # CCSNe ocurren en hosts más polvorientos
+            sigma_zero=0.01,
+            random_state=random_state
+        )
+
+    else:
+        raise ValueError(f"Tipo de supernova no reconocido: {sn_type}")
+
+
+# Funciones wrapper para compatibilidad con batch_runner.py
+def sample_host_extinction_SNIa(n_samples=1, tau=None, Av_max=3.0, Rv=3.1, random_state=None):
+    """Wrapper para compatibilidad - usa la implementación académicamente correcta"""
+    return sample_extinction_by_type("Ia", n_samples=n_samples, random_state=random_state)
+
+
+def sample_host_extinction_core_collapse(n_samples=1, sn_type='II', tau=None, 
+                                        Av_max=3.0, Rv=3.1, random_state=None):
+    """Wrapper para compatibilidad - usa la implementación académicamente correcta"""
+    return sample_extinction_by_type(sn_type, n_samples=n_samples, random_state=random_state)
 
 
 def sample_cosmological_redshift(n_samples=1, z_min=0.01, z_max=0.5, 

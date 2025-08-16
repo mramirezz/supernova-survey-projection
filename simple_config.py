@@ -77,40 +77,6 @@ def create_simple_config(n_runs: int = 100,
         description=f"Simulación de {n_runs} runs, z_max={redshift_max}, tipos={sn_types}"
     )
 
-def create_cosmological_sample(redshift_range: Tuple[float, float], 
-                              n_samples: int, 
-                              volume_weighted: bool = True) -> np.ndarray:
-    """
-    Genera muestra cosmológica de redshifts
-    
-    Parameters:
-    -----------
-    redshift_range : Tuple[float, float]
-        Rango (z_min, z_max)
-    n_samples : int
-        Número de muestras
-    volume_weighted : bool
-        Si usar volumen comóvil (True) o uniforme (False)
-    """
-    z_min, z_max = redshift_range
-    
-    if volume_weighted:
-        # Muestreo proporcional al volumen comóvil (∝ z²)
-        # Aproximación válida para z < 0.5
-        z_samples = []
-        for _ in range(n_samples):
-            # Método de rechazo simple
-            while len(z_samples) < n_samples:
-                z_candidate = np.random.uniform(z_min, z_max)
-                weight = (z_candidate / z_max) ** 2
-                if np.random.uniform(0, 1) < weight:
-                    z_samples.append(z_candidate)
-                    break
-        return np.array(z_samples)
-    else:
-        # Muestreo uniforme
-        return np.random.uniform(z_min, z_max, n_samples)
-
 def scan_sn_templates() -> Dict[str, List[str]]:
     """Escanea automáticamente las carpetas data/ para encontrar plantillas de SN"""
     base_path = os.path.dirname(os.path.abspath(__file__))
