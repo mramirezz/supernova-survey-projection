@@ -75,14 +75,15 @@ def get_sfd98_extinction_real(ra, dec):
     
     Returns:
     --------
-    float
-        E(B-V) de extinción MW según SFD98
+    tuple: (float, bool)
+        (E(B-V) de extinción MW según SFD98, success_flag)
+        success_flag = True si consulta exitosa, False si error
     """
     if not REAL_SFD98_AVAILABLE:
         # Valor por defecto si astroquery no está disponible
         print(f"Warning: astroquery no disponible para RA={ra:.3f}, Dec={dec:.3f}")
         print("Usando valor promedio E(B-V)=0.05 mag")
-        return 0.05
+        return 0.05, False
     
     try:
         # Crear coordenada astronómica
@@ -94,13 +95,13 @@ def get_sfd98_extinction_real(ra, dec):
         # Extraer E(B-V) de SFD98
         ebv_mw = float(table['ext SandF mean'])
         
-        return ebv_mw
+        return ebv_mw, True  # Consulta exitosa
         
     except Exception as e:
         # En caso de error de conexión, usar valor promedio
         print(f"Warning: Error consultando IRSA para RA={ra:.3f}, Dec={dec:.3f}: {e}")
         print("Usando valor promedio E(B-V)=0.05 mag")
-        return 0.05
+        return 0.05, False  # Consulta falló
 
 
 def sample_realistic_mw_extinction(sn_name=None, n_samples=1, random_state=None):
@@ -141,7 +142,7 @@ def sample_realistic_mw_extinction(sn_name=None, n_samples=1, random_state=None)
         np.random.seed(random_state)
     
     # Muestrear coordenadas ZTF realistas
-    ra_samples, dec_samples = sample_ztf_field_coordinates(n_samples, random_state)
+    ra_samples, dec_samples = sample_ztf_field_coordinates(n_samples, random_state) #esto podria cambiar por coordenadas reales en un futuro
     
     ebmv_mw_samples = []
     failed_queries = 0
@@ -160,19 +161,14 @@ def sample_realistic_mw_extinction(sn_name=None, n_samples=1, random_state=None)
             print(f"   📡 Procesando campos {batch_start+1}-{batch_end} de {n_samples}...")
         
         for i in range(batch_start, batch_end):
-            ebmv_mw = get_sfd98_extinction_real(ra_samples[i], dec_samples[i])
+            ebmv_mw, success = get_sfd98_extinction_real(ra_samples[i], dec_samples[i])
             ebmv_mw_samples.append(ebmv_mw)
             
-            # Contar errores (valor por defecto = 0.05)
-            if ebmv_mw == 0.05:
+            # Contar errores usando el flag de éxito
+            if not success:
                 failed_queries += 1
-            
-            # Debug info solo para primeras muestras
-            if i < 3 and n_samples <= 10:
-                print(f"   🗺️ Campo {i+1}: RA={ra_samples[i]:.1f}°, Dec={dec_samples[i]:.1f}°")
-                print(f"      → E(B-V)_MW = {ebmv_mw:.3f} mag (SFD98)")
     
-    ebmv_mw_samples = np.array(ebmv_mw_samples)
+    ebmv_mw_samples = np.array(ebmv_mw_samples) #si n samples es  1 el largo del array es 1
     
     # Reporte final
     success_rate = 100 * (n_samples - failed_queries) / n_samples
@@ -269,7 +265,7 @@ def create_extinction_map_visualization(n_samples=5000, save_path=None, show_plo
     
     ebmv_samples = []
     for i in range(n_samples):
-        ebmv = get_sfd98_extinction_real(ra_samples[i], dec_samples[i])
+        ebmv, success = get_sfd98_extinction_real(ra_samples[i], dec_samples[i])
         ebmv_samples.append(ebmv)
     
     ebmv_samples = np.array(ebmv_samples)

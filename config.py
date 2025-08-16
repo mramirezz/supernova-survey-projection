@@ -10,8 +10,8 @@ SURVEY = "ZTF"  # Opciones: "ZTF", "SUDARE"
 # 🌟 PARÁMETROS DE LA SUPERNOVA
 # ==============================
 SN_CONFIG = {
-    "sn_name": "ASASSN-14lp",
-    "tipo": "Ia",
+    "sn_name": "SNexamplename",
+    "tipo": "exampletype",
     "selected_filter": "r",      # Filtro para fotometría sintética
     "z_proy": 0.05,              # Redshift proyectado
     "ebmv_host": None,           # E(B-V) del host (None = muestrear automáticamente)

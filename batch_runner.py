@@ -245,7 +245,7 @@ class ProfessionalBatchRunner:
             # Fallback directo a SN_TEMPLATES  
             from simple_config import SN_TEMPLATES
             available_templates = SN_TEMPLATES[sn_type]
-        template = np.random.choice(available_templates)
+        template = np.random.choice(available_templates) #es el nombre deuna sn seleccionada "SN2011fe.dat"
         
         # EXTINCIÓN MW: Basada en mapas de polvo realistas para campos ZTF
         # Importar sistema de mapas de polvo
@@ -303,8 +303,6 @@ class ProfessionalBatchRunner:
         # Actualizar extinción con valores separados (físicamente correcto)
         config.SN_CONFIG['ebmv_host'] = iteration_params['ebmv_host']
         config.SN_CONFIG['ebmv_mw'] = iteration_params['ebmv_mw']
-        # Mantener compatibilidad con código anterior
-        config.SN_CONFIG['ebmv_proy'] = iteration_params['extinction_total']
         
         # Actualizar archivo de espectro
         config.PATHS['spec_file'] = iteration_params['template_file']

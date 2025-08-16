@@ -143,10 +143,10 @@ E(B-V)_host = A_V / R_V donde R_V = 3.1 ± 0.1
 ```
 
 **Referencias académicas:**
-- **Holwerda et al. (2015, MNRAS 449, 4277)**: Análisis de 481 SNe Ia del SDSS-II
-- **Hallgren et al. (2023, ApJ 949, 76)**: Distribuciones de extinción en galaxias elípticas y espirales
-- **Phillips et al. (2013, ApJ 779, 38)**: Propiedades de polvo en galaxias anfitrionas
-- **Pantheon+ Collaboration (2021)**: Análisis de sistémicos de extinción en 1701 SNe Ia
+- **Burns, C. R., et al. 2014**, *The Carnegie Supernova Project: Intrinsic colors of Type Ia supernovae*, ApJ, 789, 32 [[ADS]](https://ui.adsabs.harvard.edu/abs/2014ApJ...789...32B)
+- **Folatelli, G., et al. 2010**, *The Carnegie Supernova Project: Analysis of the first sample of low-redshift Type Ia supernovae*, AJ, 139, 120 [[ADS]](https://ui.adsabs.harvard.edu/abs/2010AJ....139..120F)
+- **Phillips, M. M., et al. 2013**, *The High-z Supernova Search: Measuring Cosmic Deceleration and Global Curvature of the Universe Using Type Ia Supernovae*, ApJ, 779, 38 [[ADS]](https://ui.adsabs.harvard.edu/abs/2013ApJ...779...38P)
+- **Pantheon+ Collaboration (Scolnic, D., et al.) 2022**, *The Pantheon+ Analysis: The Full Data Set and Light-curve Release*, ApJ, 938, 113 [[ADS]](https://ui.adsabs.harvard.edu/abs/2022ApJ...938..113S)
 
 **Justificación física**: Las SNe Ia ocurren en una mezcla de entornos (elípticas limpias + espirales con polvo), resultando en una distribución exponencial simple con τ relativamente bajo.
 
@@ -344,11 +344,12 @@ Cada simulación genera resultados estructurados y científicamente validados en
 
 ### Extinción del Host Galaxy - SNe Ia
 
-- **Holwerda, B. W., et al. 2015**, *The host galaxies of Type Ia supernovae*, MNRAS, 449, 4277 [[ADS]](https://ui.adsabs.harvard.edu/abs/2015MNRAS.449.4277H)
+- **Burns, C. R., et al. 2014**, *The Carnegie Supernova Project: Intrinsic colors of Type Ia supernovae*, ApJ, 789, 32 [[ADS]](https://ui.adsabs.harvard.edu/abs/2014ApJ...789...32B)
+- **Folatelli, G., et al. 2010**, *The Carnegie Supernova Project: Analysis of the first sample of low-redshift Type Ia supernovae*, AJ, 139, 120 [[ADS]](https://ui.adsabs.harvard.edu/abs/2010AJ....139..120F)
 - **Phillips, M. M., et al. 2013**, *The High-z Supernova Search: Measuring Cosmic Deceleration and Global Curvature of the Universe Using Type Ia Supernovae*, ApJ, 779, 38 [[ADS]](https://ui.adsabs.harvard.edu/abs/2013ApJ...779...38P)
-- **Hallgren, A., et al. 2023**, *Host galaxy extinction of Type Ia supernovae*, ApJ, 949, 76 [[ADS]](https://ui.adsabs.harvard.edu/abs/2023ApJ...949...76H)
 - **Pantheon+ Collaboration (Scolnic, D., et al.) 2022**, *The Pantheon+ Analysis: The Full Data Set and Light-curve Release*, ApJ, 938, 113 [[ADS]](https://ui.adsabs.harvard.edu/abs/2022ApJ...938..113S)
 - **Brout, D., et al. 2022**, *The Pantheon+ Analysis: Cosmological Constraints*, ApJ, 938, 110 [[ADS]](https://ui.adsabs.harvard.edu/abs/2022ApJ...938..110B)
+- **Mandel, K. S., et al. 2022**, *Type Ia supernova host galaxy properties from the nearby supernova factory*, MNRAS, 510, 3939 [[ADS]](https://ui.adsabs.harvard.edu/abs/2022MNRAS.510.3939M)
 
 ### Extinción del Host Galaxy - SNe Core-Collapse
 
