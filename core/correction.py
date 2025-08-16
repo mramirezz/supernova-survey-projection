@@ -141,18 +141,6 @@ def sample_extinction_by_type(sn_type="Ia", n_samples=1, random_state=None):
         raise ValueError(f"Tipo de supernova no reconocido: {sn_type}")
 
 
-# Funciones wrapper para compatibilidad con batch_runner.py
-def sample_host_extinction_SNIa(n_samples=1, tau=None, Av_max=3.0, Rv=3.1, random_state=None):
-    """Wrapper para compatibilidad - usa la implementación académicamente correcta"""
-    return sample_extinction_by_type("Ia", n_samples=n_samples, random_state=random_state)
-
-
-def sample_host_extinction_core_collapse(n_samples=1, sn_type='II', tau=None, 
-                                        Av_max=3.0, Rv=3.1, random_state=None):
-    """Wrapper para compatibilidad - usa la implementación académicamente correcta"""
-    return sample_extinction_by_type(sn_type, n_samples=n_samples, random_state=random_state)
-
-
 def sample_cosmological_redshift(n_samples=1, z_min=0.01, z_max=0.5, 
                                 H0=70, Om=0.3, OL=0.7, random_state=None):
     """

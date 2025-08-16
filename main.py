@@ -10,7 +10,7 @@ from core.utils import (
     # Constantes fotométricas
     cteB, cteV, cteR, cteI, cteU, cteu, cteg, cter, ctei, ctez
 )
-from core.correction import correct_redeening, sample_host_extinction_SNIa, sample_host_extinction_core_collapse
+from core.correction import correct_redeening, sample_extinction_by_type
 from core.projection import field_projection  
 from core.save_functions import save_projection_results, create_master_index
 
@@ -79,19 +79,10 @@ def main():
     elif use_synthetic_extinction:
         # Solo muestrear si no viene del batch usando funciones específicas por tipo
         print(f"   E(B-V) host: Muestreando para SN {tipo}...")
-        tau = 0.4  # Parámetro académicamente validado (Holwerda et al. 2014)
-        Av_max = 3.0
-        Rv = 3.1
         
-        if tipo == 'Ia':
-            ebmv_host_final = sample_host_extinction_SNIa(n_samples=1, tau=tau, Av_max=Av_max, Rv=Rv)[0]
-            print(f"      - Distribución: Exponencial en A_V (tau={tau}) - Holwerda et al. (2014)")
-        elif tipo in ['II', 'Ibc']:
-            ebmv_host_final = sample_host_extinction_core_collapse(n_samples=1, sn_type=tipo, 
-                                                                 tau=tau, Av_max=Av_max, Rv=Rv)[0]
-            print(f"      - Distribución: Exponencial unificada (tau={tau}) - Científicamente consistente")
-        else:
-            raise ValueError(f"Tipo de SN no reconocido: {tipo}")
+        # Usar directamente el despachador académicamente correcto
+        ebmv_host_final = sample_extinction_by_type(sn_type=tipo, n_samples=1)[0]
+        print(f"      - Distribución mixta académicamente correcta según tipo {tipo}")
             
         print(f"   E(B-V) host: Valor muestreado localmente: {ebmv_host_final:.3f}")
     else:

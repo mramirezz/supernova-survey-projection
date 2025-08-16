@@ -27,8 +27,7 @@ except ImportError:
 
 # Importar funciones científicas de extinción y cosmología (sistema unificado)
 from core.correction import (
-    sample_host_extinction_SNIa,
-    sample_host_extinction_core_collapse,
+    sample_extinction_by_type,
     sample_cosmological_redshift
 )
 
@@ -224,14 +223,13 @@ class ProfessionalBatchRunner:
         if run_index < 3:  # Solo para los primeros runs
             self.logger.info(f"DEBUG - Run {run_index+1}: volume_weighted={batch_config.volume_weighted}, z_sampled={redshift_sample:.6f}")
         
-       
-        # Extinción del host usando distribuciones exponenciales unificadas (Holwerda et al. 2014)
-        if sn_type == 'Ia':
-            ebmv_host_sample = sample_host_extinction_SNIa(n_samples=1, tau=0.4, Av_max=3.0, Rv=3.1)
-        else:  # Core-collapse (II, Ibc) - AHORA UNIFICADO a exponencial
-            ebmv_host_sample = sample_host_extinction_core_collapse(
-                n_samples=1, sn_type=sn_type, tau=0.4, Av_max=3.0, Rv=3.1
-            )
+        # SISTEMA UNIFICADO: Muestreo de extinción académicamente correcto
+        # Usa distribuciones mixtas con parámetros específicos por tipo según README
+        ebmv_host_sample = sample_extinction_by_type(
+            sn_type=sn_type, 
+            n_samples=1, 
+            random_state=batch_config.base_seed + run_index
+        )
         
         # Seleccionar template aleatoriamente del tipo (configuración unificada)
         try:
