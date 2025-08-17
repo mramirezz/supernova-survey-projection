@@ -27,11 +27,19 @@ El sistema está basado en las siguientes referencias fundamentales:
 ### Simulaciones Básicas
 
 ```bash
-# Simulación básica (100 SNe Ia, z_max=0.3)
+# Simulación básica (100 SNe Ia, z_max=0.3, filtro r)
 python simple_runner.py --runs 100
 
+# Simulación con filtro específico
+python simple_runner.py --runs 100 --filter g --sn-types Ia
+python simple_runner.py --runs 50 --filter i --sn-types Ibc
+
 # Simulación personalizada completa
-python simple_runner.py --runs 500 --redshift-max 0.4 --sn-types Ia Ibc II --survey ZTF --seed 42
+python simple_runner.py --runs 500 --redshift-max 0.4 --sn-types Ia Ibc II --survey ZTF --filter r --seed 42
+
+# Exploración de filtros múltiples
+python simple_runner.py --runs 200 --filter g --redshift-max 0.2 --sn-types Ia
+python simple_runner.py --runs 200 --filter i --redshift-max 0.2 --sn-types Ia
 
 # Ver batches recientes
 python simple_runner.py --list
@@ -42,14 +50,45 @@ python simple_runner.py --list
 ```python
 from simple_runner import run_custom_batch
 
-# Ejecutar simulación
+# Ejecutar simulación básica
 run_custom_batch(
     n_runs=100,
     redshift_max=0.3,
     sn_types=["Ia"],
     survey="ZTF",
+    filter_band="r",  # Filtro fotométrico
     seed=42
 )
+
+# Simulación con filtro específico
+run_custom_batch(
+    n_runs=50,
+    filter_band="g",
+    sn_types=["Ibc"],
+    redshift_max=0.2
+)
+```
+
+### Filtros Fotométricos Disponibles
+
+El sistema soporta **filtros acoplados** (fotometría sintética + proyección consistente):
+
+**Filtros disponibles:**
+- **Johnson-Cousins**: `U`, `B`, `V`, `R`, `I`
+- **SDSS**: `u`, `g`, `r`, `i`, `z`
+
+**Comportamiento del sistema:**
+- **Fotometría sintética**: Calcula magnitudes del espectro en el filtro seleccionado
+- **Proyección ZTF**: Filtra observaciones reales solo al filtro seleccionado  
+- **Consistencia física**: Compara magnitudes en filtro X vs límites en filtro X
+- **Organización**: Resultados separados por filtro en `outputs/*/filter_X/`
+
+```bash
+# Ejemplos por filtro:
+python simple_runner.py --runs 100 --filter g  # Verde SDSS
+python simple_runner.py --runs 100 --filter i  # Infrarrojo cercano SDSS  
+python simple_runner.py --runs 100 --filter V  # Visual Johnson
+python simple_runner.py --runs 100 --filter R  # Rojo Johnson
 ```
 
 ## Flujo Físico Completo de la Simulación

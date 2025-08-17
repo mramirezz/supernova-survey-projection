@@ -14,8 +14,6 @@ def load_and_validate_config():
     dict: Configuración validada y procesada
     """
     
-    print("Cargando configuracion...")
-    
     # Construir rutas absolutas
     config = {}
     
@@ -58,11 +56,6 @@ def load_and_validate_config():
     
     # Validaciones de parámetros
     _validate_parameters(config)
-    
-    print(f"   Configuracion cargada para survey: {SURVEY}")
-    print(f"   Directorio base: {base_dir}")
-    print(f"   SN: {SN_CONFIG['sn_name']} ({SN_CONFIG['tipo']})")
-    print(f"   Filtro: {SN_CONFIG['selected_filter']}")
     
     return config
 

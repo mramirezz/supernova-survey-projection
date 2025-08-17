@@ -29,6 +29,7 @@ class SimpleConfig:
     volume_weighted: bool = True
     description: str = "Batch personalizado"
     pause_between_runs: float = 0.0  # Sin pausa entre runs
+    filter_band: str = "r"  # Filtro fotométrico acoplado
     
     def __post_init__(self):
         if self.sn_type_distribution is None:
@@ -41,7 +42,8 @@ def create_simple_config(n_runs: int = 100,
                         redshift_max: float = 0.3,
                         sn_types: List[str] = None,
                         survey: str = "ZTF",
-                        seed: int = 42) -> SimpleConfig:
+                        seed: int = 42,
+                        filter_band: str = "r") -> SimpleConfig:
     """
     Crea una configuración simplificada
     
@@ -57,6 +59,8 @@ def create_simple_config(n_runs: int = 100,
         Survey principal
     seed : int
         Semilla para reproducibilidad
+    filter_band : str
+        Filtro fotométrico para síntesis y proyección
     """
     if sn_types is None:
         sn_types = ["Ia"]
@@ -74,6 +78,7 @@ def create_simple_config(n_runs: int = 100,
         survey_distribution=survey_distribution,
         base_seed=seed,
         volume_weighted=True,
+        filter_band=filter_band,
         description=f"Simulación de {n_runs} runs, z_max={redshift_max}, tipos={sn_types}"
     )
 

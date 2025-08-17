@@ -283,6 +283,7 @@ class ProfessionalBatchRunner:
             'ebmv_mw': float(ebmv_mw_sample[0]),        # Extinción MW
             'extinction_total': float(ebmv_host_sample[0] + ebmv_mw_sample[0]),  # Para compatibilidad
             'survey': survey,
+            'filter_band': batch_config.filter_band,  # Filtro fotométrico acoplado
             'seed': batch_config.base_seed + run_index,
             'batch_id': self.batch_id,
             'iteration_index': run_index,
@@ -306,6 +307,10 @@ class ProfessionalBatchRunner:
         
         # Actualizar archivo de espectro
         config.PATHS['spec_file'] = iteration_params['template_file']
+        
+        # Actualizar filtro fotométrico (acoplado: síntesis + proyección)
+        config.SN_CONFIG['selected_filter'] = iteration_params['filter_band']
+        config.SURVEY_CONFIG[iteration_params['survey']]['projection_filter'] = iteration_params['filter_band']
         
         # Actualizar survey
         config.SURVEY = iteration_params['survey']

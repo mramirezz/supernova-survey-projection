@@ -35,7 +35,7 @@ def setup_environment():
 
 def run_custom_batch(n_runs: int, redshift_max: float = 0.3, 
                     sn_types: list = None, survey: str = "ZTF", 
-                    seed: int = 42):
+                    seed: int = 42, filter_band: str = "r"):
     """
     Ejecuta un batch personalizado de simulaciones
     
@@ -51,6 +51,8 @@ def run_custom_batch(n_runs: int, redshift_max: float = 0.3,
         Survey principal
     seed : int
         Semilla para reproducibilidad
+    filter_band : str
+        Filtro fotométrico para síntesis y proyección
     """
     print(f"🔬 Configurando batch personalizado...")
     
@@ -66,7 +68,8 @@ def run_custom_batch(n_runs: int, redshift_max: float = 0.3,
         redshift_max=redshift_max,
         sn_types=sn_types,
         survey=survey,
-        seed=seed
+        seed=seed,
+        filter_band=filter_band
     )
     
     # Actualizar descripción
@@ -77,6 +80,7 @@ def run_custom_batch(n_runs: int, redshift_max: float = 0.3,
     print(f"   • Redshift max: {redshift_max}")
     print(f"   • Tipos SN: {sn_types}")
     print(f"   • Survey: {survey}")
+    print(f"   • Filtro: {filter_band}")
     print(f"   • Semilla: {seed}")
     print()
     
@@ -125,11 +129,17 @@ def main():
         epilog="""
 Ejemplos de uso:
 
-  # Batch básico
+  # Batch básico (filtro r por defecto)
   python simple_runner.py --runs 100
 
+  # Batch con filtro específico
+  python simple_runner.py --runs 100 --filter g --sn-types Ia
+
   # Batch personalizado completo
-  python simple_runner.py --runs 500 --redshift-max 0.2 --sn-types Ia Ibc --survey ZTF
+  python simple_runner.py --runs 500 --redshift-max 0.2 --sn-types Ia Ibc --filter r --survey ZTF
+
+  # Exploración de filtros múltiples
+  python simple_runner.py --runs 200 --filter i --redshift-max 0.3 --sn-types Ibc
 
   # Ver batches recientes
   python simple_runner.py --list
@@ -152,6 +162,9 @@ Ejemplos de uso:
     parser.add_argument("--seed", type=int, default=42,
                        help="Semilla para reproducibilidad (default: 42)")
     
+    parser.add_argument("--filter", choices=["U", "B", "V", "R", "I", "u", "g", "r", "i", "z"], 
+                       default="r", help="Filtro fotométrico para síntesis y proyección (default: r)")
+    
     parser.add_argument("--list", action="store_true",
                        help="Listar batches recientes")
     
@@ -172,7 +185,8 @@ Ejemplos de uso:
             redshift_max=args.redshift_max,
             sn_types=args.sn_types,
             survey=args.survey,
-            seed=args.seed
+            seed=args.seed,
+            filter_band=args.filter
         )
         
         if success:
