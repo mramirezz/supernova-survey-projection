@@ -20,14 +20,19 @@ from config_loader import load_and_validate_config, get_survey_info, get_sn_info
 #  WORKFLOW MODULAR - PROYECCIÓN MULTI-SURVEY (CON CONFIGURACIÓN)
 # =================================================================
 
-def main():
+def main(config=None):
     """
     Función principal del pipeline de proyección de supernovas
+    
+    Args:
+        config (dict, optional): Configuración pre-cargada. Si es None, se carga desde archivo.
     """
-    # CARGAR CONFIGURACION
-    # ========================
-    config = load_and_validate_config()
-    print_config_summary(config)
+    # CARGAR CONFIGURACION (solo si no se proporciona)
+    # ================================================
+    if config is None:
+        config = load_and_validate_config()
+        print_config_summary(config)
+    # Si config viene del batch_runner, ya fue validada y el summary se mostró allí
 
     # Extraer información específica
     survey_info = get_survey_info(config)
@@ -190,6 +195,21 @@ def main():
     print(f"   • Ruido poissoniano: {noise_level*100:.0f}% en flujo")
     print(f"   • Ruido resultante: σ = {ruido_promedio:.3f} mag")
 
+    # PASO 7.5: CONVERSIÓN DE UNIDADES TEMPORALES (crítico para consistencia)
+    # ========================================================================
+    maximum = maximo_lc(tipo, sn_name)
+    print(f"   • Fecha de máximo {sn_name}: MJD {maximum:.1f}")
+    
+    # Conversión de fases relativas → MJD absoluto para SNe core-collapse
+    if tipo in ['Ibc', 'Ib', 'Ic']:  # Para SNe core-collapse con fases relativas
+        print(f"   • Rango original (fases relativas): {lc_df['fase'].min():.1f} a {lc_df['fase'].max():.1f} días")
+        mjd_absolute = maximum + lc_df['fase']  # Convertir fases → MJD
+        lc_df['fase'] = mjd_absolute           # Actualizar el DataFrame
+        print(f"   • Convertidas fases relativas → MJD absoluto")
+        print(f"   • Nuevo rango temporal: MJD {lc_df['fase'].min():.1f} - {lc_df['fase'].max():.1f}")
+    else:
+        print(f"   • Datos ya en MJD absoluto: {lc_df['fase'].min():.1f} - {lc_df['fase'].max():.1f}")
+
     # PASO 8: PROYECCIÓN ESPECÍFICA POR SURVEY (usando configuración)
     # ===================================================================
     print(f"\nPASO 8: Proyección sobre observaciones reales ({SURVEY})")
@@ -210,9 +230,7 @@ def main():
         print(f"   • Campos SUDARE disponibles: {available_fields}")
         print(f"   • Campo seleccionado: {selected_target}")
 
-    maximum = maximo_lc(tipo, sn_name)
     print(f"   • Filtro para grilla: {projection_filter}")
-    print(f"   • Fecha de máximo {sn_name}: MJD {maximum:.1f}")
 
     # Proyección con parámetros de configuración
     offset_range = processing_config['offset_range']

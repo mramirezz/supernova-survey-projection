@@ -436,8 +436,8 @@ class ProfessionalBatchRunner:
                 # Importar y ejecutar main directamente
                 import main
                 
-                # Ejecutar la función main directamente
-                main.main()
+                # Ejecutar la función main directamente, pasando la config ya validada
+                main.main(config=validated_config)
                 
                 iteration_time = time.time() - iteration_start_time
                 

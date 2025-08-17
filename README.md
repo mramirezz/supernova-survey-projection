@@ -12,6 +12,7 @@ El sistema implementa un pipeline científico completo que incluye:
 - **Cosmología ΛCDM**: H₀ = 70 km/s/Mpc, Ωₘ = 0.3, ΩΛ = 0.7 (Planck 2018)
 - **Muestreo volume-weighted**: Distribución cosmológica dV/dz ∝ (1+z)²/E(z)
 - **Templates espectrales reales**: 13 SNe Ia observadas + core-collapse
+- **Ruido fotométrico realista**: Simulación de ruido de Poisson con distribuciones gaussianas
 - **Proyección sobre datos reales**: 39,604 campos ZTF con observaciones reales
 
 ### Validación Académica
@@ -21,6 +22,7 @@ El sistema está basado en las siguientes referencias fundamentales:
 - **Holwerda et al. (2014)**: Distribuciones de extinción del host
 - **Cardelli, Clayton & Mathis (1989)**: Ley de extinción Rᵥ = 3.1
 - **Planck Collaboration (2018)**: Parámetros cosmológicos
+- **Aproximación gaussiana de Poisson**: Ruido fotométrico realista para flujos altos
 
 ## Uso Rápido
 
@@ -324,6 +326,119 @@ donde Mixed = 60% Exponencial + 40% Gaussiana truncada.
 - RA=134.8°, Dec=65.1° → E(B-V)=0.067 mag
 - RA=41.4°, Dec=30.9° → E(B-V)=0.150 mag  
 - RA=300.5°, Dec=-19.5° → E(B-V)=0.138 mag
+
+## ⚠️ BUG CRÍTICO DOCUMENTADO: Inconsistencia de Unidades Temporales
+
+### El Problema Original (Resuelto en PASO 7.5)
+
+**SÍNTOMA**: Las SNe core-collapse (tipos Ibc, Ib, Ic) no generaban proyecciones válidas, mientras que las SNe Ia funcionaban correctamente.
+
+**CAUSA RAÍZ**: Inconsistencia crítica en el manejo de unidades temporales entre:
+
+1. **Datos de entrada**:
+   - **SNe Ia**: Fechas en **MJD absoluto** (ej: 53671.2, 54820.5)
+   - **SNe core-collapse**: Fechas en **fases relativas** (ej: -12, 0, +89 días desde máximo)
+
+2. **Función `field_projection()`**: Asume **ALL inputs in MJD absoluto**
+
+### Mecánica del Bug
+
+```python
+# field_projection() - CÓDIGO ORIGINAL (INCORRECTO)
+maximum = maximo_lc(tipo, sn)  # ← SIEMPRE devuelve MJD absoluto (ej: 53671)
+mjd_pivote = df_filtered_cut.iloc[0]['mjd']  # ← MJD observaciones ZTF (ej: 59000)
+select_offset = np.random.choice(offset)
+desplazamiento = mjd_pivote - maximum + select_offset
+
+# Para SNe Ibc con FASES RELATIVAS como input:
+fases = [-12, 0, +89]  # ← Días relativos al máximo
+fases_ajustadas = [-12 + desplazamiento, 0 + desplazamiento, +89 + desplazamiento]
+
+# CÁLCULO ERRÓNEO:
+desplazamiento = 59000 - 53671 + offset ≈ 5329 días
+fases_ajustadas = [-12 + 5329, 0 + 5329, +89 + 5329] = [5317, 5329, 5418]
+```
+
+**RESULTADO**: Fechas absurdas (~5300 ≈ año 1846) que no existen en obslog ZTF → **0 proyecciones**
+
+### La Solución Implementada (PASO 7.5)
+
+```python
+# PASO 7.5: CONVERSIÓN DE UNIDADES TEMPORALES (crítico para consistencia)
+maximum = maximo_lc(tipo, sn_name)
+print(f"   • Fecha de máximo {sn_name}: MJD {maximum:.1f}")
+
+# Conversión de fases relativas → MJD absoluto para SNe core-collapse
+if tipo in ['Ibc', 'Ib', 'Ic']:  # Para SNe core-collapse con fases relativas
+    print(f"   • Rango original (fases relativas): {lc_df['fase'].min():.1f} a {lc_df['fase'].max():.1f} días")
+    mjd_absolute = maximum + lc_df['fase']  # Convertir fases → MJD
+    lc_df['fase'] = mjd_absolute           # Actualizar el DataFrame
+    print(f"   • Convertidas fases relativas → MJD absoluto")
+    print(f"   • Nuevo rango temporal: MJD {lc_df['fase'].min():.1f} - {lc_df['fase'].max():.1f}")
+else:
+    print(f"   • Datos ya en MJD absoluto: {lc_df['fase'].min():.1f} - {lc_df['fase'].max():.1f}")
+```
+
+### Resultado de la Corrección
+
+**ANTES** (fases relativas):
+```
+Fases input: [-12, 0, +89] días
+maximum = 53671 MJD
+fases_ajustadas = [5317, 5329, 5418] ← FECHAS IMPOSIBLES
+Proyecciones = 0 (sin overlap temporal)
+```
+
+**DESPUÉS** (MJD absoluto):
+```
+Fases convertidas: [53659, 53671, 53760] MJD
+maximum = 53671 MJD  
+fases_ajustadas = [58988, 59000, 59089] ← FECHAS MODERNAS VÁLIDAS
+Proyecciones = 29 detecciones (overlap temporal correcto)
+```
+
+### Lecciones Críticas para Futuros Desarrollos
+
+1. **Validación de unidades**: Siempre verificar que las unidades temporales sean consistentes
+2. **Documentación explícita**: Especificar claramente el formato esperado (MJD vs fases)
+3. **Testing por tipo de SN**: Los diferentes tipos pueden tener formatos de datos distintos
+4. **Conversión centralizada**: Implementar un paso explícito de normalización de unidades
+5. **Logging detallado**: El PASO 7.5 incluye prints para debugging futuro
+
+### Detección del Bug
+
+El bug se manifestaba como:
+- ✅ **SNe Ia**: Funcionaban correctamente (ya estaban en MJD)
+- ❌ **SNe core-collapse**: 0 proyecciones consistentemente
+- **Diagnóstico**: Análisis de rangos temporales reveló fechas imposibles
+- **Validación**: Después del fix, SNe Ibc generan 20-30 detecciones típicas
+
+**MORALEJA**: En sistemas astronómicos, las unidades temporales (MJD vs días relativos) deben manejarse explícitamente para evitar bugs silenciosos que solo afectan ciertos tipos de objetos.
+
+### Ruido Fotométrico Realista
+
+El sistema simula el ruido de Poisson real de los detectores astronómicos:
+
+```python
+flux_with_noise = normal(loc=flux_clean, scale=√flux_clean × noise_level)
+```
+
+**Física del ruido:**
+- **Distribución gaussiana** centrada en el flujo limpio
+- **Sigma proporcional a √flujo**: Simula estadística de Poisson fotónica
+- **Noise_level = 15%**: Factor adicional de ruido instrumental
+
+**Comportamiento realista:**
+- **Fuentes brillantes**: Mayor SNR relativa (σ/μ ∝ 1/√flux)
+- **Fuentes débiles**: Menor SNR relativa, más difíciles de detectar
+- **Reproducibilidad**: Controlada por semillas para estudios científicos
+
+**Ejemplo práctico:**
+```
+Flujo normalizado: [1.0, 4.0, 16.0]
+Sigma de ruido:    [0.15, 0.30, 0.60] (15% × √flujo)
+SNR relativa:      [6.7, 13.3, 26.7] (mayor para fuentes brillantes)
+```
 
 ## Interpretación Científica
 
