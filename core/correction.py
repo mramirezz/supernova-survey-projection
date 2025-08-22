@@ -319,34 +319,28 @@ def correct_redeening(sn,ESPECTRO,fases,ebmv=None,ebmv_host=None,ebmv_mw=None,mu
         #print(i,df)
         
         
-        if reverse==False:
-            #--------correguimos por redshift, esto le saca el redshift original--------.
-            df['wave']=df['wave']/(1+z)
-    
-            #-------------------correguimos por extinción en orden físico correcto-----------
-            # ORDEN CORRECTO después de redshift: Ambas extinciones en rest-frame
-            # Primero corregir extinción del host (más cercana a la SN, en rest-frame)
-            if ebmv_host_val > 0:
-                new_spectro=redden_spectrum_adjusted(df['wave'],df['flux'],Rv=3.1,ebmv=ebmv_host_val)
-                df['flux']=new_spectro
-            
-            # Luego corregir extinción de la Vía Láctea (en rest-frame también)
+        if reverse == False:
+            # 1. Quitar extinción de la Vía Láctea (aplicada en marco observado)
             if ebmv_mw_val > 0:
-                new_spectro=redden_spectrum_adjusted(df['wave'],df['flux'],Rv=3.1,ebmv=ebmv_mw_val)
-                df['flux']=new_spectro
+                df['flux'] = redden_spectrum_adjusted(df['wave'], df['flux'], Rv=3.1, ebmv=-ebmv_mw_val)
 
-            #llevamos el flujo a una distancia comun de 10pc para posteriores usos. la formula F10=(d[pc]/10[pc])^2 * Flujo_actual
-            #primero sacamos la distancia en parsec con el modulo de distancia--------------
-            if to_abs_mag==True:
-                d_pc=10**((mu+5)/5) #distancia en parsec
+            # 2. Quitar redshift → pasar a rest-frame
+            df['wave'] = df['wave'] / (1 + z)
+            df['flux'] = df['flux'] * (1 + z) 
+            # 3. Quitar extinción del host (en rest-frame)
+            if ebmv_host_val > 0:
+                df['flux'] = redden_spectrum_adjusted(df['wave'], df['flux'], Rv=3.1, ebmv=-ebmv_host_val)
 
-                df['flux']=df['flux']*((d_pc/10)**2)
+            # 4. Llevar a 10 pc si to_abs_mag = True
+            if to_abs_mag:
+                d_pc = 10**((mu + 5) / 5)
+                df['flux'] = df['flux'] * ((d_pc / 10.0) ** 2)
 
-            #regrillamos
-            xnew=np.arange(int(min(df.wave)),max(df.wave)+1,1)
-            interpolated_flux = interpolate.interp1d(df.wave,df.flux,fill_value = "extrapolate")
-            
-            new_df = pd.DataFrame({'wave': xnew,'flux':interpolated_flux(xnew)})
+            # 5. Regrillar
+            xnew = np.arange(int(df.wave.min()), int(df.wave.max()) + 1, 1)
+            interpolated_flux = interpolate.interp1d(df.wave, df.flux, fill_value="extrapolate")
+            new_df = pd.DataFrame({'wave': xnew, 'flux': interpolated_flux(xnew)})
+
 
 
 
@@ -356,16 +350,16 @@ def correct_redeening(sn,ESPECTRO,fases,ebmv=None,ebmv_host=None,ebmv_mw=None,mu
             
             # 1. Aplicar extinción del host (más cercana a la SN)
             if ebmv_host_val > 0:
-                new_spectro=redden_spectrum_adjusted(df.wave,df.flux,Rv=3.1,ebmv=-ebmv_host_val)
+                new_spectro=redden_spectrum_adjusted(df.wave,df.flux,Rv=3.1,ebmv=ebmv_host_val)
                 df['flux']=new_spectro
             
             # 2. Aplicar redshift cosmológico
             if z != 0:
                 df['wave'] = df['wave'] * (1 + z)
-            
+                df['flux'] = df['flux'] / (1 + z)
             # 3. Aplicar extinción de la Vía Láctea (más externa)
             if ebmv_mw_val > 0:
-                new_spectro=redden_spectrum_adjusted(df.wave,df.flux,Rv=3.1,ebmv=-ebmv_mw_val)
+                new_spectro=redden_spectrum_adjusted(df.wave,df.flux,Rv=3.1,ebmv=ebmv_mw_val)
                 df['flux']=new_spectro
             
             # 4. Aplicar efectos de distancia al final
