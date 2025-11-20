@@ -386,7 +386,7 @@ def correct_redeening(sn,ESPECTRO,fases,ebmv=None,ebmv_host=None,ebmv_mw=None,mu
         NEW_ESPECTRO.append(new_df)
     
     if write==True:
-        # write_spetra(NEW_ESPECTRO,fases,os.path.join(path_save,sn))  # Función no implementada
+        write_spetra(NEW_ESPECTRO,fases,os.path.join(path_save,sn))  # Función no implementada
         pass
 
             
@@ -395,3 +395,18 @@ def correct_redeening(sn,ESPECTRO,fases,ebmv=None,ebmv_host=None,ebmv_mw=None,mu
     return NEW_ESPECTRO,fases
 
 
+def write_spetra(ESPECTRO,fases,path):
+    #ahora escribimos el espectro promediado
+    file1=open(path,'w')
+    
+    for j in range(len(fases)):
+
+        file1.write('# time:\t'+str(fases[j])+'\n')
+        file1.write('# SPEC \n')
+        file1.write('#      WAVE   FLUX')
+        df_spec=ESPECTRO[j]
+        for ii in range(len(df_spec)):
+            file1.write('\n')
+            file1.write(str(df_spec.iloc[ii]['wave'])+'\t'+str(float(df_spec.iloc[ii]['flux'])))
+        file1.write('\n')
+    file1.close()
