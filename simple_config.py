@@ -41,6 +41,7 @@ class SimpleConfig:
 def create_simple_config(n_runs: int = 100, 
                         redshift_max: float = 0.3,
                         sn_types: List[str] = None,
+                        sn_type_distribution: dict = None,
                         survey: str = "ZTF",
                         seed: int = 42,
                         filter_band: str = "r") -> SimpleConfig:
@@ -55,6 +56,8 @@ def create_simple_config(n_runs: int = 100,
         Redshift máximo
     sn_types : List[str]
         Lista de tipos de SN
+    sn_type_distribution : dict
+        Distribución custom de tipos. Si None, usa distribución uniforme
     survey : str
         Survey principal
     seed : int
@@ -65,8 +68,11 @@ def create_simple_config(n_runs: int = 100,
     if sn_types is None:
         sn_types = ["Ia"]
     
-    # Distribución uniforme entre tipos de SN
-    sn_distribution = {sn_type: 1.0/len(sn_types) for sn_type in sn_types}
+    # Usar distribución custom o uniforme
+    if sn_type_distribution is None:
+        sn_distribution = {sn_type: 1.0/len(sn_types) for sn_type in sn_types}
+    else:
+        sn_distribution = sn_type_distribution
     
     # Survey único
     survey_distribution = {survey: 1.0}
@@ -102,9 +108,9 @@ def scan_sn_templates() -> Dict[str, List[str]]:
             files = glob.glob(pattern)
             # Extraer solo los nombres de archivo
             templates[sn_type] = [os.path.basename(f) for f in files]
-            print(f"✅ Encontradas {len(templates[sn_type])} SNe {sn_type}: {templates[sn_type]}")
+            print(f"[OK] Encontradas {len(templates[sn_type])} SNe {sn_type}: {templates[sn_type]}")
         else:
-            print(f"⚠️  Carpeta {type_path} no encontrada")
+            print(f"[WARNING] Carpeta {type_path} no encontrada")
     
     return templates
 

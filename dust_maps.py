@@ -1,4 +1,4 @@
-# 🗺️ MAPAS DE POLVO GALÁCTICO
+# MAPAS DE POLVO GALACTICO
 # =============================
 import numpy as np
 import pandas as pd
@@ -15,12 +15,12 @@ try:
     from astropy.coordinates import SkyCoord
     import astropy.units as u
     REAL_SFD98_AVAILABLE = True
-    print("✅ astroquery disponible: Usando consultas SFD98 REALES")
+    print("[OK] astroquery disponible: Usando consultas SFD98 REALES")
 except ImportError as e:
     REAL_SFD98_AVAILABLE = False
-    print(f"⚠️ astroquery no disponible: {e}")
-    print("   → Instalar con: pip install astroquery astropy")
-    print("   → Usando valores por defecto en caso de error")
+    print(f"[WARNING] astroquery no disponible: {e}")
+    print("   -> Instalar con: pip install astroquery astropy")
+    print("   -> Usando valores por defecto en caso de error")
 
 def sample_ztf_field_coordinates(n_samples=1, random_state=None):
     """
@@ -147,9 +147,9 @@ def sample_realistic_mw_extinction(sn_name=None, n_samples=1, random_state=None)
     ebmv_mw_samples = []
     failed_queries = 0
     
-    print(f"🗺️ Consultando mapas SFD98 reales para {n_samples} campos...")
+    print(f">> Consultando mapas SFD98 reales para {n_samples} campos...")
     if n_samples > 10:
-        print("   ⏳ Esto puede tomar unos minutos debido a consultas online...")
+        print("    Esto puede tomar unos minutos debido a consultas online...")
     
     # Procesar en lotes para mostrar progreso si hay muchas muestras
     batch_size = 50 if n_samples > 100 else n_samples
@@ -158,7 +158,7 @@ def sample_realistic_mw_extinction(sn_name=None, n_samples=1, random_state=None)
         batch_end = min(batch_start + batch_size, n_samples)
         
         if n_samples > 50:
-            print(f"   📡 Procesando campos {batch_start+1}-{batch_end} de {n_samples}...")
+            print(f"    Procesando campos {batch_start+1}-{batch_end} de {n_samples}...")
         
         for i in range(batch_start, batch_end):
             ebmv_mw, success = get_sfd98_extinction_real(ra_samples[i], dec_samples[i])
@@ -172,13 +172,13 @@ def sample_realistic_mw_extinction(sn_name=None, n_samples=1, random_state=None)
     
     # Reporte final
     success_rate = 100 * (n_samples - failed_queries) / n_samples
-    print(f"   ✅ Consultas completadas: {n_samples - failed_queries}/{n_samples} ({success_rate:.1f}%)")
+    print(f"   [OK] Consultas completadas: {n_samples - failed_queries}/{n_samples} ({success_rate:.1f}%)")
     
     if failed_queries > 0:
-        print(f"   ⚠️ Consultas fallidas: {failed_queries} (usaron valor por defecto)")
+        print(f"   [WARNING] Consultas fallidas: {failed_queries} (usaron valor por defecto)")
     
     if n_samples > 1:
-        print(f"   📊 E(B-V)_MW - Rango: {np.min(ebmv_mw_samples):.3f} - {np.max(ebmv_mw_samples):.3f} mag")
+        print(f"   [STATS] E(B-V)_MW - Rango: {np.min(ebmv_mw_samples):.3f} - {np.max(ebmv_mw_samples):.3f} mag")
         print(f"               Media: {np.mean(ebmv_mw_samples):.3f} ± {np.std(ebmv_mw_samples):.3f} mag")
     
     return ebmv_mw_samples
@@ -194,7 +194,7 @@ def validate_mw_extinction_distribution(n_test=1000):
     - P99: < 0.25 mag
     - Mínimo: > 0.005 mag (límite SFD98)
     """
-    print("🧪 VALIDACIÓN: Distribución E(B-V)_MW simulada")
+    print(" VALIDACIÓN: Distribución E(B-V)_MW simulada")
     
     ebmv_samples = sample_realistic_mw_extinction(n_samples=n_test)
     
@@ -209,7 +209,7 @@ def validate_mw_extinction_distribution(n_test=1000):
         'max': np.max(ebmv_samples)
     }
     
-    print(f"   📊 Estadísticas (n={n_test}):")
+    print(f"   [STATS] Estadisticas (n={n_test}):")
     print(f"      Media: {stats['mean']:.3f} ± {stats['std']:.3f}")
     print(f"      Mediana: {stats['median']:.3f}")
     print(f"      Rango: {stats['min']:.3f} - {stats['max']:.3f}")
@@ -224,9 +224,9 @@ def validate_mw_extinction_distribution(n_test=1000):
         'Max < 0.50': stats['max'] < 0.50
     }
     
-    print(f"   ✅ Validación:")
+    print(f"   [OK] Validacion:")
     for check, passed in checks.items():
-        status = "✅" if passed else "❌"
+        status = "[OK]" if passed else "[FAIL]"
         print(f"      {status} {check}")
     
     return stats, all(checks.values())
@@ -258,7 +258,7 @@ def create_extinction_map_visualization(n_samples=5000, save_path=None, show_plo
         Figura y ejes para personalización adicional
     """
     
-    print(f"🎨 GENERANDO MAPA DE EXTINCIÓN ZTF (n={n_samples})...")
+    print(f" GENERANDO MAPA DE EXTINCIÓN ZTF (n={n_samples})...")
     
     # Generar datos de extinción para footprint ZTF
     ra_samples, dec_samples = sample_ztf_field_coordinates(n_samples, random_state=42)
@@ -339,20 +339,20 @@ def create_extinction_map_visualization(n_samples=5000, save_path=None, show_plo
         # Guardar en alta resolución
         plt.savefig(save_path, dpi=300, bbox_inches='tight', 
                    facecolor='white', edgecolor='none')
-        print(f"   💾 Mapa guardado: {save_path}")
+        print(f"    Mapa guardado: {save_path}")
         
         # También guardar versión PDF para LaTeX
         pdf_path = save_path.replace('.png', '.pdf').replace('.jpg', '.pdf')
         plt.savefig(pdf_path, dpi=300, bbox_inches='tight', 
                    facecolor='white', edgecolor='none')
-        print(f"   📄 Versión PDF: {pdf_path}")
+        print(f"    Versión PDF: {pdf_path}")
     
     if show_plot:
         plt.show()
     else:
         plt.close()
     
-    print(f"   ✅ Mapa de extinción generado exitosamente")
+    print(f"   [OK] Mapa de extincion generado exitosamente")
     
     return fig, ax
 
@@ -377,7 +377,7 @@ def create_extinction_histogram_publication(n_samples=10000, save_path=None, sho
         Mostrar plot interactivo
     """
     
-    print(f"📊 GENERANDO HISTOGRAMA DE EXTINCIÓN (n={n_samples})...")
+    print(f"[STATS] GENERANDO HISTOGRAMA DE EXTINCION (n={n_samples})...")
     
     # Generar datos
     ebmv_samples = sample_realistic_mw_extinction(n_samples=n_samples, random_state=42)
@@ -482,15 +482,15 @@ def create_extinction_histogram_publication(n_samples=10000, save_path=None, sho
         pdf_path = save_path.replace('.png', '.pdf').replace('.jpg', '.pdf')
         plt.savefig(pdf_path, dpi=300, bbox_inches='tight', 
                    facecolor='white', edgecolor='none')
-        print(f"   💾 Histograma guardado: {save_path}")
-        print(f"   📄 Versión PDF: {pdf_path}")
+        print(f"    Histograma guardado: {save_path}")
+        print(f"    Versión PDF: {pdf_path}")
     
     if show_plot:
         plt.show()
     else:
         plt.close()
     
-    print(f"   ✅ Histograma generado exitosamente")
+    print(f"   [OK] Histograma generado exitosamente")
     
     return fig, (ax1, ax2)
 
@@ -512,14 +512,14 @@ def create_extinction_analysis_suite(output_dir="outputs/extinction_maps",
     - Metadatos completos para métodos
     """
     
-    print("🎨 GENERANDO SUITE COMPLETA DE ANÁLISIS DE EXTINCIÓN...")
-    print(f"   📁 Directorio: {output_dir}")
+    print(" GENERANDO SUITE COMPLETA DE ANÁLISIS DE EXTINCIÓN...")
+    print(f"    Directorio: {output_dir}")
     
     # Crear directorio
     os.makedirs(output_dir, exist_ok=True)
     
     # 1. Mapa de extinción 2D
-    print("\n1️⃣ Generando mapa 2D...")
+    print("\n Generando mapa 2D...")
     map_path = os.path.join(output_dir, "ztf_extinction_map.png")
     fig_map, ax_map = create_extinction_map_visualization(
         n_samples=n_samples_map, 
@@ -537,9 +537,9 @@ def create_batch_extinction_analysis_suite(coordinates, extinctions, output_dir,
     import pandas as pd
     from datetime import datetime
     
-    print(f"🎨 GENERANDO ANÁLISIS DE EXTINCIÓN PARA BATCH {batch_id}...")
-    print(f"   📁 Directorio: {output_dir}")
-    print(f"   📊 Datos: {len(coordinates)} coordenadas, {len(extinctions)} extinción")
+    print(f" GENERANDO ANÁLISIS DE EXTINCIÓN PARA BATCH {batch_id}...")
+    print(f"    Directorio: {output_dir}")
+    print(f"   [STATS] Datos: {len(coordinates)} coordenadas, {len(extinctions)} extincion")
     
     # Crear directorio
     os.makedirs(output_dir, exist_ok=True)
@@ -549,7 +549,7 @@ def create_batch_extinction_analysis_suite(coordinates, extinctions, output_dir,
     decs = [coord[1] for coord in coordinates]
     
     # 1. Mapa de extinción 2D con datos reales
-    print("\n1️⃣ Generando mapa 2D con datos reales...")
+    print("\n 1 Generando mapa 2D con datos reales...")
     fig, ax = plt.subplots(figsize=(12, 8))
     
     # Scatter plot de datos reales
@@ -573,7 +573,7 @@ def create_batch_extinction_analysis_suite(coordinates, extinctions, output_dir,
     plt.close()
     
     # 2. Histograma de extinción
-    print("2️⃣ Generando histograma...")
+    print("2 Generando histograma...")
     fig, ax = plt.subplots(figsize=(10, 6))
     
     ax.hist(extinctions, bins=20, alpha=0.7, color='skyblue', edgecolor='black')
@@ -594,7 +594,7 @@ def create_batch_extinction_analysis_suite(coordinates, extinctions, output_dir,
     plt.close()
     
     # 3. Guardar datos CSV
-    print("3️⃣ Guardando datos CSV...")
+    print("3 Guardando datos CSV...")
     df = pd.DataFrame({
         'ra': ras,
         'dec': decs,
@@ -605,7 +605,7 @@ def create_batch_extinction_analysis_suite(coordinates, extinctions, output_dir,
     df.to_csv(csv_path, index=False)
     
     # 4. Metadatos
-    print("4️⃣ Creando metadatos...")
+    print("4 Creando metadatos...")
     metadata = {
         'batch_id': batch_id,
         'timestamp': datetime.now().isoformat(),
@@ -630,11 +630,11 @@ def create_batch_extinction_analysis_suite(coordinates, extinctions, output_dir,
     with open(meta_path, 'w') as f:
         json.dump(metadata, f, indent=2)
     
-    print(f"\n✅ ANÁLISIS COMPLETADO!")
-    print(f"   🗺️ Mapa: {map_path}")
-    print(f"   📊 Histograma: {hist_path}")
-    print(f"   📋 Datos: {csv_path}")
-    print(f"   📝 Metadatos: {meta_path}")
+    print(f"\n[OK] ANALISIS COMPLETADO!")
+    print(f"   [MAP] Mapa: {map_path}")
+    print(f"   [STATS] Histograma: {hist_path}")
+    print(f"    Datos: {csv_path}")
+    print(f"    Metadatos: {meta_path}")
     
     return {
         'map': map_path,
@@ -644,7 +644,7 @@ def create_batch_extinction_analysis_suite(coordinates, extinctions, output_dir,
     }
     
     # 2. Histograma de distribución
-    print("\n2️⃣ Generando histograma...")
+    print("\n 2 Generando histograma...")
     hist_path = os.path.join(output_dir, "ztf_extinction_histogram.png")
     fig_hist, ax_hist = create_extinction_histogram_publication(
         n_samples=n_samples_hist, 
@@ -653,7 +653,7 @@ def create_batch_extinction_analysis_suite(coordinates, extinctions, output_dir,
     )
     
     # 3. Datos para análisis posterior
-    print("\n3️⃣ Generando datos CSV...")
+    print("\n 3 Generando datos CSV...")
     ebmv_data = sample_realistic_mw_extinction(n_samples=n_samples_hist, random_state=42)
     ra_data, dec_data = sample_ztf_field_coordinates(n_samples_hist, random_state=42)
     
@@ -668,7 +668,7 @@ def create_batch_extinction_analysis_suite(coordinates, extinctions, output_dir,
     
     csv_path = os.path.join(output_dir, "ztf_extinction_data.csv")
     df_data.to_csv(csv_path, index=False, float_format='%.6f')
-    print(f"   💾 Datos guardados: {csv_path}")
+    print(f"    Datos guardados: {csv_path}")
     
     # 4. Estadísticas resumen
     stats_summary = {
@@ -691,7 +691,7 @@ def create_batch_extinction_analysis_suite(coordinates, extinctions, output_dir,
     df_stats = pd.DataFrame(stats_summary)
     stats_path = os.path.join(output_dir, "ztf_extinction_statistics.csv")
     df_stats.to_csv(stats_path, index=False, float_format='%.6f')
-    print(f"   📊 Estadísticas guardadas: {stats_path}")
+    print(f"   [STATS] Estadisticas guardadas: {stats_path}")
     
     # 5. Metadatos para reproducibilidad
     metadata = {
@@ -714,19 +714,19 @@ def create_batch_extinction_analysis_suite(coordinates, extinctions, output_dir,
     metadata_path = os.path.join(output_dir, "metadata.json")
     with open(metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2)
-    print(f"   🏷️ Metadatos guardados: {metadata_path}")
+    print(f"    Metadatos guardados: {metadata_path}")
     
-    print(f"\n✅ SUITE COMPLETA GENERADA EN: {output_dir}")
-    print("   📊 Para paper: extinction_map.pdf + extinction_histogram.pdf")
-    print("   📈 Para análisis: extinction_data.csv + extinction_statistics.csv")
-    print("   🏷️ Para métodos: metadata.json")
+    print(f"\n[OK] SUITE COMPLETA GENERADA EN: {output_dir}")
+    print("   [STATS] Para paper: extinction_map.pdf + extinction_histogram.pdf")
+    print("   [DATA] Para analisis: extinction_data.csv + extinction_statistics.csv")
+    print("    Para métodos: metadata.json")
     
     return output_dir
 
 
 if __name__ == "__main__":
     # Test del sistema
-    print("🗺️ TESTING: Sistema de extinción MW realista")
+    print("[TEST] TESTING: Sistema de extincion MW realista")
     
     # 1. Validación estadística
     validate_mw_extinction_distribution(1000)
@@ -734,7 +734,7 @@ if __name__ == "__main__":
     print("\n" + "="*60)
     
     # 2. Generación de visualizaciones para paper
-    print("🎨 GENERANDO VISUALIZACIONES PARA PUBLICACIÓN...")
+    print(" GENERANDO VISUALIZACIONES PARA PUBLICACIÓN...")
     
     # Opción rápida: solo validación
     generate_plots = input("\n¿Generar mapas visuales para paper? (y/n): ").lower() == 'y'
@@ -747,14 +747,14 @@ if __name__ == "__main__":
             n_samples_hist=10000
         )
         
-        print(f"\n🎉 ¡LISTO PARA PAPER!")
-        print(f"   📁 Archivos en: {output_dir}")
-        print(f"   📊 Figuras: extinction_map.pdf, extinction_histogram.pdf")
-        print(f"   📈 Datos: extinction_data.csv, extinction_statistics.csv")
+        print(f"\n ¡LISTO PARA PAPER!")
+        print(f"    Archivos en: {output_dir}")
+        print(f"   [STATS] Figuras: extinction_map.pdf, extinction_histogram.pdf")
+        print(f"   [DATA] Datos: extinction_data.csv, extinction_statistics.csv")
         
     else:
-        print("\n✅ Solo validación completada. Para generar mapas:")
+        print("\n[OK] Solo validacion completada. Para generar mapas:")
         print("   from dust_maps import create_extinction_analysis_suite")
         print("   create_extinction_analysis_suite()")
         
-    print("\n🔬 Sistema de mapas de polvo listo para producción!")
+    print("\n Sistema de mapas de polvo listo para producción!")

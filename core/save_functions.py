@@ -110,7 +110,7 @@ def save_projection_results(df_projected, lc_df, mag, mag_noisy, survey_params,
         maglimit_min = df_projected['maglimit'].min()
         maglimit_max = df_projected['maglimit'].max()
         status = "SUCCESS"
-        print(f"   ✅ Proyección completada: {len(df_projected)} puntos")
+        print(f"   [OK] Proyeccion completada: {len(df_projected)} puntos")
     else:
         detecciones = 0
         upper_limits = 0
@@ -120,7 +120,7 @@ def save_projection_results(df_projected, lc_df, mag, mag_noisy, survey_params,
         maglimit_min = None
         maglimit_max = None
         status = "NO_OBSERVATIONS"
-        print("   ⚠️ Sin observaciones - guardando archivos vacíos")
+        print("   [WARNING] Sin observaciones - guardando archivos vacios")
     
     summary_stats = {
         'survey': survey_params['SURVEY'],
@@ -361,7 +361,7 @@ def create_master_index(output_dir="outputs"):
                         index_data.append(summary_row)
                         
                 except Exception as e:
-                    print(f"   ⚠️ Error leyendo {summary_path}: {e}")
+                    print(f"   [WARNING] Error leyendo {summary_path}: {e}")
     
     if index_data:
         # Crear DataFrame maestro
@@ -380,8 +380,8 @@ def create_master_index(output_dir="outputs"):
         # Estadísticas por status si existe la columna
         if 'status' in master_df.columns:
             status_counts = master_df['status'].value_counts()
-            print(f"   ✅ Exitosas: {status_counts.get('SUCCESS', 0)}")
-            print(f"   ⚠️ Sin observaciones: {status_counts.get('NO_OBSERVATIONS', 0)}")
+            print(f"   [OK] Exitosas: {status_counts.get('SUCCESS', 0)}")
+            print(f"   [WARNING] Sin observaciones: {status_counts.get('NO_OBSERVATIONS', 0)}")
         
         # Crear resumen por SN y survey
         if 'sn_name' in master_df.columns and 'survey' in master_df.columns:
@@ -460,5 +460,5 @@ def run_multiple_projections(survey_list=None, target_list=None, n_runs=3, **kwa
             'timestamp': timestamp
         })
     
-    print(f"\n✅ {n_runs} proyecciones completadas sin conflictos")
+    print(f"\n[OK] {n_runs} proyecciones completadas sin conflictos")
     return results

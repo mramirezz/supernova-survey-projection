@@ -54,11 +54,11 @@ def run_custom_batch(n_runs: int, redshift_max: float = 0.3,
     filter_band : str
         Filtro fotométrico para síntesis y proyección
     """
-    print(f"🔬 Configurando batch personalizado...")
+    print(f">> Configurando batch personalizado...")
     
     # Configurar tipos de SN
     if sn_types is None or len(sn_types) == 0:
-        print("❌ Error: Debes especificar al menos un tipo de supernova con --sn-types (Ia, Ibc, II)")
+        print("[ERROR] Debes especificar al menos un tipo de supernova con --sn-types (Ia, Ibc, II)")
         return False
 
     
@@ -75,46 +75,46 @@ def run_custom_batch(n_runs: int, redshift_max: float = 0.3,
     # Actualizar descripción
     config.description = f"Batch personalizado - {n_runs} simulaciones"
     
-    print(f"📋 Configuración:")
-    print(f"   • Simulaciones: {n_runs}")
-    print(f"   • Redshift max: {redshift_max}")
-    print(f"   • Tipos SN: {sn_types}")
-    print(f"   • Survey: {survey}")
-    print(f"   • Filtro: {filter_band}")
-    print(f"   • Semilla: {seed}")
+    print(f"Configuracion:")
+    print(f"    Simulaciones: {n_runs}")
+    print(f"    Redshift max: {redshift_max}")
+    print(f"    Tipos SN: {sn_types}")
+    print(f"    Survey: {survey}")
+    print(f"    Filtro: {filter_band}")
+    print(f"    Semilla: {seed}")
     print()
     
     # Ejecutar
     try:
-        print("🚀 Iniciando simulaciones...")
+        print(">> Iniciando simulaciones...")
         results = run_scientific_batch(config)
         
-        print("✅ Simulaciones completadas")
-        print(f"📊 Tasa de éxito: {results['run_statistics']['success_rate']:.1%}")
-        print(f"⏱️  Duración: {results['batch_metadata']['total_duration_formatted']}")
-        print(f"🔍 Detecciones: {results['detection_statistics']['total_detections']}")
-        print(f"📝 Observaciones: {results['detection_statistics']['total_observations']}")
+        print("[OK] Simulaciones completadas")
+        print(f" Tasa de éxito: {results['run_statistics']['success_rate']:.1%}")
+        print(f"  Duración: {results['batch_metadata']['total_duration_formatted']}")
+        print(f" Detecciones: {results['detection_statistics']['total_detections']}")
+        print(f" Observaciones: {results['detection_statistics']['total_observations']}")
         
         return True
         
     except Exception as e:
-        print(f"❌ Error durante las simulaciones: {str(e)}")
+        print(f"[ERROR] Error durante las simulaciones: {str(e)}")
         return False
 
 def list_recent_batches():
     """Lista los últimos 10 batches"""
-    print("📋 Batches recientes:")
+    print("Batches recientes:")
     print("-" * 40)
     
     batch_dir = Path("outputs/batch_runs")
     if not batch_dir.exists():
-        print("ℹ️  No hay batches disponibles")
+        print("[INFO] No hay batches disponibles")
         return
     
     batch_dirs = sorted([d for d in batch_dir.iterdir() if d.is_dir()], reverse=True)[:10]
     
     if not batch_dirs:
-        print("ℹ️  No hay batches disponibles")
+        print("[INFO] No hay batches disponibles")
         return
     
     for i, batch_path in enumerate(batch_dirs):
@@ -190,10 +190,10 @@ Ejemplos de uso:
         )
         
         if success:
-            print("\n🎉 Operación completada exitosamente")
+            print("\n[OK] Operacion completada exitosamente")
             sys.exit(0)
         else:
-            print("\n❌ Operación falló")
+            print("\n[ERROR] Operacion fallo")
             sys.exit(1)
 
 if __name__ == "__main__":

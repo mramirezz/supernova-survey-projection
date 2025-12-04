@@ -1,0 +1,466 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{geometry}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+
+\geometry{margin=2.5cm}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+
+\lstset{style=mystyle}
+
+\title{\textbf{Pipeline Científico de Proyección de Supernovas} \\ 
+       \large De Espectro a Curva de Luz Proyectada sobre ZTF}
+\author{Sistema de Simulación de Supernovas}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Este documento describe el pipeline científico completo para proyectar supernovas sobre observaciones reales del survey ZTF (Zwicky Transient Facility). El proceso transforma espectros teóricos de supernovas en curvas de luz observadas, aplicando correcciones cosmológicas, extinción interestelar, fotometría sintética, y proyección temporal sobre datos reales de observación.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introducción}
+
+El pipeline de proyección transforma espectros sintéticos de supernovas en observaciones realistas que podrían obtenerse con el survey ZTF. El proceso involucra 11 pasos principales que consideran efectos cosmológicos, extinción por polvo, características instrumentales del telescopio, y limitaciones observacionales.
+
+\subsection{Input del Sistema}
+
+El sistema toma como entrada archivos \texttt{.dat} que contienen espectros de supernovas en múltiples épocas (fases):
+
+\begin{lstlisting}[language=bash, caption=Formato de archivo de espectro]
+# time: -10.0        <- Fase relativa al maximo (dias)
+# SPEC
+# WAVE   FLUX
+3000    1.234e-15    <- longitud de onda (Angstrom), flujo
+3001    1.456e-15
+...
+\end{lstlisting}
+
+\subsection{Output del Sistema}
+
+El resultado es un DataFrame con observaciones proyectadas:
+\begin{itemize}
+    \item \texttt{mjd}: Tiempos de observaciones ZTF (Modified Julian Date)
+    \item \texttt{magnitud\_proyectada}: Magnitud de la SN en esos tiempos
+    \item \texttt{maglimit}: Límite de detección del survey
+    \item \texttt{detected}: Booleano indicando detección
+    \item \texttt{upperlimit}: Indicador de upper limit ('T'/'F')
+\end{itemize}
+
+\section{Pipeline Científico Detallado}
+
+\subsection{PASO 1: Lectura de Espectro}
+
+\textbf{Función:} \texttt{leer\_spec(path\_spec)}
+
+Lee el archivo \texttt{.dat} y extrae espectros para cada fase temporal.
+
+\begin{lstlisting}[language=Python, caption=Lectura de espectro]
+ESPECTRO, fases = leer_spec(path_spec)
+# Output: Lista de DataFrames con [wave, flux] por cada fase
+\end{lstlisting}
+
+\textbf{Resultado:}
+\begin{itemize}
+    \item \texttt{ESPECTRO}: Lista de DataFrames con columnas $[\lambda, F_\lambda]$
+    \item \texttt{fases}: Array de tiempos relativos al máximo (días)
+\end{itemize}
+
+\subsection{PASO 2: Correcciones Cosmológicas y Extinción}
+
+\textbf{Función:} \texttt{correct\_redeening()}
+
+Aplica el orden físico correcto de efectos observacionales:
+
+\begin{equation}
+F_{\text{obs}}(\lambda) = F_{\text{int}}(\lambda) \times A_{\text{host}} \times (1+z) \times A_{\text{MW}} \times D_L^{-2}
+\end{equation}
+
+donde:
+\begin{itemize}
+    \item $F_{\text{int}}$: Flujo intrínseco de la SN
+    \item $A_{\text{host}}$: Extinción en galaxia anfitriona
+    \item $(1+z)$: Factor de redshift cosmológico
+    \item $A_{\text{MW}}$: Extinción en Vía Láctea
+    \item $D_L$: Distancia de luminosidad
+\end{itemize}
+
+\begin{lstlisting}[language=Python, caption=Correcciones cosmológicas]
+ESPECTRO_corr, fases = correct_redeening(
+    ESPECTRO, fases, 
+    z=z_proy,                    # Redshift proyectado
+    ebmv_host=ebmv_host,         # E(B-V) del host
+    ebmv_mw=ebmv_mw,             # E(B-V) de Via Lactea
+    reverse=True,                # Aplicar efectos (no corregir)
+    use_DL=True                  # Usar distancia luminosidad
+)
+\end{lstlisting}
+
+\subsubsection{Extinción por Polvo}
+
+La extinción se calcula usando la ley de Cardelli, Clayton \& Mathis (1989):
+
+\begin{equation}
+A_\lambda = E(B-V) \times \left[ a(x) \times R_V + b(x) \right]
+\end{equation}
+
+donde $x = 1/\lambda$ (en $\mu$m$^{-1}$) y $R_V = 3.1$ es el valor estándar.
+
+\subsubsection{Redshift Cosmológico}
+
+El espectro se desplaza al rojo:
+
+\begin{align}
+\lambda_{\text{obs}} &= \lambda_{\text{emit}} \times (1 + z) \\
+F_{\lambda,\text{obs}} &= \frac{F_{\lambda,\text{emit}}}{1 + z}
+\end{align}
+
+\subsubsection{Distancia de Luminosidad}
+
+Se calcula numéricamente integrando:
+
+\begin{equation}
+D_L(z) = \frac{c(1+z)}{H_0} \int_0^z \frac{dz'}{\sqrt{\Omega_M(1+z')^3 + \Omega_\Lambda}}
+\end{equation}
+
+con parámetros cosmológicos estándar: $H_0 = 70$ km/s/Mpc, $\Omega_M = 0.3$, $\Omega_\Lambda = 0.7$.
+
+\subsection{PASO 3: Carga de Respuesta del Filtro}
+
+\textbf{Función:} \texttt{pd.read\_csv(path\_response)}
+
+Carga la curva de respuesta del filtro fotométrico (ej: filtro $r$ de ZTF).
+
+\begin{equation}
+R(\lambda) : \text{función de transmisión del filtro}
+\end{equation}
+
+La respuesta define cómo el sistema (filtro + detector + atmósfera) transmite luz en función de la longitud de onda.
+
+\subsection{PASO 4: Fotometría Sintética }
+
+\textbf{Función:} \texttt{Syntetic\_photometry\_v2()}
+
+\textbf{Este es el paso clave} que convierte espectros en curvas de luz.
+
+\begin{lstlisting}[language=Python, caption=Fotometría sintética]
+flux, overlap = Syntetic_photometry_v2(
+    spec['wave'], spec['flux'],
+    response['wave'], response['response']
+)
+\end{lstlisting}
+
+\subsubsection{Cálculo del Flujo}
+
+El flujo en el filtro se calcula mediante:
+
+\begin{equation}
+F_{\text{filtro}} = \frac{\int F_\lambda \times R(\lambda) \times \lambda \, d\lambda}{\int R(\lambda) \times \lambda \, d\lambda}
+\end{equation}
+
+donde:
+\begin{itemize}
+    \item $F_\lambda$: Densidad espectral de flujo
+    \item $R(\lambda)$: Respuesta del filtro
+    \item La integral se calcula numéricamente usando AUC (Area Under Curve)
+\end{itemize}
+
+\subsubsection{Cálculo de Overlap}
+
+El overlap mide la cobertura espectral:
+
+\begin{equation}
+\text{overlap} = \frac{\int_{\text{intersección}} R(\lambda) \, d\lambda}{\int_{\text{total}} R(\lambda) \, d\lambda}
+\end{equation}
+
+Se requiere overlap $> 0.95$ (95\%) para fotometría confiable.
+
+\textbf{Resultado:} Un valor de flujo por cada fase temporal $\rightarrow$ \textbf{Curva de luz sintética}
+
+\subsection{PASO 5: Suavizado LOESS}
+
+\textbf{Función:} \texttt{Loess\_fit()}
+
+Aplica regresión local ponderada (LOcally WEighted Scatterplot Smoothing) para:
+\begin{itemize}
+    \item Eliminar ruido en la curva de luz
+    \item Interpolar gaps temporales
+    \item Generar curva continua y suavizada
+\end{itemize}
+
+\begin{lstlisting}[language=Python, caption=Suavizado LOESS]
+df_loess = Loess_fit(
+    LC_df, 
+    selected_filter,
+    alpha=alpha_usado,    # Parametro de suavizado
+    corte=30             # Punto de corte para cambio de alpha
+)
+\end{lstlisting}
+
+El parámetro $\alpha$ controla el grado de suavizado:
+\begin{itemize}
+    \item $\alpha = [0.5, 0.5]$ para $N > 40$ puntos
+    \item $\alpha = [0.5]$ para $N \leq 40$ puntos
+\end{itemize}
+
+\subsection{PASO 6: Conversión a Magnitudes}
+
+La curva de luz en flujo se convierte al sistema de magnitudes:
+
+\begin{equation}
+m = -2.5 \log_{10}\left(\frac{F}{F_0}\right)
+\end{equation}
+
+donde $F_0$ es el flujo de referencia del filtro (constantes fotométricas: \texttt{cteB, cteV, cteR}, etc.).
+
+\begin{lstlisting}[language=Python, caption=Calibración fotométrica]
+flux_calibrado = flux / constante_filtro
+mag = -2.5 * np.log10(flux_calibrado)
+\end{lstlisting}
+
+\subsection{PASO 7: Aplicación de Ruido Fotométrico}
+
+Simula incertezas observacionales realistas:
+
+\begin{equation}
+F_{\text{noisy}} = \mathcal{N}\left(F, \, \sigma = 0.15 \sqrt{F}\right)
+\end{equation}
+
+donde:
+\begin{itemize}
+    \item $\mathcal{N}$: Distribución normal
+    \item $\sigma \propto \sqrt{F}$: Ruido poissoniano (estadística de fotones)
+    \item Factor 0.15: Ruido instrumental adicional (15\%)
+\end{itemize}
+
+\begin{lstlisting}[language=Python, caption=Aplicación de ruido]
+flux_noisy = np.random.normal(
+    loc=flux, 
+    scale=np.sqrt(np.abs(flux)) * 0.15
+)
+mag_noisy = -2.5 * np.log10(flux_noisy)
+\end{lstlisting}
+
+\textbf{Resultado:} Curva de luz realista con incertezas fotométricas
+
+\subsection{PASO 7.5: Conversión Temporal Crítica }
+
+\textbf{Bug resuelto}: Para SNe core-collapse (Ibc, Ib, Ic), los templates están en fases relativas al máximo, pero la proyección requiere MJD absolutos.
+
+\begin{lstlisting}[language=Python, caption=Conversión temporal]
+if tipo in ['Ibc', 'Ib', 'Ic']:
+    maximum = maximo_lc(tipo, sn_name)  # MJD del maximo
+    mjd_absolute = maximum + lc_df['fase']
+    lc_df['fase'] = mjd_absolute
+\end{lstlisting}
+
+\textbf{Ejemplo del problema resuelto:}
+\begin{itemize}
+    \item Fases relativas: $[-10, 0, +20]$ días
+    \item Máximo: MJD = 53671
+    \item MJD pivote ZTF: 59000
+    \item Sin corrección: desplazamiento $\approx$ 5329 días $\rightarrow$ fechas del año 1846!
+    \item Con corrección: MJD absolutos $= [53661, 53671, 53691]$ $\rightarrow$ fechas correctas
+\end{itemize}
+
+\subsection{PASO 8: PROYECCIÓN TEMPORAL }
+
+\textbf{Función:} \texttt{field\_projection()}
+
+\textbf{Este es el corazón de la proyección}: coloca la curva de luz sintética sobre observaciones reales de ZTF.
+
+\begin{lstlisting}[language=Python, caption=Proyección temporal]
+df_projected = field_projection(
+    fases=lc_df['fase'],          # Tiempos de la SN (MJD)
+    flux_y=mag_noisy,              # Magnitudes con ruido
+    df_obslog=df_ztf,              # Obs. reales ZTF
+    tipo=tipo,                     # Tipo de SN
+    selected_filter='r',           # Filtro de proyeccion
+    offset=np.arange(-30, 30, 1),  # Offsets temporales
+    sn=sn_name                     # Nombre de la SN
+)
+\end{lstlisting}
+
+\subsubsection{Algoritmo de Proyección}
+
+\textbf{1. Selección de campo/OID}
+
+Selecciona aleatoriamente un objeto (OID) del catálogo ZTF con observaciones en el filtro deseado.
+
+\textbf{2. Cálculo del máximo}
+
+Obtiene el MJD del máximo de la SN usando la función \texttt{maximo\_lc()}.
+
+\textbf{3. Búsqueda de offset temporal óptimo}
+
+Para alinear la curva de luz de la SN con las observaciones ZTF:
+
+\begin{align}
+\text{MJD}_{\text{pivote}} &= \text{primera observación ZTF} \\
+\text{desplazamiento} &= \text{MJD}_{\text{pivote}} - \text{máximo} + \text{offset} \\
+\text{fases}_{\text{ajustadas}} &= \text{fases}_{\text{SN}} + \text{desplazamiento}
+\end{align}
+
+Se prueban offsets en el rango $[-30, +30]$ días para maximizar el overlap temporal.
+
+\textbf{4. Filtrado de observaciones}
+
+Selecciona observaciones ZTF que caen dentro del rango temporal de la SN:
+
+\begin{equation}
+\text{obs}_{\text{válidas}} = \left\{ \text{obs} \, | \, \text{MJD}_{\min}^{\text{SN}} \leq \text{MJD}_{\text{obs}} \leq \text{MJD}_{\max}^{\text{SN}} \right\}
+\end{equation}
+
+\textbf{5. Interpolación de magnitudes}
+
+Interpola linealmente la curva de luz de la SN en los tiempos exactos de las observaciones ZTF:
+
+\begin{lstlisting}[language=Python, caption=Interpolación]
+interpolation_function = interp1d(
+    fases_ajustadas, mag_noisy, 
+    kind='linear', 
+    fill_value='extrapolate'
+)
+mag_proyectada = interpolation_function(ztf_obs['mjd'])
+\end{lstlisting}
+
+\textbf{6. Aplicación de magnitude limits}
+
+Compara la magnitud proyectada con el límite de detección del survey:
+
+\begin{equation}
+m_{\text{final}} = \min(m_{\text{proyectada}}, m_{\text{limit,ZTF}})
+\end{equation}
+
+\begin{equation}
+\text{detected} = 
+\begin{cases}
+\text{True} & \text{si } m_{\text{proyectada}} < m_{\text{limit}} \\
+\text{False} & \text{si } m_{\text{proyectada}} \geq m_{\text{limit}}
+\end{cases}
+\end{equation}
+
+\subsubsection{Output de la Proyección}
+
+DataFrame con las siguientes columnas:
+\begin{itemize}
+    \item \texttt{mjd}: Tiempos de observaciones ZTF
+    \item \texttt{magnitud\_proyectada}: Magnitud de la SN en esos tiempos
+    \item \texttt{maglimit}: Límite de detección del survey en cada observación
+    \item \texttt{detected}: \texttt{True} si $m < m_{\text{limit}}$, \texttt{False} si no
+    \item \texttt{upperlimit}: 'F' para detecciones, 'T' para upper limits
+\end{itemize}
+
+\subsection{PASO 9: Cálculo de Estadísticas}
+
+Se calculan métricas de detectabilidad:
+
+\begin{align}
+N_{\text{detecciones}} &= \sum \mathbb{1}_{\text{detected}} \\
+N_{\text{upper limits}} &= N_{\text{total}} - N_{\text{detecciones}} \\
+\text{Tasa de detección} &= \frac{N_{\text{detecciones}}}{N_{\text{total}}} \times 100\%
+\end{align}
+
+\subsection{PASO 10: Guardado de Resultados}
+
+\textbf{Función:} \texttt{save\_projection\_results()}
+
+Guarda múltiples archivos:
+\begin{itemize}
+    \item \texttt{synthetic\_lc\_*.csv}: Curva de luz sintética
+    \item \texttt{projection\_*.csv}: Observaciones proyectadas
+    \item \texttt{summary\_*.csv}: Estadísticas de detección
+    \item \texttt{config\_*.csv}: Parámetros de configuración
+    \item \texttt{plots\_*.png}: Visualizaciones científicas
+\end{itemize}
+
+\subsection{PASO 11: Actualización de Índice Maestro}
+
+\textbf{Función:} \texttt{create\_master\_index()}
+
+Mantiene un índice maestro (\texttt{MASTER\_INDEX.csv}) de todas las simulaciones para:
+\begin{itemize}
+    \item Búsqueda rápida de resultados
+    \item Análisis estadístico cross-batch
+    \item Reproducibilidad científica
+\end{itemize}
+
+\section{Resumen del Flujo}
+
+\begin{center}
+\begin{tabular}{ll}
+\hline
+\textbf{Paso} & \textbf{Transformación} \\
+\hline
+Input & Espectro template (.dat) \\
+$\downarrow$ & Correcciones cosmológicas + extinción \\
+& Espectro observado \\
+$\downarrow$ & Fotometría sintética (convolución con filtro) \\
+& Curva de luz sintética (flujo vs fase) \\
+$\downarrow$ & LOESS smoothing \\
+& Curva suavizada \\
+$\downarrow$ & Conversión a magnitudes + ruido \\
+& Curva de luz realista (mag vs MJD) \\
+$\downarrow$ & PROYECCIÓN: Interpolar en tiempos ZTF \\
+Output & Curva proyectada (detecciones + upper limits) \\
+\hline
+\end{tabular}
+\end{center}
+
+\section{Definición de Proyección}
+
+\textbf{La proyección es:} Tomar la curva de luz sintética de una supernova y ``colocarla'' en las fechas de observaciones reales de ZTF, aplicando:
+\begin{enumerate}
+    \item Alineación temporal mediante offsets
+    \item Interpolación en tiempos de observación exactos
+    \item Aplicación de límites de detección del survey
+    \item Clasificación en detecciones vs upper limits
+\end{enumerate}
+
+Esto permite simular qué se habría observado si esa supernova hubiera ocurrido en el footprint y período de observación de ZTF.
+
+\section{Referencias}
+
+\begin{itemize}
+    \item Cardelli, Clayton \& Mathis (1989): Ley de extinción interestelar
+    \item Schlegel, Finkbeiner \& Davis (1998): Mapas SFD98 de extinción galáctica
+    \item Bellm et al. (2019): ZTF Survey Description
+    \item Cleveland (1979): LOESS regression algorithm
+\end{itemize}
+
+\end{document}

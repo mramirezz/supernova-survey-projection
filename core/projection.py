@@ -35,7 +35,7 @@ def field_projection(fases, flux_y, df_obslog, tipo, selected_filter, offset, sn
                 print(f"📅 Días únicos con observaciones: {df_filtered['mjd_day'].nunique()}")
                 print(f"📊 Observaciones totales → filtradas: {len(df_oid)} → {len(df_filtered)}")
             else:
-                print(f"⚠️ No se encontraron observaciones para OID: {selected_field}")
+                print(f"[WARNING] No se encontraron observaciones para OID: {selected_field}")
                 df_filtered = df_oid
         else:
             raise ValueError("El archivo obslog debe tener columna 'field' o 'oid'")
@@ -49,12 +49,12 @@ def field_projection(fases, flux_y, df_obslog, tipo, selected_filter, offset, sn
 
     #if len(df_filtered) < 7:
     #    field_info = f"campo/OID {selected_field}" if selected_field else "datos disponibles"
-    #    raise ValueError(f"❌ No hay suficientes observaciones (mínimo 7) en {field_info} con filtro {selected_filter}. Encontradas: {len(df_filtered)}")
+    #    raise ValueError(f"[ERROR] No hay suficientes observaciones (minimo 7) en {field_info} con filtro {selected_filter}. Encontradas: {len(df_filtered)}")
 
     # ✔️ Verificar que tenemos observaciones disponibles
     if len(df_filtered) == 0:
         field_info = f"OID {selected_field}" if selected_field else "datos disponibles"
-        raise ValueError(f"❌ No hay observaciones en {field_info} con filtro {selected_filter}")
+        raise ValueError(f"[ERROR] No hay observaciones en {field_info} con filtro {selected_filter}")
     
     # ✔️ Usar todas las observaciones disponibles (sin restricción de mínimo 7)
     df_filtered_cut = df_filtered.copy()
@@ -80,7 +80,7 @@ def field_projection(fases, flux_y, df_obslog, tipo, selected_filter, offset, sn
     # ✔️ Verificar si la supernova es observable
     if len(df_filtered_cut) == 0:
         field_info = f"OID {selected_field}" if selected_field else "campo seleccionado"
-        print(f"❌ SUPERNOVA NO OBSERVABLE")
+        print(f"[ERROR] SUPERNOVA NO OBSERVABLE")
         print(f"   • Motivo: Sin observaciones en rango temporal de la SN")
         print(f"   • Campo/OID: {field_info}")
         print(f"   • Filtro: {selected_filter}")
@@ -145,7 +145,7 @@ def field_projection(fases, flux_y, df_obslog, tipo, selected_filter, offset, sn
     detection_rate = (detections / total_points * 100) if total_points > 0 else 0
     
     field_info = f"OID {selected_field}" if selected_field else "campo seleccionado"
-    print(f"\n✅ SUPERNOVA OBSERVABLE")
+    print(f"\n[OK] SUPERNOVA OBSERVABLE")
     print(f"   • Campo/OID: {field_info}")
     print(f"   • Puntos proyectados: {total_points}")
     print(f"   • Detecciones: {detections}")

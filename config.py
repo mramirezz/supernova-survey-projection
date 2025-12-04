@@ -89,6 +89,9 @@ PROCESSING_CONFIG = {
     "offset_range": [-30, 30],        # Rango de offsets temporales (días)
     "offset_step": 1,                 # Paso del offset
     
+    # Campo fijo para pruebas (None = aleatorio)
+    "fixed_field": "ZTF18abdimfk",              # Ej: "ZTF18aaqeasu" para siempre usar ese campo
+    
     # Debug y visualización
     "show_debug_plots": False         # Mostrar gráfico de debug en field_projection
 }
