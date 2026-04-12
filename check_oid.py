@@ -1,7 +1,7 @@
 import pandas as pd
 
 # Cargar grilla
-df = pd.read_csv('data/grid_diffmaglim_ZTF.csv')
+df = pd.read_csv('data/ZTF_observing_log_complete.csv')
 
 # Filtrar por OID y filtro
 oid_data = df[(df['oid'] == 'ZTF19ablfrui') & (df['filter'] == 'r')]

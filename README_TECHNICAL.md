@@ -230,7 +230,7 @@ data/IIn/
 ### **Datos auxiliares:**
 ```
 data/
-├── grid_diffmaglim_ZTF.csv  # Límites de detección ZTF
+├── ZTF_observing_log_complete.csv  # Límites de detección ZTF
 ├── obslog_I.csv             # Log de observaciones
 └── ...
 ```

@@ -9,7 +9,7 @@ fases_sn = [51525.0, 51660.0]  # Rango aproximado
 obs_proyectadas = [58681.458, 58684.462, 58692.485]
 
 # Grilla del OID
-df = pd.read_csv('data/grid_diffmaglim_ZTF.csv')
+df = pd.read_csv('data/ZTF_observing_log_complete.csv')
 oid_data = df[(df['oid'] == 'ZTF19ablfrui') & (df['filter'] == 'r')].sort_values('mjd')
 mjd_pivote = oid_data.iloc[0]['mjd']
 

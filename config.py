@@ -40,7 +40,7 @@ PATHS = {
 # ============================
 SURVEY_CONFIG = {
     "ZTF": {
-        "obslog_file": "grid_diffmaglim_ZTF.csv",  # Relativo a data_dir
+        "obslog_file": "ZTF_observing_log_complete.csv",  # Relativo a data_dir
         "projection_filter": "r",                  # Filtro para grilla de fechas
         "target_column": "oid",                    # Columna que identifica targets
         "description": "Zwicky Transient Facility"
@@ -88,12 +88,85 @@ PROCESSING_CONFIG = {
     # Proyección
     "offset_range": [-30, 30],        # Rango de offsets temporales (días)
     "offset_step": 1,                 # Paso del offset
+    # Overrides por tipo (p.ej. para forzar ver fases tardías en II)
+    # Formato: {"II": [min_days, max_days], ...}
+    # Nota: se aplica ANTES de construir np.arange(min, max, step).
+    "offset_range_by_type": {
+        "II": [-120, 120],
+    },
+
+    # Redshift max para batches (si no se pasa por CLI)
+    # Se usa para construir el rango (0.01, redshift_max)
+    "redshift_max": 0.5,
+
+    # Redshift fijo para batches (None = muestrear). Si se define, anula el muestreo cosmológico.
+    "fixed_redshift": None,
+
+    # Redshift fallback para `run_sn_list_multiband.py` cuando una fila viene sin z.
+    # Esto es específico para tu lista (escala local), y evita hardcodearlo en el script.
+    "sn_list_redshift_min": 0.01,
+    "sn_list_redshift_max": 0.03,
+
+    # Reintentos para cumplir mínimo de detecciones (solo para runner por lista)
+    # Si está activo, para cada fila se re-proyecta (cambiando el azar del offset/noise)
+    # manteniendo OID y z fijos, hasta llegar al mínimo o agotar los intentos.
+    "sn_list_require_min_detections": True,
+    "sn_list_min_detections": 7,
+    "sn_list_max_attempts": 10,
+    # Si tras max_attempts no se cumple el mínimo, reintentar con OTRO template
+    # (misma fila: mismo OID/z/extinciones, solo cambia el template).
+    "sn_list_try_new_template_on_fail": True,
+    "sn_list_max_template_attempts": 5,
+    # “Último recurso” (solo en el último intento del runner por lista):
+    # cuánto se permite brightenear (en mag) para forzar >= min_detections en la banda requerida.
+    "sn_list_force_max_brightening_mag": 3.0,
     
     # Campo fijo para pruebas (None = aleatorio)
-    "fixed_field": "ZTF18abdimfk",              # Ej: "ZTF18aaqeasu" para siempre usar ese campo
+    "fixed_field": None,              # Ej: "ZTF18aaqeasu" para siempre usar ese campo
     
     # Debug y visualización
     "show_debug_plots": False         # Mostrar gráfico de debug en field_projection
+}
+
+# ⭐ NORMALIZACIÓN DE LUMINOSIDAD (PARCHE PARA TEMPLATES SUBLUMINOSOS)
+# ==================================================================
+# Problema: muchos templates (especialmente II / Ibc) vienen en una escala de flujo
+# que no representa una distribución poblacional "típica". Aunque estén a 10 pc
+# (magnitud absoluta), algunos son intrínsecamente subluminosos (p.ej. SN2005cs)
+# y otros no; además, a veces los templates no están homogenizados entre sí.
+#
+# Solución: usar el template SOLO como "forma" (SED + evolución temporal) y
+# renormalizarlo para que su máximo (peak) corresponda a un M_peak muestreado
+# desde una distribución por tipo. Esto evita que "la mayoría" salga demasiado débil
+# por culpa del set de templates.
+#
+# Nota: Se aplica como un SHIFT en magnitudes (misma corrección para todos los filtros),
+# manteniendo colores/forma, solo cambiando el nivel absoluto.
+LUMINOSITY_CONFIG = {
+    # Activar/desactivar globalmente
+    "enabled": True,
+
+    # Tipos a los que se aplica (por defecto: los problemáticos)
+    "apply_to_types": ["II"],
+
+    # Filtro de referencia para medir el peak del template (para ZTF, 'r' suele ser estable)
+    # En multibanda, si este filtro no existe para el template, se usa el primer filtro disponible.
+    "reference_filter": "r",
+
+    # Distribuciones de M_peak (magnitud absoluta al peak) por tipo.
+    # Valores aproximados para "sanity check"/parche práctico (puedes afinarlos a tu paper).
+    "M_peak": {
+        "Ia":  {"mean": -19.3, "sigma": 0.3},
+        "Ibc": {"mean": -17.3, "sigma": 0.9},
+        "II":  {"mean": -16.9, "sigma": 1.1},#-16.9 para SNII
+    },
+
+    # Clip físico para evitar extremos absurdos al muestrear
+    "clip": {"min": -21.5, "max": -13.0},
+
+    # Reproducibilidad opcional del muestreo de M_peak
+    "random_seed": None,                 # None = aleatorio
+    "use_reproducible_sampling": False   # True = usa random_seed si no es None
 }
 
 # 🌫️ CONFIGURACIÓN DE EXTINCIÓN

@@ -9,6 +9,9 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
+# Config global (para defaults cómodos)
+import config
+
 # Importar solo lo esencial
 from batch_runner import run_scientific_batch
 from simple_config import create_simple_config
@@ -33,7 +36,8 @@ def setup_environment():
     for dir_path in dirs_to_create:
         Path(dir_path).mkdir(parents=True, exist_ok=True)
 
-def run_custom_batch(n_runs: int, redshift_max: float = 0.3, 
+def run_custom_batch(n_runs: int, redshift_max: float = None,
+                    fixed_redshift: float = None,
                     sn_types: list = None, survey: str = "ZTF", 
                     seed: int = 42, filter_band: str = "r"):
     """
@@ -62,10 +66,17 @@ def run_custom_batch(n_runs: int, redshift_max: float = 0.3,
         return False
 
     
+    # Si no se pasa por CLI, usar default desde config.py
+    if redshift_max is None:
+        redshift_max = config.PROCESSING_CONFIG.get('redshift_max', 0.3)
+    if fixed_redshift is None:
+        fixed_redshift = config.PROCESSING_CONFIG.get('fixed_redshift', None)
+
     # Crear configuración simplificada
     config = create_simple_config(
         n_runs=n_runs,
         redshift_max=redshift_max,
+        fixed_redshift=fixed_redshift,
         sn_types=sn_types,
         survey=survey,
         seed=seed,
@@ -78,6 +89,8 @@ def run_custom_batch(n_runs: int, redshift_max: float = 0.3,
     print(f"Configuracion:")
     print(f"    Simulaciones: {n_runs}")
     print(f"    Redshift max: {redshift_max}")
+    if fixed_redshift is not None:
+        print(f"    Redshift fijo: {fixed_redshift}")
     print(f"    Tipos SN: {sn_types}")
     print(f"    Survey: {survey}")
     print(f"    Filtro: {filter_band}")
@@ -150,8 +163,11 @@ Ejemplos de uso:
     parser.add_argument("--runs", type=int, default=100,
                        help="Número de simulaciones (default: 100)")
     
-    parser.add_argument("--redshift-max", type=float, default=0.3,
-                       help="Redshift máximo (default: 0.3)")
+    parser.add_argument("--redshift-max", type=float, default=None,
+                       help="Redshift máximo (default: config.PROCESSING_CONFIG['redshift_max'])")
+
+    parser.add_argument("--fixed-redshift", type=float, default=None,
+                       help="Si se define, fija z para todos los runs (anula el muestreo)")
     
     parser.add_argument("--sn-types", nargs="+", choices=["Ia", "Ibc", "II"],
                        default=["Ia"], help="Tipos de SN a incluir")
@@ -183,6 +199,7 @@ Ejemplos de uso:
         success = run_custom_batch(
             n_runs=args.runs,
             redshift_max=args.redshift_max,
+            fixed_redshift=args.fixed_redshift,
             sn_types=args.sn_types,
             survey=args.survey,
             seed=args.seed,

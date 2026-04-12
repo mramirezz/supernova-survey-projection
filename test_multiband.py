@@ -86,7 +86,7 @@ for filt in available_filters:
 
 # 4. Proyección multi-banda
 print("\n4. Proyección MULTI-BANDA")
-df_obslog = pd.read_csv('data/grid_diffmaglim_ZTF.csv')
+df_obslog = pd.read_csv('data/ZTF_observing_log_complete.csv')
 
 # Seleccionar OID al azar
 available_oids = df_obslog['oid'].unique()

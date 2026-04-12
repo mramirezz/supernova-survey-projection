@@ -9,18 +9,23 @@ from matplotlib.colors import LinearSegmentedColormap
 import seaborn as sns
 import os
 
+# Permite silenciar prints al importar (útil para runners con barra de progreso)
+_DUST_MAPS_QUIET = str(os.environ.get("DUST_MAPS_QUIET", "0")).strip().lower() in {"1", "true", "yes", "on"}
+
 # Importaciones para consultas SFD98 reales
 try:
     from astroquery.irsa_dust import IrsaDust
     from astropy.coordinates import SkyCoord
     import astropy.units as u
     REAL_SFD98_AVAILABLE = True
-    print("[OK] astroquery disponible: Usando consultas SFD98 REALES")
+    if not _DUST_MAPS_QUIET:
+        print("[OK] astroquery disponible: Usando consultas SFD98 REALES")
 except ImportError as e:
     REAL_SFD98_AVAILABLE = False
-    print(f"[WARNING] astroquery no disponible: {e}")
-    print("   -> Instalar con: pip install astroquery astropy")
-    print("   -> Usando valores por defecto en caso de error")
+    if not _DUST_MAPS_QUIET:
+        print(f"[WARNING] astroquery no disponible: {e}")
+        print("   -> Instalar con: pip install astroquery astropy")
+        print("   -> Usando valores por defecto en caso de error")
 
 def sample_ztf_field_coordinates(n_samples=1, random_state=None):
     """

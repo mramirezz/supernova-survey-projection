@@ -37,3 +37,7 @@ sphinx-rtd-theme>=1.0.0
 jupyter>=1.0.0
 ipykernel>=6.0.0
 ipywidgets>=7.6.0
+
+# Streamlit (interfaz web)
+streamlit>=1.28.0
+plotly>=5.14.0

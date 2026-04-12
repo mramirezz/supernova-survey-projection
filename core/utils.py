@@ -297,15 +297,27 @@ def Loess_fit(FILTRO_,V,mag_to_flux=False,interactive=False,fig_title='',use_cte
     sys.path.append('/home/mauri/Escritorio/ALR/src')
     sys.path.append('/data1/mauricio/ALR/src')
     sys.path.append("G:\\Mi unidad\\Work\\ALR\src")
-    from ALR import Automated_Loess_Regression
-    import plot_ALR
+    try:
+        from ALR import Automated_Loess_Regression
+        import plot_ALR
+    except Exception as e:
+        # ALR depende de rpy2 (y típicamente de una instalación de R).
+        # A veces rpy2 está “a medio importar”/incompatible y aparece como AttributeError
+        # (p.ej. "module 'rpy2' has no attribute 'rinterface_lib'").
+        # Para permitir correr el pipeline sin esa dependencia, retornamos un DF vacío.
+        print(f"[WARNING] Loess_fit: no se pudo inicializar ALR/rpy2 ({type(e).__name__}: {e}). Se omite LOESS.")
+        return pd.DataFrame(columns=['mjd', 'flux', 'flux_err'])
 
     save_interactive='n'
     
     while save_interactive=='n':
         if len(alpha)==1:
 
-            ALR = Automated_Loess_Regression(DJ, flux,err_y=flux_err,alpha=alpha[0])
+            try:
+                ALR = Automated_Loess_Regression(DJ, flux, err_y=flux_err, alpha=alpha[0])
+            except Exception as e:
+                print(f"[WARNING] Loess_fit: fallo ALR (single) ({type(e).__name__}: {e}). Se omite LOESS.")
+                return pd.DataFrame(columns=['mjd', 'flux', 'flux_err'])
             if min(DJ)<0 and max(DJ)>0:x_interp=np.arange(int(min(DJ)),int(max(DJ)+1)) # -> el +2 es para que calze con "sampleo"
             if min(DJ)>0 and max(DJ)>0:x_interp=np.arange(int(min(DJ)),int(max(DJ)+1))
             if min(DJ)<0 and max(DJ)<0:x_interp=np.arange(int(min(DJ)+1),int(max(DJ)))
@@ -361,8 +373,12 @@ def Loess_fit(FILTRO_,V,mag_to_flux=False,interactive=False,fig_title='',use_cte
                 continue
             
             #-----------
-            ALR1=Automated_Loess_Regression(DJ1, flux1,err_y=flux_err1,alpha=alpha[0])
-            ALR2=Automated_Loess_Regression(DJ2, flux2,err_y=flux_err2,alpha=alpha[1])
+            try:
+                ALR1 = Automated_Loess_Regression(DJ1, flux1, err_y=flux_err1, alpha=alpha[0])
+                ALR2 = Automated_Loess_Regression(DJ2, flux2, err_y=flux_err2, alpha=alpha[1])
+            except Exception as e:
+                print(f"[WARNING] Loess_fit: fallo ALR (split) ({type(e).__name__}: {e}). Se omite LOESS.")
+                return pd.DataFrame(columns=['mjd', 'flux', 'flux_err'])
             
             if min(DJ1)<0 and max(DJ1)>0:x_interp1=np.arange(int(min(DJ1)),int(max(DJ1)+1)) # -> el +2 es para que calze con "sampleo"
             elif min(DJ1)>0 and max(DJ1)>0:x_interp1=np.arange(int(min(DJ1)),int(max(DJ1)+1))

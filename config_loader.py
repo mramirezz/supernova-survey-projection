@@ -21,6 +21,11 @@ def load_and_validate_config():
     config['survey'] = SURVEY
     config['sn_config'] = SN_CONFIG.copy()
     config['processing'] = PROCESSING_CONFIG.copy()
+    # Normalización de luminosidad (parche opcional)
+    try:
+        config['luminosity'] = LUMINOSITY_CONFIG.copy()
+    except NameError:
+        config['luminosity'] = {'enabled': False}
     config['extinction'] = EXTINCTION_CONFIG.copy()  # Nueva configuración de extinción
     config['plot_config'] = PLOT_CONFIG.copy()
     config['batch_config'] = BATCH_CONFIG.copy()
@@ -112,6 +117,16 @@ def _validate_parameters(config):
     # Validar overlap threshold
     if not 0.5 <= processing['overlap_threshold'] <= 1.0:
         raise ValueError(f"Overlap threshold fuera de rango: {processing['overlap_threshold']} (debe estar entre 0.5-1.0)")
+
+    # Validación básica de normalización de luminosidad (si existe)
+    lum = config.get('luminosity', {})
+    if lum.get('enabled', False):
+        m_peak = lum.get('M_peak', {})
+        clip = lum.get('clip', {})
+        if not isinstance(m_peak, dict) or not m_peak:
+            raise ValueError("LUMINOSITY_CONFIG enabled pero M_peak está vacío o no es dict")
+        if 'min' in clip and 'max' in clip and clip['min'] > clip['max']:
+            raise ValueError("LUMINOSITY_CONFIG.clip inválido: min > max")
     
     print("   Parametros validados correctamente")
 
@@ -198,5 +213,14 @@ def print_config_summary(config):
     print(f"   Ruido: {processing['noise_level']*100}%")
     print(f"   Offset range: {processing['offset_range'][0]} a {processing['offset_range'][1]} dias")
     print(f"   Debug plots: {'ON' if processing['show_debug_plots'] else 'OFF'}")
+
+    # Normalización de luminosidad
+    lum = config.get('luminosity', {})
+    if lum.get('enabled', False):
+        print(f"\nNormalización de luminosidad: ON")
+        print(f"   Tipos: {lum.get('apply_to_types', [])}")
+        print(f"   Filtro referencia: {lum.get('reference_filter', 'r')}")
+    else:
+        print(f"\nNormalización de luminosidad: OFF")
     
     print("="*60)

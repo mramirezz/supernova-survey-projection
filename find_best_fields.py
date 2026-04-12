@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 # Cargar obslog ZTF
-obslog_path = "data/grid_diffmaglim_ZTF.csv"
+obslog_path = "data/ZTF_observing_log_complete.csv"
 df = pd.read_csv(obslog_path)
 
 print("=" * 70)

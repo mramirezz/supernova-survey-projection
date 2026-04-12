@@ -52,19 +52,24 @@ class BatchLogger:
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(logging.INFO)
         
-        # Consola
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
+        # Consola (opcional: desactivar con env BATCH_LOG_CONSOLE=0)
+        enable_console = str(os.environ.get("BATCH_LOG_CONSOLE", "1")).strip().lower() not in {"0", "false", "no", "off"}
+        console_handler = None
+        if enable_console:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.INFO)
         
         # Formato
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
         file_handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
+        if console_handler is not None:
+            console_handler.setFormatter(formatter)
         
         self.logger.addHandler(file_handler)
-        self.logger.addHandler(console_handler)
+        if console_handler is not None:
+            self.logger.addHandler(console_handler)
     
     def info(self, message: str):
         self.logger.info(message)
@@ -196,28 +201,36 @@ class ProfessionalBatchRunner:
             p=list(batch_config.sn_type_distribution.values())
         )
         
-        # Muestreo cosmológico directo con argumentos correctos
+        # Redshift: muestreado o fijo (si fixed_redshift está definido)
         z_min, z_max = batch_config.redshift_range
-        
-        if hasattr(batch_config, 'cosmology'):
-            # Configuración completa con parámetros cosmológicos específicos
-            cosmology = batch_config.cosmology
-            redshift_sample = sample_cosmological_redshift(
-                n_samples=1,
-                z_min=z_min,
-                z_max=z_max,
-                H0=cosmology.get('H0', 70),
-                Om=cosmology.get('Om', 0.3),
-                OL=cosmology.get('OL', 0.7)
-            )[0]
+        fixed_z = getattr(batch_config, 'fixed_redshift', None)
+        if fixed_z is not None:
+            redshift_sample = float(fixed_z)
+            if not (z_min <= redshift_sample <= z_max):
+                self.logger.warning(
+                    f"fixed_redshift={redshift_sample} fuera de redshift_range={batch_config.redshift_range}. "
+                    f"Se usará igual (verifica tu configuración)."
+                )
         else:
-            # Configuración simplificada con cosmología estándar
-            redshift_sample = sample_cosmological_redshift(
-                n_samples=1,
-                z_min=z_min,
-                z_max=z_max
-                # H0, Om, OL usan valores por defecto (70, 0.3, 0.7)
-            )[0]
+            if hasattr(batch_config, 'cosmology'):
+                # Configuración completa con parámetros cosmológicos específicos
+                cosmology = batch_config.cosmology
+                redshift_sample = sample_cosmological_redshift(
+                    n_samples=1,
+                    z_min=z_min,
+                    z_max=z_max,
+                    H0=cosmology.get('H0', 70),
+                    Om=cosmology.get('Om', 0.3),
+                    OL=cosmology.get('OL', 0.7)
+                )[0]
+            else:
+                # Configuración simplificada con cosmología estándar
+                redshift_sample = sample_cosmological_redshift(
+                    n_samples=1,
+                    z_min=z_min,
+                    z_max=z_max
+                    # H0, Om, OL usan valores por defecto (70, 0.3, 0.7)
+                )[0]
         
         # Debug: imprimir información del muestreo cada pocos runs
         if run_index < 3:  # Solo para los primeros runs
@@ -296,6 +309,16 @@ class ProfessionalBatchRunner:
         """
         Actualiza la configuración global para la iteración específica
         """
+        # Si viene un campo/OID objetivo (lista externa), fijarlo aquí
+        # para que load_and_validate_config lo copie en config['processing'].
+        field_oid = (
+            iteration_params.get('field_oid')
+            or iteration_params.get('fixed_field')
+            or iteration_params.get('target_oid')
+        )
+        if field_oid is not None:
+            config.PROCESSING_CONFIG['fixed_field'] = str(field_oid)
+
         # Actualizar configuración de SN
         config.SN_CONFIG['sn_name'] = iteration_params['sn_name']
         config.SN_CONFIG['tipo'] = iteration_params['sn_type']

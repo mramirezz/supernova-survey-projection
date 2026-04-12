@@ -19,7 +19,7 @@ def field_projection(fases, flux_y, df_obslog, tipo, selected_filter, offset, sn
                 (obs_log['field'] == selected_field) &
                 (obs_log['filter'] == selected_filter)
             ]
-        # Caso 2: Archivo con columna 'oid' (grid_diffmaglim_ZTF.csv)
+        # Caso 2: Archivo con columna 'oid' (ZTF_observing_log_complete.csv)
         elif 'oid' in obs_log.columns:
             # Usar selected_field como OID específico
             df_oid = obs_log[

@@ -20,6 +20,7 @@ import matplotlib.gridspec as gridspec
 def save_multiband_results(
     df_projected,
     synthetic_curves,
+    synthetic_data,
     projection_result,
     config,
     batch_id,
@@ -34,7 +35,9 @@ def save_multiband_results(
     df_projected : DataFrame
         Proyecciones multi-banda (todas las bandas juntas)
     synthetic_curves : dict
-        {filter: (mjd, mag)} curvas sintéticas
+        {filter: (mjd, mag)} curvas sintéticas con ruido
+    synthetic_data : dict
+        {filter: {'mag_loess', 'mjd_loess', ...}} datos completos incluyendo Loess
     projection_result : dict
         {'offset_used', 'field_selected', 'n_observations', 'desplazamiento'}
     config : dict/Config
@@ -48,6 +51,17 @@ def save_multiband_results(
     --------
     dict : Paths de archivos guardados
     """
+
+    # Permitir desactivar guardado (útil para reintentos internos)
+    # Si processing.save_outputs == False, NO escribir nada a disco.
+    try:
+        if isinstance(config, dict):
+            processing_cfg = config.get('processing', {}) if isinstance(config.get('processing', {}), dict) else {}
+            if processing_cfg.get('save_outputs', True) is False:
+                return {'skipped_save': True}
+    except Exception:
+        # Si algo raro pasa, no bloquear el pipeline
+        pass
     
     # Extraer info básica - revisar múltiples keys posibles
     sn_type = config.get('tipo') or config.get('sn_type') or config.get('tipo_sn', 'Unknown')
@@ -106,7 +120,7 @@ def save_multiband_results(
         # Plot completo del proceso de proyección
         main_plot = plots_dir / 'projection_summary.png'
         _plot_projection_summary(
-            df_projected, synthetic_curves, 
+            df_projected, synthetic_curves, synthetic_data,
             projection_result, config, main_plot
         )
         saved_files['plot_summary'] = str(main_plot)
@@ -140,7 +154,10 @@ def _append_to_combined_parquet(df_projected, parquet_file, config, proj_result,
     df_with_meta['sn_type'] = config.get('tipo', config.get('sn_type'))
     df_with_meta['sn_name'] = config.get('sn_name')
     df_with_meta['redshift'] = config.get('redshift', 0.0)
+    df_with_meta['ebv_host'] = config.get('ebv_host', 0.0)
+    df_with_meta['ebv_mw'] = config.get('ebv_mw', 0.0)
     df_with_meta['ebv_total'] = config.get('extinction_total', 0.0)
+    df_with_meta['distance_modulus'] = config.get('distance_modulus', 0.0)
     df_with_meta['field_oid'] = proj_result['field_selected']
     df_with_meta['offset'] = proj_result['offset_used']
     
@@ -176,12 +193,32 @@ def _extract_config_dict(config, proj_result, iteration_label):
         elif isinstance(v, dict):
             clean_dict[k] = v
     
-    # Agregar info de proyección
+    # Remover campos del modo single-band que no aplican en multibanda
+    deprecated_single_band_keys = ['selected_filter', 'projection_filter']
+    for key in deprecated_single_band_keys:
+        clean_dict.pop(key, None)
+    
+    # Agregar info de proyección multibanda
+    filters_projected = list(proj_result.get('filters_projected', []))
     clean_dict['projection'] = {
         'offset_used': int(proj_result['offset_used']),
         'field_selected': proj_result['field_selected'],
         'n_observations': int(proj_result['n_observations']),
+        'filters_projected': filters_projected,
         'desplazamiento': float(proj_result['desplazamiento']),
+        # Metadatos para interpretar offset/pivote
+        'mjd_pivote': float(proj_result.get('mjd_pivote')) if proj_result.get('mjd_pivote') is not None else None,
+        'anchor_time': float(proj_result.get('anchor_time')) if proj_result.get('anchor_time') is not None else None,
+        'anchor_obs_mjd': float(proj_result.get('anchor_obs_mjd')) if proj_result.get('anchor_obs_mjd') is not None else None,
+        'maximum_raw': float(proj_result.get('maximum_raw')) if proj_result.get('maximum_raw') is not None else None,
+        'anchor_source': proj_result.get('anchor_source', None),
+        'template_phase_min': float(proj_result.get('template_phase_min')) if proj_result.get('template_phase_min') is not None else None,
+        'template_phase_max': float(proj_result.get('template_phase_max')) if proj_result.get('template_phase_max') is not None else None,
+        'offset_search_mode_used': proj_result.get('offset_search_mode_used', None),
+        'required_filter': proj_result.get('required_filter', None),
+        'min_detections_required': int(proj_result.get('min_detections_required')) if proj_result.get('min_detections_required') is not None else None,
+        'forced_brightening_mag': float(proj_result.get('forced_brightening_mag', 0.0)),
+        'forced_brightening_applied': bool(proj_result.get('forced_brightening_applied', False)),
         'iteration': iteration_label,
         'timestamp': datetime.now().isoformat()
     }
@@ -189,12 +226,12 @@ def _extract_config_dict(config, proj_result, iteration_label):
     return clean_dict
 
 
-def _plot_projection_summary(df_proj, synth_curves, proj_result, config, output_file):
+def _plot_projection_summary(df_proj, synth_curves, synth_data, proj_result, config, output_file):
     """
     Plot comprehensivo del proceso completo de proyección multi-banda
     
     3 paneles:
-    - Panel superior: Curva original (antes de offset)
+    - Panel superior: Curva original (antes de offset) CON FIT DE LOESS
     - Panel medio: Overlap temporal (rangos MJD)
     - Panel inferior: Resultado final (curva desplazada + observaciones proyectadas)
     """
@@ -202,6 +239,10 @@ def _plot_projection_summary(df_proj, synth_curves, proj_result, config, output_
     filters = list(synth_curves.keys())
     desplaz = proj_result['desplazamiento']
     offset = proj_result['offset_used']
+    mjd_pivote = proj_result.get('mjd_pivote', None)
+    anchor_obs_mjd = proj_result.get('anchor_obs_mjd', None)
+    anchor_source = proj_result.get('anchor_source', None)
+    mode_used = proj_result.get('offset_search_mode_used', None)
     
     # Colores profesionales por filtro
     colors = {'g': '#2ca02c', 'r': '#d62728', 'i': '#8c564b', 
@@ -213,7 +254,7 @@ def _plot_projection_summary(df_proj, synth_curves, proj_result, config, output_
     gs = gridspec.GridSpec(3, 1, height_ratios=[1, 0.8, 1.2], hspace=0.35)
     
     # =========================================================================
-    # PANEL 1: CURVA ORIGINAL (antes de aplicar offset)
+    # PANEL 1: CURVA ORIGINAL (antes de aplicar offset) + LOESS FIT
     # =========================================================================
     ax1 = fig.add_subplot(gs[0])
     
@@ -221,23 +262,23 @@ def _plot_projection_summary(df_proj, synth_curves, proj_result, config, output_
         color = colors.get(filt, 'gray')
         mjd_synth, mag_synth_noisy = synth_curves[filt]
         
-        # Plotear con puntos
+        # Plotear solo puntos con ruido
         ax1.scatter(mjd_synth, mag_synth_noisy, s=80, color=color, 
-                   alpha=0.7, edgecolors='black', linewidths=0.5,
-                   label=f'Template {filt}', zorder=5)
+                   alpha=0.6, edgecolors='none',
+                   label=f'Synthetic {filt}', zorder=3)
         
         # Marcar el máximo (peak)
         max_idx = np.argmin(mag_synth_noisy)
         mjd_peak = mjd_synth[max_idx]
         ax1.axvline(mjd_peak, color=color, linestyle='--', 
-                   linewidth=2, alpha=0.5)
+                   linewidth=1.5, alpha=0.4, zorder=2)
     
     ax1.invert_yaxis()
     ax1.set_ylabel('Apparent Magnitude', fontsize=13, fontweight='bold')
     ax1.set_title('Step 1: SN Template Light Curve', 
                  fontsize=14, fontweight='bold', pad=10)
     ax1.grid(True, alpha=0.3, linestyle='--')
-    ax1.legend(loc='upper right', fontsize=11, ncol=len(filters))
+    ax1.legend(loc='upper right', fontsize=10, ncol=2)
     ax1.tick_params(labelsize=11)
     ax1.set_xlabel('MJD (template frame)', fontsize=12)
     
@@ -249,11 +290,33 @@ def _plot_projection_summary(df_proj, synth_curves, proj_result, config, output_
     # Obtener grilla completa de observaciones (si está disponible)
     df_grid = proj_result.get('grid_observations', None)
     
-    # Calcular rangos de la SN desplazada
-    mjd_synth_example = synth_curves[filters[0]][0]
-    mjd_sn_min = mjd_synth_example.min() + desplaz
-    mjd_sn_max = mjd_synth_example.max() + desplaz
-    mjd_sn_peak = mjd_synth_example[np.argmin(synth_curves[filters[0]][1])] + desplaz
+    # Calcular rangos de la SN desplazada (usar rango GLOBAL entre filtros)
+    ref_filt = filters[0]
+    mjd_min_template = None
+    mjd_max_template = None
+    for f in filters:
+        if f not in synth_curves:
+            continue
+        mjd_arr = np.asarray(synth_curves[f][0])
+        if mjd_arr.size == 0:
+            continue
+        f_min = float(np.min(mjd_arr))
+        f_max = float(np.max(mjd_arr))
+        mjd_min_template = f_min if mjd_min_template is None else min(mjd_min_template, f_min)
+        mjd_max_template = f_max if mjd_max_template is None else max(mjd_max_template, f_max)
+
+    # Fallback ultra raro: si no hay datos, usar el ref_filt
+    if mjd_min_template is None or mjd_max_template is None:
+        mjd_synth_example = np.asarray(synth_curves[ref_filt][0])
+        mjd_min_template = float(np.min(mjd_synth_example))
+        mjd_max_template = float(np.max(mjd_synth_example))
+
+    mjd_sn_min = float(mjd_min_template) + float(desplaz)
+    mjd_sn_max = float(mjd_max_template) + float(desplaz)
+
+    # OJO: punto más brillante (min mag) del filtro ref_filt, NO necesariamente el máximo físico (maximo_lc)
+    mjd_synth_example = np.asarray(synth_curves[ref_filt][0])
+    mjd_sn_brightest = float(mjd_synth_example[np.argmin(np.asarray(synth_curves[ref_filt][1]))]) + float(desplaz)
     
     # Si tenemos la grilla completa, la ploteamos
     if df_grid is not None and len(df_grid) > 0:
@@ -291,8 +354,17 @@ def _plot_projection_summary(df_proj, synth_curves, proj_result, config, output_
     ax2.axvline(mjd_sn_min, color='blue', linestyle='--', linewidth=2, 
                 alpha=0.6, label='SN start/end')
     ax2.axvline(mjd_sn_max, color='blue', linestyle='--', linewidth=2, alpha=0.6)
-    ax2.axvline(mjd_sn_peak, color='red', linestyle='-', linewidth=2.5, 
-                alpha=0.7, label=f'SN peak')
+    ax2.axvline(mjd_sn_brightest, color='red', linestyle='-', linewidth=2.5, 
+                alpha=0.7, label=f'Brightest point ({ref_filt})')
+
+    # Marcar pivote y ancla observada (pivote+offset)
+    if mjd_pivote is not None:
+        ax2.axvline(float(mjd_pivote), color='#9467bd', linestyle=':', linewidth=2.5,
+                    alpha=0.9, label='Pivot (mjd_pivote)')
+    if anchor_obs_mjd is not None:
+        lbl = f'Anchor obs ({anchor_source})' if anchor_source else 'Anchor obs'
+        ax2.axvline(float(anchor_obs_mjd), color='black', linestyle='-.', linewidth=2.0,
+                    alpha=0.8, label=lbl)
     
     # Plotear observaciones PROYECTADAS (las que pasaron el filtro de overlap)
     for filt in filters:
@@ -325,18 +397,22 @@ def _plot_projection_summary(df_proj, synth_curves, proj_result, config, output_
     n_total_grid = len(df_grid) if df_grid is not None else 0
     n_projected = len(df_proj)
     
-    ax2.set_title(f'Step 2: Grid Observations vs Shifted SN (offset={offset:+d}d, overlap={overlap_pct:.0f}% | {n_projected}/{n_total_grid} obs in overlap{gap_info})', 
-                 fontsize=13, fontweight='bold', pad=10)
+    mode_str = f", mode={mode_used}" if mode_used else ""
+    piv_str = f", pivot={float(mjd_pivote):.1f}" if mjd_pivote is not None else ""
+    anc_str = f", anchor_obs={float(anchor_obs_mjd):.1f}" if anchor_obs_mjd is not None else ""
+    ax2.set_title(
+        f'Step 2: Grid Observations vs Shifted SN (offset={offset:+d}d{mode_str}{piv_str}{anc_str}, '
+        f'overlap={overlap_pct:.0f}% | {n_projected}/{n_total_grid} obs in overlap{gap_info})',
+        fontsize=13, fontweight='bold', pad=10
+    )
     
     # =========================================================================
     # PANEL 3: RESULTADO FINAL (curva desplazada + observaciones)
     # =========================================================================
     ax3 = fig.add_subplot(gs[2])
     
-    # Calcular rangos para sombreado de overlap
-    mjd_synth_example = synth_curves[filters[0]][0]
-    mjd_sn_min = mjd_synth_example.min() + desplaz
-    mjd_sn_max = mjd_synth_example.max() + desplaz
+    # Calcular rangos para sombreado de overlap (usar mismo rango GLOBAL que panel 2)
+    # (no recalcular con solo un filtro, para no cortar la SN si un filtro termina antes)
     
     if len(df_proj) > 0:
         mjd_grid_min = df_proj['mjd'].min()
@@ -352,6 +428,15 @@ def _plot_projection_summary(df_proj, synth_curves, proj_result, config, output_
     ax3.axvline(mjd_sn_min, color='blue', linestyle='--', linewidth=1.5, 
                 alpha=0.4, label='SN range')
     ax3.axvline(mjd_sn_max, color='blue', linestyle='--', linewidth=1.5, alpha=0.4)
+
+    # Marcar pivote y ancla observada (pivote+offset)
+    if mjd_pivote is not None:
+        ax3.axvline(float(mjd_pivote), color='#9467bd', linestyle=':', linewidth=2.0,
+                    alpha=0.8, label='Pivot (mjd_pivote)')
+    if anchor_obs_mjd is not None:
+        lbl = f'Anchor obs ({anchor_source})' if anchor_source else 'Anchor obs'
+        ax3.axvline(float(anchor_obs_mjd), color='black', linestyle='-.', linewidth=1.8,
+                    alpha=0.7, label=lbl)
     
     for filt in filters:
         color = colors.get(filt, 'gray')
@@ -641,7 +726,10 @@ def _update_type_summary(type_dir, config, proj_result, iteration_label, sn_dir)
         'iteration': iteration_label,
         'sn_name': config.get('sn_name'),
         'redshift': config.get('redshift', 0.0),
+        'ebv_host': config.get('ebv_host', 0.0),
+        'ebv_mw': config.get('ebv_mw', 0.0),
         'ebv_total': config.get('extinction_total', 0.0),
+        'distance_modulus': config.get('distance_modulus', 0.0),
         'field_oid': proj_result['field_selected'],
         'offset': proj_result['offset_used'],
         'n_observations': proj_result['n_observations'],

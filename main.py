@@ -3,10 +3,11 @@
 import os
 import numpy as np  
 import pandas as pd
+import math
 
 # Imports desde módulos específicos
 from core.utils import (
-    leer_spec, Syntetic_photometry_v2, Loess_fit, maximo_lc,
+    leer_spec, Syntetic_photometry_v2, Loess_fit, maximo_lc, DL_calculator,
     # Constantes fotométricas
     cteB, cteV, cteR, cteI, cteU, cteu, cteg, cter, ctei, ctez
 )
@@ -153,10 +154,17 @@ def main(config=None):
     cutoff = processing_config['loess_cutoff']
     alpha_usado = processing_config['loess_alpha_many'] if len(LC_df) > cutoff else processing_config['loess_alpha_few']
     df_loess = Loess_fit(LC_df, selected_filter, mag_to_flux=False, interactive=False,
-                         fig_title='', use_cte='False', alpha=alpha_usado, 
+                         fig_title='', use_cte='False', alpha=alpha_usado,
                          corte=processing_config['loess_corte'], plot=False)
     print(f"   • Alpha usado: {alpha_usado}")
     print(f"   • Puntos LOESS generados: {len(df_loess) if len(df_loess) > 0 else 'No generado'}")
+    # liberar objetos grandes ASAP
+    try:
+        import gc
+        del LC_df
+        gc.collect()
+    except Exception:
+        pass
 
     # PASO 6: CALIBRACIÓN Y CONVERSIÓN A MAGNITUDES (igual para ambos surveys)
     # ============================================================================
@@ -195,6 +203,52 @@ def main(config=None):
     print(f"   • Ruido poissoniano: {noise_level*100:.0f}% en flujo")
     print(f"   • Ruido resultante: σ = {ruido_promedio:.3f} mag")
 
+    # PARCHE: Normalización de luminosidad al peak (II / Ibc)
+    # =======================================================
+    # Renormaliza el nivel absoluto para que el peak (mínimo mag) coincida con
+    # un M_peak muestreado por tipo, en vez de usar la escala original del template.
+    lum_cfg = config.get('luminosity', {}) if isinstance(config, dict) else {}
+    tipo_norm = "Ibc" if tipo in ["Ibc", "Ib", "Ic"] else tipo
+    if lum_cfg.get('enabled', False) and (tipo_norm in lum_cfg.get('apply_to_types', [])):
+        # Reproducibilidad opcional: usar RNG local (NO tocar np.random global)
+        rng_lum = None
+        if lum_cfg.get('use_reproducible_sampling', False) and lum_cfg.get('random_seed') is not None:
+            rng_lum = np.random.default_rng(int(lum_cfg['random_seed']))
+
+        dist = lum_cfg.get('M_peak', {}).get(tipo_norm, None)
+        if dist is not None:
+            m_mean = float(dist.get('mean', -17.0))
+            m_sigma = float(dist.get('sigma', 1.0))
+            if rng_lum is None:
+                m_peak_abs = float(np.random.normal(loc=m_mean, scale=max(1e-6, m_sigma)))
+            else:
+                m_peak_abs = float(rng_lum.normal(loc=m_mean, scale=max(1e-6, m_sigma)))
+            clip = lum_cfg.get('clip', {})
+            if 'min' in clip:
+                m_peak_abs = max(float(clip['min']), m_peak_abs)
+            if 'max' in clip:
+                m_peak_abs = min(float(clip['max']), m_peak_abs)
+
+            DL_mpc = DL_calculator(float(z_proy))
+            mu = 5.0 * math.log10(DL_mpc * 1e6) - 5.0
+
+            m_peak_target = mu + m_peak_abs
+            m_peak_current = float(np.min(mag))
+            delta_mag = m_peak_target - m_peak_current
+
+            mag = mag + delta_mag
+            mag_noisy = mag_noisy + delta_mag
+
+            # Guardar metadata para outputs
+            config['luminosity_shift_mag'] = float(delta_mag)
+            config['luminosity_M_peak_abs'] = float(m_peak_abs)
+            config['distance_modulus'] = float(mu)
+
+            print(f"   • [LUM-NORM] Aplicada normalización peak para tipo {tipo_norm}:")
+            print(f"      - M_peak(abs) muestreado: {m_peak_abs:.2f}")
+            print(f"      - mu(z): {mu:.2f}  => m_peak_target: {m_peak_target:.2f}")
+            print(f"      - m_peak_current: {m_peak_current:.2f}  => shift: {delta_mag:+.2f} mag")
+
     # PASO 7.5: CONVERSIÓN DE UNIDADES TEMPORALES (crítico para consistencia)
     # ========================================================================
     maximum = maximo_lc(tipo, sn_name)
@@ -214,6 +268,16 @@ def main(config=None):
     # ===================================================================
     print(f"\nPASO 8: Proyección sobre observaciones reales ({SURVEY})")
     df_obslog_survey = pd.read_csv(path_obslog)
+    
+    # Normalizar formato ZTF (soportar archivos con fid/diffmaglim)
+    # ZTF_observing_log_complete.csv puede venir con columnas: oid,mjd,fid,diffmaglim
+    if SURVEY == "ZTF":
+        if 'filter' not in df_obslog_survey.columns and 'fid' in df_obslog_survey.columns:
+            fid_to_filter = {1: 'g', 2: 'r', 3: 'i'}
+            df_obslog_survey = df_obslog_survey.copy()
+            df_obslog_survey['filter'] = df_obslog_survey['fid'].map(fid_to_filter)
+        if 'maglimit' not in df_obslog_survey.columns and 'diffmaglim' in df_obslog_survey.columns:
+            df_obslog_survey = df_obslog_survey.rename(columns={'diffmaglim': 'maglimit'})
 
     # Selección de target específica por survey
     if SURVEY == "ZTF":
@@ -234,6 +298,10 @@ def main(config=None):
 
     # Proyección con parámetros de configuración
     offset_range = processing_config['offset_range']
+    # Override de offsets por tipo (solo si está definido)
+    offset_range_by_type = processing_config.get('offset_range_by_type', {}) or {}
+    if isinstance(offset_range_by_type, dict) and tipo in offset_range_by_type:
+        offset_range = offset_range_by_type[tipo]
     offset_step = processing_config['offset_step']
     show_debug_plots = processing_config['show_debug_plots']
     df_projected = field_projection(
