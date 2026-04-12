@@ -1,5 +1,26 @@
 # 🔧 ARCHIVO DE CONFIGURACIÓN - PROYECCIÓN DE SUPERNOVAS
 # ======================================================
+import platform
+import os
+from pathlib import Path
+
+# 🖥️ DETECCIÓN AUTOMÁTICA DE RUTAS POR SISTEMA OPERATIVO
+# ========================================================
+_system = platform.system()
+if _system == "Darwin":  # macOS
+    GDRIVE_BASE = Path(os.path.expanduser(
+        "~/Library/CloudStorage/GoogleDrive-mramirez.valenzuela@gmail.com/Mi unidad"
+    ))
+elif _system == "Linux":
+    GDRIVE_BASE = Path("/mnt/g/Mi unidad")
+else:  # Windows
+    GDRIVE_BASE = Path(r"G:\Mi unidad")
+
+BASE_DIR = GDRIVE_BASE / "Work" / "Universidad" / "Phd" / "paper2_ZTF" / "Codes" / "proyeccion"
+RESPONSE_FOLDER = GDRIVE_BASE / "Work" / "Universidad" / "Phd" / "Practica2" / "Splines_eachfilter_2"
+MAXIMUM_DIR = GDRIVE_BASE / "Work" / "OT_unidos_2" / "OT_combines_test"
+MAXIMUM_IBC_PATH = GDRIVE_BASE / "Work" / "Universidad" / "Phd" / "Practica2" / "maximum_Ibc.dat"
+MODULUS_PATH = GDRIVE_BASE / "Work" / "Universidad" / "Phd" / "DATA_OSC" / "all_data" / "modulos_query_all.cvs"
 
 # 🎛️ CONFIGURACIÓN PRINCIPAL
 # ===========================
@@ -23,14 +44,14 @@ SN_CONFIG = {
 # =====================
 PATHS = {
     # Directorio base del proyecto
-    "base_dir": r"G:\Mi unidad\Work\Universidad\Phd\paper2_ZTF\Codes\proyeccion",
+    "base_dir": str(BASE_DIR),
     
     # Espectros de supernovas
-    "data_dir": r"G:\Mi unidad\Work\Universidad\Phd\paper2_ZTF\Codes\proyeccion\data",
+    "data_dir": str(BASE_DIR / "data"),
     "spec_file": "Ia/ASASSN-14lp.dat",  # Relativo a data_dir
     
     # Curvas de respuesta de filtros
-    "response_folder": r"G:\Mi unidad\Work\Universidad\Phd\Practica2\Splines_eachfilter_2",
+    "response_folder": str(RESPONSE_FOLDER),
     
     # Directorio de salida
     "output_dir": "outputs"
@@ -146,8 +167,8 @@ LUMINOSITY_CONFIG = {
     # Activar/desactivar globalmente
     "enabled": True,
 
-    # Tipos a los que se aplica (por defecto: los problemáticos)
-    "apply_to_types": ["II"],
+    # Tipos a los que se aplica
+    "apply_to_types": ["Ia", "II", "Ibc"],
 
     # Filtro de referencia para medir el peak del template (para ZTF, 'r' suele ser estable)
     # En multibanda, si este filtro no existe para el template, se usa el primer filtro disponible.

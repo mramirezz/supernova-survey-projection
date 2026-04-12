@@ -20,7 +20,8 @@ ebmv_host = 0.05
 ebmv_mw = 0.03
 available_filters = ['g', 'r', 'i']
 path_spec = 'data/II/SN1999gi.dat'
-path_response_folder = r'G:\Mi unidad\Work\Universidad\Phd\Practica2\Splines_eachfilter_2'
+from config import RESPONSE_FOLDER
+path_response_folder = str(RESPONSE_FOLDER)
 response_files = {
     'g': "spline_g'.txt",
     'r': "spline_r'.txt",

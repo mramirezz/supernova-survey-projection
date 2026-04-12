@@ -31,9 +31,13 @@ def multiband_field_projection(
     # Opcionales: “modo dataset” para garantizar mínimo de detecciones
     required_filter=None,               # ej: 'r'
     min_detections=None,                # ej: 7
-    offset_search_mode='random',        # 'random' | 'grid'
+    offset_search_mode='random',        # 'random' | 'grid' | 'deterministic'
     force_brighten_to_min_detections=False,
     max_force_brightening_mag=3.0,
+    # Modo determinístico: divide la grilla en n_divisions partes,
+    # coloca el ancla en el centro de la partición part_index (0-indexed)
+    n_divisions=10,
+    part_index=0,
 ):
     """
     Proyecta una SN en múltiples filtros SIMULTÁNEAMENTE.
@@ -208,7 +212,19 @@ def multiband_field_projection(
         and required_filter in df_best['filter'].unique()
     )
 
-    if use_grid:
+    use_deterministic = (str(offset_search_mode).lower() == 'deterministic')
+
+    if use_deterministic:
+        # Modo determinístico: dividir ventana observacional en n_divisions partes
+        # y colocar el ancla en el centro de la partición part_index
+        part_size = (mjd_max_grid - mjd_min_grid) / float(n_divisions)
+        mjd_pivote = mjd_min_grid + part_size * (part_index + 0.5)
+        select_offset = 0
+        desplazamiento = mjd_pivote - anchor_time + select_offset
+        print(f"   [MULTI-BAND] Modo DETERMINÍSTICO: div {part_index+1}/{n_divisions}, "
+              f"pivote={mjd_pivote:.1f}")
+
+    elif use_grid:
         df_req = df_best[df_best['filter'] == required_filter].copy()
         pivots = df_req['mjd'].values
 
@@ -351,7 +367,7 @@ def multiband_field_projection(
             'anchor_source': anchor_source,
             'template_phase_min': phase_min,
             'template_phase_max': phase_max,
-            'offset_search_mode_used': 'grid' if use_grid else 'random',
+            'offset_search_mode_used': 'deterministic' if use_deterministic else ('grid' if use_grid else 'random'),
             'required_filter': required_filter,
             'min_detections_required': min_detections,
         }
@@ -417,7 +433,9 @@ def multiband_field_projection(
         'anchor_source': anchor_source,
         'template_phase_min': phase_min,
         'template_phase_max': phase_max,
-        'offset_search_mode_used': 'grid' if use_grid else 'random',
+        'offset_search_mode_used': 'deterministic' if use_deterministic else ('grid' if use_grid else 'random'),
         'required_filter': required_filter,
         'min_detections_required': min_detections,
+        'n_divisions': n_divisions if use_deterministic else None,
+        'part_index': part_index if use_deterministic else None,
     }

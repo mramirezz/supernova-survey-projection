@@ -213,25 +213,17 @@ def Syntetic_photometry_v2(xspec,yspec,xband,yband):
 
 
 def maximo_lc(tipo,sn,ubuntu=False):
+    from config import MAXIMUM_DIR, MAXIMUM_IBC_PATH
     if tipo=='II':
-        if ubuntu==True:
-            maximum_df=pd.read_csv("/mnt/g/Mi unidad/Work/OT_unidos_2/OT_combines_test/maximum_II.txt")
-
-        else:
-            maximum_df=pd.read_csv("G:\Mi unidad\Work\OT_unidos_2\OT_combines_test\maximum_II.txt")
+        maximum_df=pd.read_csv(MAXIMUM_DIR / "maximum_II.txt")
         max_=float(maximum_df.loc[maximum_df['name']==sn]['fase'])
         return max_
     if tipo=='Ia':
-        if ubuntu==True:
-             
-            df_max=pd.read_csv("/mnt/g/Mi unidad/Work/OT_unidos_2/OT_combines_test/maximum_Ia.txt")
-        else:
-            df_max=pd.read_csv("G:\Mi unidad\Work\OT_unidos_2\OT_combines_test\maximum_Ia.txt")
+        df_max=pd.read_csv(MAXIMUM_DIR / "maximum_Ia.txt")
         df_max[df_max.name==sn]
 
     if tipo=='Ibc' or tipo=='Ib' or tipo=='Ic':
-            df_max=pd.read_csv(r"G:\Mi unidad\Work\Universidad\Phd\Practica2\maximum_Ibc.dat")
-            #df_max=pd.read_csv( "G:\Mi unidad\Spectral Time Series - Ramirez M\Data\maximum_perband.dat")
+            df_max=pd.read_csv(MAXIMUM_IBC_PATH)
             df_max[df_max.name==sn]
     
     band_system=['V','R','r','g','i','I','B','U','u','z'] #We use this order to obtain the day of the maximum
@@ -294,9 +286,10 @@ def Loess_fit(FILTRO_,V,mag_to_flux=False,interactive=False,fig_title='',use_cte
     flux_err=lc_df['flux_err']*mul
 
     import sys
+    from config import GDRIVE_BASE
     sys.path.append('/home/mauri/Escritorio/ALR/src')
     sys.path.append('/data1/mauricio/ALR/src')
-    sys.path.append("G:\\Mi unidad\\Work\\ALR\src")
+    sys.path.append(str(GDRIVE_BASE / "Work" / "ALR" / "src"))
     try:
         from ALR import Automated_Loess_Regression
         import plot_ALR

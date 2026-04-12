@@ -44,10 +44,12 @@ plt.rcParams['legend.fontsize'] = 9
 BASE_DIR = PARENT_DIR
 DATA_DIR = BASE_DIR / "data"
 
-# Manejo robusto de rutas con espacios y caracteres especiales en Windows
-RESPONSE_DIR_STR = r"G:/Mi unidad/Work/Universidad/Phd/Practica2/Splines_eachfilter_2"
+# Rutas auto-detectadas por OS desde config
+import sys
+sys.path.insert(0, str(PARENT_DIR))
+from config import RESPONSE_FOLDER
 try:
-    RESPONSE_DIR = Path(RESPONSE_DIR_STR).resolve()
+    RESPONSE_DIR = Path(RESPONSE_FOLDER).resolve()
     if not RESPONSE_DIR.exists():
         st.warning(f"⚠️ Directorio de respuestas no encontrado: {RESPONSE_DIR}")
         RESPONSE_DIR = None

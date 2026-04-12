@@ -274,11 +274,8 @@ def correct_redeening(sn,ESPECTRO,fases,ebmv=None,ebmv_host=None,ebmv_mw=None,mu
 
     '''
 
-    if ubuntu==True:
-        G_path='/mnt/g/Mi unidad'
-    else:
-        G_path="G:\Mi unidad"
-    modulus_path=os.path.join(G_path,'Work','Universidad','Phd','DATA_OSC','all_data','modulos_query_all.cvs')
+    from config import MODULUS_PATH
+    modulus_path=str(MODULUS_PATH)
     modulus=pd.read_csv(modulus_path)
 
     print(sn)
