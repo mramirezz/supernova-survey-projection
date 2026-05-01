@@ -6,16 +6,17 @@ import matplotlib.pyplot as plt
 from math import *
 from math import sqrt, sin, sinh, exp
 
-def DL_calculator(z, H0=69.6, WM=0.286, WV=0.714, n=1000):
+def DL_calculator(z, H0=70.0, WM=0.3, WV=0.7, n=1000):
     """
     Calcula la distancia de luminosidad (DL) en Mpc a partir de un redshift 'z' y 
     parámetros cosmológicos:
-    - H0: Constante de Hubble (por defecto 69.6 km/s/Mpc)
-    - WM: Densidad de materia (Omega_M)
-    - WV: Densidad de energía oscura (Omega_Lambda)
+    - H0: Constante de Hubble (por defecto 70.0 km/s/Mpc)
+    - WM: Densidad de materia (Omega_M, por defecto 0.3)
+    - WV: Densidad de energía oscura (Omega_Lambda, por defecto 0.7)
     - n : Número de pasos para la integración (por defecto 1000)
 
     Usa la convención de la Cosmology Calculator de Ned Wright.
+    Parámetros estándar consistentes con correction.py (H0=70, Om=0.3, OL=0.7).
     """
 
     # Constantes físicas

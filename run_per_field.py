@@ -41,6 +41,7 @@ from core.correction import (
     correct_redeening, sample_extinction_by_type, sample_cosmological_redshift
 )
 from core.multiband_projection import multiband_field_projection
+from tools.dust_maps import get_sfd98_extinction_real
 import math
 
 # Constantes fotométricas por filtro
@@ -135,9 +136,22 @@ def generate_synthetic_curves(sn_name, tipo, path_spec, z_proy, ebmv_host, ebmv_
         })
         cutoff = processing_config['loess_cutoff']
         alpha = processing_config['loess_alpha_many'] if len(LC_df) > cutoff else processing_config['loess_alpha_few']
-        Loess_fit(LC_df, filt, mag_to_flux=False, interactive=False,
-                  fig_title='', use_cte='False', alpha=alpha,
-                  corte=processing_config['loess_corte'], plot=False)
+        loess_result = Loess_fit(LC_df, filt, mag_to_flux=False, interactive=False,
+                                 fig_title='', use_cte='False', alpha=alpha,
+                                 corte=processing_config['loess_corte'], plot=False)
+
+        # Si LOESS tuvo éxito, usar el flux suavizado interpolado de vuelta a la grilla original
+        if (loess_result is not None and
+                isinstance(loess_result, pd.DataFrame) and
+                len(loess_result) >= 2 and
+                'flux' in loess_result.columns and
+                'mjd' in loess_result.columns):
+            lc_df = lc_df.copy()
+            lc_df['flux'] = np.interp(
+                np.array(lc_df['fase']),
+                loess_result['mjd'].values,
+                loess_result['flux'].values
+            )
 
         # Calibración + ruido
         mul = FILTER_CONSTANTS[filt]
@@ -265,7 +279,8 @@ def run_single_simulation(oid, tipo, template, part_index, df_obslog_field,
 
 
 def run_field(oid, df_obslog_field, templates, response_folder,
-              processing_config, lum_config, z_min=0.01, z_max=0.5):
+              processing_config, lum_config, z_min=0.01, z_max=0.5,
+              oid_coords=None):
     """
     Ejecuta las 30 simulaciones para un campo (OID).
     3 tipos × 10 posiciones determinísticas.
@@ -301,7 +316,14 @@ def run_field(oid, df_obslog_field, templates, response_folder,
             # Muestrear z y extinción para cada simulación
             z_proy = float(sample_cosmological_redshift(n_samples=1, z_min=z_min, z_max=z_max)[0])
             ebmv_host = float(sample_extinction_by_type(sn_type=tipo, n_samples=1)[0])
-            ebmv_mw = 0.02  # Valor típico, podría consultarse SFD98 si se quiere
+            # Consultar E(B-V)_MW real desde SFD98 usando coordenadas del OID
+            if oid_coords is not None:
+                ra, dec = oid_coords
+                ebmv_mw, sfd_ok = get_sfd98_extinction_real(ra, dec)
+                if not sfd_ok:
+                    ebmv_mw = 0.02  # fallback si falla la conexión
+            else:
+                ebmv_mw = 0.02  # fallback si no hay coordenadas
 
             sim_label = f"{tipo}_p{part_idx}"
             result = run_single_simulation(
@@ -346,6 +368,20 @@ def main():
     data_dir = PATHS['data_dir']
     response_folder = PATHS['response_folder']
     obslog_path = os.path.join(data_dir, 'ZTF_observing_log_complete.csv')
+
+    # Cargar coordenadas RA/Dec por OID para queries SFD98
+    coords_path = os.path.join(data_dir, 'ztf_targets_with_coords_multicat_summary.csv')
+    oid_coords_map = {}
+    if os.path.exists(coords_path):
+        df_coords = pd.read_csv(coords_path, usecols=['sn_name', 'ra_used_deg', 'dec_used_deg'])
+        oid_coords_map = {
+            row['sn_name']: (row['ra_used_deg'], row['dec_used_deg'])
+            for _, row in df_coords.iterrows()
+            if pd.notna(row['ra_used_deg']) and pd.notna(row['dec_used_deg'])
+        }
+        print(f"  Coordenadas cargadas: {len(oid_coords_map)} OIDs con RA/Dec para SFD98")
+    else:
+        print(f"  [WARN] No se encontró {coords_path} — usando E(B-V)_MW=0.02 fijo")
 
     print(f"\nCargando observing log: {obslog_path}")
     t0 = time.time()
@@ -416,6 +452,7 @@ def main():
             response_folder=response_folder,
             processing_config=PROCESSING_CONFIG, lum_config=LUMINOSITY_CONFIG,
             z_min=args.z_min, z_max=args.z_max,
+            oid_coords=oid_coords_map.get(oid),
         )
 
         n_ok = len(projections)
