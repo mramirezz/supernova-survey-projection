@@ -149,6 +149,29 @@ PROCESSING_CONFIG = {
     "show_debug_plots": False         # Mostrar gráfico de debug en field_projection
 }
 
+# 🌌 RANGO DE REDSHIFT POR TIPO (adaptado a la sensibilidad de ZTF)
+# ================================================================
+# ZTF tiene m_lim ≈ 19.5–20.5 en g/r. Con M_peak_Ia ≈ -19.3, M_peak_II ≈ -16.9,
+# M_peak_Ibc ≈ -17.3, el redshift al que cada tipo deja de ser detectable es
+# muy distinto. Usar el mismo z_max=0.5 para los 3 produce ~0% detecciones en II
+# y baja tasa en Ibc. Valores calibrados a m_lim=20.5:
+#   Ia  M_peak=-19.3 → z_max ≈ 0.19
+#   II  M_peak=-16.9 → z_max ≈ 0.07
+#   Ibc M_peak=-17.3 → z_max ≈ 0.08
+# Se usa un margen razonable por encima para capturar también la región donde
+# la SN sube a upper-limit (útil para el clasificador).
+Z_CONFIG = {
+    "z_min": 0.01,
+    "z_max_by_type": {
+        "Ia":  0.15,
+        "II":  0.08,
+        "Ibc": 0.10,
+    },
+    # Override global — si no es None, se usa este z_max para todos los tipos
+    # (ignorando z_max_by_type). Útil para corridas de debug o exploración.
+    "z_max_global_override": None,
+}
+
 # ⭐ NORMALIZACIÓN DE LUMINOSIDAD (PARCHE PARA TEMPLATES SUBLUMINOSOS)
 # ==================================================================
 # Problema: muchos templates (especialmente II / Ibc) vienen en una escala de flujo

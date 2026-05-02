@@ -31,7 +31,7 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
-from config import PATHS, RESPONSE_FILES, PROCESSING_CONFIG, LUMINOSITY_CONFIG
+from config import PATHS, RESPONSE_FILES, PROCESSING_CONFIG, LUMINOSITY_CONFIG, Z_CONFIG
 from config_loader import load_and_validate_config
 from core.utils import (
     leer_spec, Syntetic_photometry_v2, Loess_fit, maximo_lc, DL_calculator,
@@ -280,11 +280,15 @@ def run_single_simulation(oid, tipo, template, part_index, df_obslog_field,
 
 def run_field(oid, df_obslog_field, templates, response_folder,
               processing_config, lum_config, z_min=0.01, z_max=0.5,
-              oid_coords=None):
+              oid_coords=None, z_max_by_type=None):
     """
     Ejecuta las 30 simulaciones para un campo (OID).
     3 tipos × 10 posiciones determinísticas.
-    
+
+    z_max_by_type: dict opcional {tipo: z_max} — si se provee, sobreescribe
+    z_max por tipo (p.ej. Ia=0.15, II=0.08, Ibc=0.10 para ZTF).
+    Si es None, usa z_max escalar para todos los tipos (compat).
+
     Returns: list of DataFrames con las proyecciones.
     """
     all_projections = []
@@ -309,12 +313,15 @@ def run_field(oid, df_obslog_field, templates, response_folder,
         else:
             offset_arr_tipo = offset_arr
 
+        # z_max efectivo para este tipo (por-tipo si se especificó)
+        z_max_tipo = z_max_by_type.get(tipo, z_max) if z_max_by_type else z_max
+
         for part_idx in range(N_DIVISIONS):
             # Template cíclico
             tpl = available_templates[part_idx % len(available_templates)]
 
             # Muestrear z y extinción para cada simulación
-            z_proy = float(sample_cosmological_redshift(n_samples=1, z_min=z_min, z_max=z_max)[0])
+            z_proy = float(sample_cosmological_redshift(n_samples=1, z_min=z_min, z_max=z_max_tipo)[0])
             ebmv_host = float(sample_extinction_by_type(sn_type=tipo, n_samples=1)[0])
             # Consultar E(B-V)_MW real desde SFD98 usando coordenadas del OID
             if oid_coords is not None:
@@ -351,8 +358,11 @@ def main():
     parser.add_argument('--oid', type=str, default=None, help='OID específico a procesar')
     parser.add_argument('--n-fields', type=int, default=None, help='Número máximo de campos a procesar')
     parser.add_argument('--min-obs', type=int, default=30, help='Mínimo de observaciones por campo (default: 30)')
-    parser.add_argument('--z-min', type=float, default=0.01, help='Redshift mínimo (default: 0.01)')
-    parser.add_argument('--z-max', type=float, default=0.5, help='Redshift máximo (default: 0.5)')
+    parser.add_argument('--z-min', type=float, default=None,
+                        help='Redshift mínimo (default: desde config.Z_CONFIG)')
+    parser.add_argument('--z-max', type=float, default=None,
+                        help='Redshift máximo global — si se pasa, sobreescribe z_max_by_type '
+                             '(default: None, usa z_max_by_type por tipo desde config)')
     parser.add_argument('--output-dir', type=str, default='outputs/per_field', help='Directorio de salida')
     parser.add_argument('--seed', type=int, default=None, help='Seed global para reproducibilidad')
     args = parser.parse_args()
@@ -360,10 +370,28 @@ def main():
     if args.seed is not None:
         np.random.seed(args.seed)
 
+    # Resolver rango de redshift desde config.Z_CONFIG, con overrides desde CLI
+    z_min_eff = args.z_min if args.z_min is not None else Z_CONFIG.get('z_min', 0.01)
+    global_override = Z_CONFIG.get('z_max_global_override')
+    if args.z_max is not None:
+        # CLI --z-max gana y se aplica a todos los tipos
+        z_max_eff = args.z_max
+        z_max_by_type = None
+    elif global_override is not None:
+        z_max_eff = global_override
+        z_max_by_type = None
+    else:
+        z_max_by_type = dict(Z_CONFIG.get('z_max_by_type', {}))
+        z_max_eff = max(z_max_by_type.values()) if z_max_by_type else 0.5
+
     # Cargar datos
     print("=" * 60)
     print("RUNNER POR CAMPO — 30 SIMS DETERMINÍSTICAS POR OID")
     print("=" * 60)
+    if z_max_by_type:
+        print(f"Redshift: z_min={z_min_eff}, z_max_by_type={z_max_by_type}")
+    else:
+        print(f"Redshift: z_min={z_min_eff}, z_max={z_max_eff} (global)")
 
     data_dir = PATHS['data_dir']
     response_folder = PATHS['response_folder']
@@ -424,7 +452,9 @@ def main():
         'n_fields': len(oids),
         'n_sims_per_field': 30,
         'n_divisions': N_DIVISIONS,
-        'z_range': [args.z_min, args.z_max],
+        'z_min': z_min_eff,
+        'z_max': z_max_eff,
+        'z_max_by_type': z_max_by_type,
         'min_obs': args.min_obs,
         'seed': args.seed,
         'start_time': datetime.now().isoformat(),
@@ -451,8 +481,9 @@ def main():
             oid=oid, df_obslog_field=df_field, templates=templates,
             response_folder=response_folder,
             processing_config=PROCESSING_CONFIG, lum_config=LUMINOSITY_CONFIG,
-            z_min=args.z_min, z_max=args.z_max,
+            z_min=z_min_eff, z_max=z_max_eff,
             oid_coords=oid_coords_map.get(oid),
+            z_max_by_type=z_max_by_type,
         )
 
         n_ok = len(projections)
