@@ -373,6 +373,9 @@ def main():
                              '(default: None, usa z_max_by_type por tipo desde config)')
     parser.add_argument('--output-dir', type=str, default='outputs/per_field', help='Directorio de salida')
     parser.add_argument('--seed', type=int, default=None, help='Seed global para reproducibilidad')
+    parser.add_argument('--sort-by-obs', action='store_true',
+                        help='Seleccionar OIDs por # de observaciones descendente (top-cobertura). '
+                             'Si no se pasa, se ordenan alfabéticamente.')
     args = parser.parse_args()
 
     if args.seed is not None:
@@ -452,8 +455,12 @@ def main():
         oids = [args.oid]
     else:
         obs_counts = df_obslog.groupby('oid').size()
-        valid_oids = obs_counts[obs_counts >= args.min_obs].index.tolist()
-        oids = sorted(valid_oids)
+        valid_counts = obs_counts[obs_counts >= args.min_obs]
+        if args.sort_by_obs:
+            # Top-N por cobertura: OIDs con más observaciones primero
+            oids = valid_counts.sort_values(ascending=False).index.tolist()
+        else:
+            oids = sorted(valid_counts.index.tolist())
         if args.n_fields:
             oids = oids[:args.n_fields]
 
