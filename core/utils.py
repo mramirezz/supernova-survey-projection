@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import os
+from functools import lru_cache
 from scipy import interpolate
 import matplotlib.pyplot as plt
 from math import *
@@ -62,6 +63,10 @@ def DL_calculator(z, H0=70.0, WM=0.3, WV=0.7, n=1000):
 
 
 
+# Cache: los templates .dat son estáticos y grandes (13-17 MB). Sin cache se
+# re-parsean 30 veces por OID × 67k OIDs. Seguro mientras los callers no muten
+# los DataFrames retornados (verificado: correct_redeening crea nuevas copias).
+@lru_cache(maxsize=256)
 def leer_spec(path,ot=False,MJD=False,as_pandas=False,compress=False):
 
     if compress==True:

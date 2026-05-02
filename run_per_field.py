@@ -282,7 +282,7 @@ def run_single_simulation(oid, tipo, template, part_index, df_obslog_field,
 
 def run_field(oid, df_obslog_field, templates, response_folder,
               processing_config, lum_config, z_min=0.01, z_max=0.5,
-              oid_coords=None, z_max_by_type=None):
+              oid_coords=None, z_max_by_type=None, ebmv_mw_oid=None):
     """
     Ejecuta las 30 simulaciones para un campo (OID).
     3 tipos × 10 posiciones determinísticas.
@@ -290,6 +290,9 @@ def run_field(oid, df_obslog_field, templates, response_folder,
     z_max_by_type: dict opcional {tipo: z_max} — si se provee, sobreescribe
     z_max por tipo (p.ej. Ia=0.15, II=0.08, Ibc=0.10 para ZTF).
     Si es None, usa z_max escalar para todos los tipos (compat).
+
+    ebmv_mw_oid: float opcional — E(B-V)_MW precomputado para este OID.
+    Si es None, se consulta IRSA live (legacy) o se usa fallback 0.02.
 
     Returns: list of DataFrames con las proyecciones.
     """
@@ -325,8 +328,11 @@ def run_field(oid, df_obslog_field, templates, response_folder,
             # Muestrear z y extinción para cada simulación
             z_proy = float(sample_cosmological_redshift(n_samples=1, z_min=z_min, z_max=z_max_tipo)[0])
             ebmv_host = float(sample_extinction_by_type(sn_type=tipo, n_samples=1)[0])
-            # Consultar E(B-V)_MW real desde SFD98 usando coordenadas del OID
-            if oid_coords is not None:
+            # E(B-V)_MW: usar valor precomputado por OID si está disponible;
+            # si no, consultar IRSA live (compat) o usar fallback 0.02
+            if ebmv_mw_oid is not None:
+                ebmv_mw = ebmv_mw_oid
+            elif oid_coords is not None:
                 ra, dec = oid_coords
                 ebmv_mw, sfd_ok = get_sfd98_extinction_real(ra, dec)
                 if not sfd_ok:
@@ -412,6 +418,17 @@ def main():
         print(f"  Coordenadas cargadas: {len(oid_coords_map)} OIDs con RA/Dec para SFD98")
     else:
         print(f"  [WARN] No se encontró {coords_path} — usando E(B-V)_MW=0.02 fijo")
+
+    # Cargar cache SFD98 (precomputado por tools/precompute_sfd98.py)
+    sfd98_cache_path = os.path.join(data_dir, 'sfd98_cache.parquet')
+    ebmv_mw_cache = {}
+    if os.path.exists(sfd98_cache_path):
+        df_sfd = pd.read_parquet(sfd98_cache_path)
+        ebmv_mw_cache = dict(zip(df_sfd['oid'], df_sfd['ebmv_mw'].astype(float)))
+        print(f"  SFD98 cache: {len(ebmv_mw_cache):,} OIDs cacheados ({sfd98_cache_path})")
+    else:
+        print(f"  [WARN] Sin cache SFD98 — consultas IRSA en vivo (lento). "
+              f"Ejecuta: python tools/precompute_sfd98.py")
 
     print(f"\nCargando observing log: {obslog_path}")
     t0 = time.time()
@@ -502,6 +519,7 @@ def main():
     total_sims = 0
     total_fails = 0
     all_results = []
+    new_sfd98_rows = []  # entradas nuevas para persistir al cache al final
 
     for i_field, oid in enumerate(oids):
         t_field = time.time()
@@ -512,13 +530,32 @@ def main():
         print(f"[{i_field+1}/{len(oids)}] OID: {oid} ({n_obs} obs)")
         print(f"{'='*60}")
 
+        # Resolver E(B-V)_MW UNA vez por OID (era 30x en el loop interno)
+        oid_coords = oid_coords_map.get(oid)
+        if oid in ebmv_mw_cache:
+            ebmv_mw_oid = ebmv_mw_cache[oid]
+        elif oid_coords is not None:
+            ra, dec = oid_coords
+            ebmv_mw_live, sfd_ok = get_sfd98_extinction_real(ra, dec)
+            ebmv_mw_oid = ebmv_mw_live if sfd_ok else 0.02
+            # auto-guardar en cache en memoria + buffer para persistir al final
+            ebmv_mw_cache[oid] = ebmv_mw_oid
+            new_sfd98_rows.append({
+                'oid': oid, 'ra_deg': float(ra), 'dec_deg': float(dec),
+                'ebmv_mw': float(ebmv_mw_oid), 'sfd_ok': bool(sfd_ok),
+                'queried_at': datetime.now().isoformat(timespec='seconds'),
+            })
+        else:
+            ebmv_mw_oid = 0.02
+
         projections = run_field(
             oid=oid, df_obslog_field=df_field, templates=templates,
             response_folder=response_folder,
             processing_config=PROCESSING_CONFIG, lum_config=LUMINOSITY_CONFIG,
             z_min=z_min_eff, z_max=z_max_eff,
-            oid_coords=oid_coords_map.get(oid),
+            oid_coords=oid_coords,
             z_max_by_type=z_max_by_type,
+            ebmv_mw_oid=ebmv_mw_oid,
         )
 
         n_ok = len(projections)
@@ -568,6 +605,21 @@ def main():
     metadata['elapsed_seconds'] = elapsed_total
     with open(os.path.join(output_dir, 'run_metadata.json'), 'w') as f:
         json.dump(metadata, f, indent=2)
+
+    # Persistir entradas nuevas del cache SFD98 (si las hubo)
+    if new_sfd98_rows:
+        df_new_sfd = pd.DataFrame(new_sfd98_rows)
+        if os.path.exists(sfd98_cache_path):
+            df_existing = pd.read_parquet(sfd98_cache_path)
+            df_merged = pd.concat([df_existing, df_new_sfd], ignore_index=True)
+            df_merged = df_merged.drop_duplicates(subset=['oid'], keep='last')
+        else:
+            df_merged = df_new_sfd
+        tmp = sfd98_cache_path + '.tmp'
+        df_merged.to_parquet(tmp, index=False)
+        os.replace(tmp, sfd98_cache_path)
+        print(f"\nCache SFD98 actualizado: +{len(new_sfd98_rows)} entradas "
+              f"→ {len(df_merged):,} totales en {sfd98_cache_path}")
 
 
 if __name__ == '__main__':
