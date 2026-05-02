@@ -376,6 +376,9 @@ def main():
     parser.add_argument('--sort-by-obs', action='store_true',
                         help='Seleccionar OIDs por # de observaciones descendente (top-cobertura). '
                              'Si no se pasa, se ordenan alfabéticamente.')
+    parser.add_argument('--oids-file', type=str, default=None,
+                        help='Archivo con un OID por línea. Si se pasa, procesa exactamente '
+                             'esa lista (ignora --sort-by-obs, --n-fields, --min-obs).')
     args = parser.parse_args()
 
     if args.seed is not None:
@@ -453,6 +456,15 @@ def main():
     # Seleccionar OIDs
     if args.oid:
         oids = [args.oid]
+    elif args.oids_file:
+        with open(args.oids_file) as f:
+            oids = [line.strip() for line in f if line.strip()]
+        # Validar que los OIDs existen en el obslog
+        obslog_oids = set(df_obslog['oid'].unique())
+        missing = [o for o in oids if o not in obslog_oids]
+        if missing:
+            print(f"  [WARN] {len(missing)} OIDs del archivo no están en obslog: {missing[:5]}...")
+            oids = [o for o in oids if o in obslog_oids]
     else:
         obs_counts = df_obslog.groupby('oid').size()
         valid_counts = obs_counts[obs_counts >= args.min_obs]
