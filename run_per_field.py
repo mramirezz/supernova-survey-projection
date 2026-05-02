@@ -31,7 +31,9 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
-from config import PATHS, RESPONSE_FILES, PROCESSING_CONFIG, LUMINOSITY_CONFIG, Z_CONFIG
+from config import (PATHS, RESPONSE_FILES, PROCESSING_CONFIG, LUMINOSITY_CONFIG,
+                    Z_CONFIG, EXTINCTION_CONFIG, SURVEY)
+import subprocess
 from config_loader import load_and_validate_config
 from core.utils import (
     leer_spec, Syntetic_photometry_v2, Loess_fit, maximo_lc, DL_calculator,
@@ -446,18 +448,51 @@ def main():
     output_dir = os.path.join(args.output_dir, run_id)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Guardar metadata
+    # Git commit del repo (para reproducibilidad)
+    def _git_info():
+        try:
+            commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'],
+                                             cwd=os.path.dirname(os.path.abspath(__file__)),
+                                             stderr=subprocess.DEVNULL).decode().strip()
+            dirty = bool(subprocess.check_output(
+                ['git', 'status', '--porcelain'],
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                stderr=subprocess.DEVNULL).decode().strip())
+            return {'commit': commit, 'dirty': dirty}
+        except Exception:
+            return {'commit': None, 'dirty': None}
+
+    # Guardar metadata COMPLETA (todo lo necesario para reproducir el run)
     metadata = {
+        # identificación del run
         'run_id': run_id,
+        'start_time': datetime.now().isoformat(),
+
+        # CLI / entrada
+        'cli_args': vars(args),
+        'survey': SURVEY,
+
+        # campos a procesar
         'n_fields': len(oids),
         'n_sims_per_field': 30,
         'n_divisions': N_DIVISIONS,
-        'z_min': z_min_eff,
-        'z_max': z_max_eff,
-        'z_max_by_type': z_max_by_type,
-        'min_obs': args.min_obs,
+
+        # redshift (efectivo, ya resuelto)
+        'z_config': {
+            'z_min': z_min_eff,
+            'z_max_scalar': z_max_eff,
+            'z_max_by_type': z_max_by_type,
+            'source': dict(Z_CONFIG),
+        },
+
+        # configs completos desde config.py
+        'processing_config': dict(PROCESSING_CONFIG),
+        'luminosity_config': dict(LUMINOSITY_CONFIG),
+        'extinction_config': dict(EXTINCTION_CONFIG),
+
+        # reproducibilidad
         'seed': args.seed,
-        'start_time': datetime.now().isoformat(),
+        'git': _git_info(),
     }
     with open(os.path.join(output_dir, 'run_metadata.json'), 'w') as f:
         json.dump(metadata, f, indent=2)
