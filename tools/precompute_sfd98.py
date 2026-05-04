@@ -55,14 +55,55 @@ def save_cache(df_cache, cache_path):
     os.replace(tmp, cache_path)
 
 
+def run_vectorized(pending, df_cache, cache_path):
+    """Procesa todos los coords en una sola llamada vectorizada a SFDQuery (~25k OIDs/s)."""
+    try:
+        from dustmaps.sfd import SFDQuery
+        from astropy.coordinates import SkyCoord
+        import astropy.units as u
+    except ImportError:
+        print("[WARN] dustmaps no disponible para modo vectorizado; usa modo serial.")
+        return None
+
+    print(f"Modo vectorizado: {len(pending):,} OIDs en una sola llamada...")
+    t0 = time.time()
+
+    ras = pending["ra_deg"].astype(float).values
+    decs = pending["dec_deg"].astype(float).values
+
+    sfd = SFDQuery()
+    coords = SkyCoord(ra=ras * u.deg, dec=decs * u.deg, frame="icrs")
+    ebv_values = sfd(coords)
+
+    elapsed = time.time() - t0
+    print(f"  Consulta completada en {elapsed:.2f}s ({len(pending)/elapsed:.0f} OIDs/s)")
+
+    ts = datetime.now().isoformat(timespec="seconds")
+    new_rows = pd.DataFrame({
+        "oid": pending["oid"].values,
+        "ra_deg": ras,
+        "dec_deg": decs,
+        "ebmv_mw": ebv_values.astype(float),
+        "sfd_ok": True,
+        "queried_at": ts,
+    })
+
+    df_cache = pd.concat([df_cache, new_rows], ignore_index=True)
+    save_cache(df_cache, cache_path)
+    print(f"  Cache guardado: {len(df_cache):,} OIDs → {cache_path}")
+    return df_cache
+
+
 def main():
     parser = argparse.ArgumentParser(description="Precompute SFD98 E(B-V)_MW cache")
     parser.add_argument("--limit", type=int, default=None,
                         help="Máximo de OIDs a procesar en esta corrida (default: todos)")
     parser.add_argument("--save-every", type=int, default=100,
-                        help="Guardar cache cada N queries (default: 100)")
+                        help="Guardar cache cada N queries (default: 100, ignorado en modo vectorizado)")
     parser.add_argument("--force", action="store_true",
                         help="Re-consultar OIDs ya cacheados")
+    parser.add_argument("--no-vectorize", action="store_true",
+                        help="Usar modo serial en lugar de vectorizado (más lento)")
     parser.add_argument("--data-dir", type=str, default=os.path.join(ROOT, "data"),
                         help="Directorio de datos")
     args = parser.parse_args()
@@ -111,9 +152,19 @@ def main():
         print("Nada por hacer.")
         return
 
-    # Estimación de tiempo (asumiendo ~1.5s por query)
+    # Modo vectorizado: procesa todo en una llamada (~25k OIDs/s)
+    if not args.no_vectorize:
+        result = run_vectorized(pending, df_cache, cache_path)
+        if result is not None:
+            df_cache = result
+            elapsed_total = time.time() - time.time()  # just for report
+            n_ok = int(df_cache["sfd_ok"].sum())
+            print(f"\nCompletado. Cache total: {len(df_cache):,} OIDs ({n_ok:,} ok)")
+            return
+
+    # Modo serial (fallback o --no-vectorize)
     est_s = len(pending) * 1.5
-    print(f"Estimación: ~{est_s/60:.0f} min ({est_s/3600:.1f} h)")
+    print(f"Estimación serial: ~{est_s/60:.0f} min ({est_s/3600:.1f} h)")
     print()
 
     t0 = time.time()
