@@ -36,7 +36,8 @@ from tools.dust_maps import get_sfd98_extinction_real  # noqa: E402
 
 
 CACHE_FILENAME = "sfd98_cache.parquet"
-COORDS_FILENAME = "ztf_targets_with_coords_multicat_summary.csv"
+MASTER_COORDS = "ztf_coords_master.parquet"  # generado por build_coords_catalog.py
+LEGACY_COORDS = "ztf_targets_with_coords_multicat_summary.csv"  # fallback
 
 
 def load_cache(cache_path):
@@ -66,20 +67,25 @@ def main():
                         help="Directorio de datos")
     args = parser.parse_args()
 
-    coords_path = os.path.join(args.data_dir, COORDS_FILENAME)
+    master_path = os.path.join(args.data_dir, MASTER_COORDS)
+    legacy_path = os.path.join(args.data_dir, LEGACY_COORDS)
     cache_path = os.path.join(args.data_dir, CACHE_FILENAME)
 
-    if not os.path.exists(coords_path):
-        print(f"[ERROR] No se encontró {coords_path}")
+    # Cargar coordenadas: preferir catálogo maestro, fallback a legacy CSV
+    if os.path.exists(master_path):
+        df_coords = pd.read_parquet(master_path)[["oid", "ra_deg", "dec_deg"]]
+        print(f"Coordenadas disponibles: {len(df_coords):,} OIDs (desde {MASTER_COORDS})")
+    elif os.path.exists(legacy_path):
+        df_coords = pd.read_csv(legacy_path, usecols=["sn_name", "ra_used_deg", "dec_used_deg"])
+        df_coords = df_coords.dropna(subset=["ra_used_deg", "dec_used_deg"])
+        df_coords = df_coords.rename(columns={"sn_name": "oid",
+                                              "ra_used_deg": "ra_deg",
+                                              "dec_used_deg": "dec_deg"})
+        print(f"Coordenadas disponibles: {len(df_coords):,} OIDs (legacy: {LEGACY_COORDS})")
+        print(f"  [TIP] Ejecuta 'python tools/build_coords_catalog.py' para catálogo unificado")
+    else:
+        print(f"[ERROR] No se encontró ni {master_path} ni {legacy_path}")
         sys.exit(1)
-
-    # Cargar coordenadas
-    df_coords = pd.read_csv(coords_path, usecols=["sn_name", "ra_used_deg", "dec_used_deg"])
-    df_coords = df_coords.dropna(subset=["ra_used_deg", "dec_used_deg"])
-    df_coords = df_coords.rename(columns={"sn_name": "oid",
-                                          "ra_used_deg": "ra_deg",
-                                          "dec_used_deg": "dec_deg"})
-    print(f"Coordenadas disponibles: {len(df_coords):,} OIDs")
 
     # Cargar cache existente
     df_cache = load_cache(cache_path)

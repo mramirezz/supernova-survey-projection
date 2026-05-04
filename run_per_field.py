@@ -411,19 +411,29 @@ def main():
     response_folder = PATHS['response_folder']
     obslog_path = os.path.join(data_dir, 'ZTF_observing_log_complete.csv')
 
-    # Cargar coordenadas RA/Dec por OID para queries SFD98
-    coords_path = os.path.join(data_dir, 'ztf_targets_with_coords_multicat_summary.csv')
+    # Cargar coordenadas RA/Dec por OID desde catálogo maestro (merge de múltiples
+    # fuentes: BTS, TNS, etc.) construido por tools/build_coords_catalog.py.
+    # Fallback al CSV de BTS (solo 209 OIDs) si el master no existe.
+    master_path = os.path.join(data_dir, 'ztf_coords_master.parquet')
+    legacy_path = os.path.join(data_dir, 'ztf_targets_with_coords_multicat_summary.csv')
     oid_coords_map = {}
-    if os.path.exists(coords_path):
-        df_coords = pd.read_csv(coords_path, usecols=['sn_name', 'ra_used_deg', 'dec_used_deg'])
+    if os.path.exists(master_path):
+        df_coords = pd.read_parquet(master_path)
+        oid_coords_map = dict(zip(df_coords['oid'],
+                                  zip(df_coords['ra_deg'].astype(float),
+                                      df_coords['dec_deg'].astype(float))))
+        print(f"  Coordenadas cargadas: {len(oid_coords_map):,} OIDs desde {os.path.basename(master_path)}")
+    elif os.path.exists(legacy_path):
+        df_coords = pd.read_csv(legacy_path, usecols=['sn_name', 'ra_used_deg', 'dec_used_deg'])
         oid_coords_map = {
             row['sn_name']: (row['ra_used_deg'], row['dec_used_deg'])
             for _, row in df_coords.iterrows()
             if pd.notna(row['ra_used_deg']) and pd.notna(row['dec_used_deg'])
         }
-        print(f"  Coordenadas cargadas: {len(oid_coords_map)} OIDs con RA/Dec para SFD98")
+        print(f"  Coordenadas cargadas (legacy): {len(oid_coords_map)} OIDs desde {os.path.basename(legacy_path)}")
+        print(f"  [WARN] Ejecuta 'python tools/build_coords_catalog.py' para catálogo unificado")
     else:
-        print(f"  [WARN] No se encontró {coords_path} — usando E(B-V)_MW=0.02 fijo")
+        print(f"  [WARN] Sin catálogo de coords — usando E(B-V)_MW=0.02 fijo")
 
     # Cargar cache SFD98 (precomputado por tools/precompute_sfd98.py)
     sfd98_cache_path = os.path.join(data_dir, 'sfd98_cache.parquet')
