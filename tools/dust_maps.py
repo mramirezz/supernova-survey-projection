@@ -12,20 +12,35 @@ import os
 # Permite silenciar prints al importar (útil para runners con barra de progreso)
 _DUST_MAPS_QUIET = str(os.environ.get("DUST_MAPS_QUIET", "0")).strip().lower() in {"1", "true", "yes", "on"}
 
-# Importaciones para consultas SFD98 reales
+# Importaciones para consultas SFD98 locales (offline, sin red).
+# Preferimos dustmaps (mapas descargados localmente → microsegundos por query,
+# sin errores de red). Fallback a astroquery si dustmaps no está.
+REAL_SFD98_AVAILABLE = False
+_SFD_BACKEND = None  # 'dustmaps' | 'astroquery' | None
+_SFD_QUERY = None  # callable inicializado en primera llamada
+
 try:
-    from astroquery.irsa_dust import IrsaDust
+    from dustmaps.sfd import SFDQuery
     from astropy.coordinates import SkyCoord
     import astropy.units as u
     REAL_SFD98_AVAILABLE = True
+    _SFD_BACKEND = "dustmaps"
     if not _DUST_MAPS_QUIET:
-        print("[OK] astroquery disponible: Usando consultas SFD98 REALES")
-except ImportError as e:
-    REAL_SFD98_AVAILABLE = False
-    if not _DUST_MAPS_QUIET:
-        print(f"[WARNING] astroquery no disponible: {e}")
-        print("   -> Instalar con: pip install astroquery astropy")
-        print("   -> Usando valores por defecto en caso de error")
+        print("[OK] dustmaps disponible: SFD98 offline (rápido, sin red)")
+except ImportError:
+    try:
+        from astroquery.irsa_dust import IrsaDust
+        from astropy.coordinates import SkyCoord
+        import astropy.units as u
+        REAL_SFD98_AVAILABLE = True
+        _SFD_BACKEND = "astroquery"
+        if not _DUST_MAPS_QUIET:
+            print("[OK] astroquery disponible (fallback): consultas SFD98 online")
+    except ImportError as e:
+        if not _DUST_MAPS_QUIET:
+            print(f"[WARNING] Ni dustmaps ni astroquery: {e}")
+            print("   -> Instalar con: pip install dustmaps astropy")
+            print("   -> Después: python -c 'from dustmaps.sfd import fetch; fetch()'")
 
 def sample_ztf_field_coordinates(n_samples=1, random_state=None):
     """
@@ -84,29 +99,34 @@ def get_sfd98_extinction_real(ra, dec):
         (E(B-V) de extinción MW según SFD98, success_flag)
         success_flag = True si consulta exitosa, False si error
     """
+    global _SFD_QUERY
+
     if not REAL_SFD98_AVAILABLE:
-        # Valor por defecto si astroquery no está disponible
-        print(f"Warning: astroquery no disponible para RA={ra:.3f}, Dec={dec:.3f}")
-        print("Usando valor promedio E(B-V)=0.05 mag")
+        if not _DUST_MAPS_QUIET:
+            print(f"Warning: SFD98 no disponible para RA={ra:.3f}, Dec={dec:.3f}")
         return 0.05, False
-    
+
     try:
-        # Crear coordenada astronómica
-        coord = SkyCoord(ra=ra*u.deg, dec=dec*u.deg, frame='icrs')
-        
-        # Consulta al servicio IRSA
-        table = IrsaDust.get_query_table(coord, section='ebv')
-        
-        # Extraer E(B-V) de SFD98
-        ebv_mw = float(table['ext SandF mean'])
-        
-        return ebv_mw, True  # Consulta exitosa
-        
+        coord = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame='icrs')
+
+        if _SFD_BACKEND == "dustmaps":
+            # Lazy init del SFDQuery (carga mapas FITS en memoria)
+            if _SFD_QUERY is None:
+                _SFD_QUERY = SFDQuery()
+            ebv_mw = float(_SFD_QUERY(coord))
+            return ebv_mw, True
+
+        elif _SFD_BACKEND == "astroquery":
+            table = IrsaDust.get_query_table(coord, section='ebv')
+            ebv_mw = float(table['ext SandF mean'])
+            return ebv_mw, True
+
     except Exception as e:
-        # En caso de error de conexión, usar valor promedio
-        print(f"Warning: Error consultando IRSA para RA={ra:.3f}, Dec={dec:.3f}: {e}")
-        print("Usando valor promedio E(B-V)=0.05 mag")
-        return 0.05, False  # Consulta falló
+        if not _DUST_MAPS_QUIET:
+            print(f"Warning: Error SFD98 para RA={ra:.3f}, Dec={dec:.3f}: {e}")
+        return 0.05, False
+
+    return 0.05, False
 
 
 def sample_realistic_mw_extinction(sn_name=None, n_samples=1, random_state=None):

@@ -8,7 +8,8 @@ pandas>=1.3.0
 
 # Astronomía y astrofísica
 astropy>=5.0.0
-astroquery>=0.4.6
+astroquery>=0.4.6  # fallback para SFD98 si dustmaps no está
+dustmaps>=1.0.0  # preferido: mapas SFD98 locales (offline, rápido)
 extinction>=0.4.6
 
 # Visualización científica
