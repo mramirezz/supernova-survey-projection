@@ -14,17 +14,49 @@ conda create -n projection python=3.10
 conda activate projection
 pip install -r requirements.txt
 
+# Descargar mapas SFD98 para extinción MW offline (una sola vez, ~64 MB)
+python -c "from dustmaps.sfd import fetch; fetch()"
+
 # Un campo específico (30 simulaciones: 3 tipos × 10 pivotes)
 python run_per_field.py --oid ZTF18aaqeasu --seed 42
 
-# Primeros N campos con mínimo de observaciones
+# Primeros N campos ordenados alfabéticamente con mínimo de observaciones
 python run_per_field.py --n-fields 100 --min-obs 50
+
+# Top-N campos con más observaciones totales
+python run_per_field.py --n-fields 100 --sort-by-obs
+
+# Desde una lista pre-seleccionada de OIDs (ignora --n-fields, --min-obs, --sort-by-obs)
+python run_per_field.py --oids-file outputs/run_1000/oids.txt
 
 # Todos los campos (~67,800 OIDs)
 python run_per_field.py
 
 # Verificar resultados
 python verify_output.py outputs/per_field/<run_dir>/
+```
+
+### Argumentos de `run_per_field.py`
+
+| Argumento | Default | Descripción |
+|-----------|---------|-------------|
+| `--oid OID` | — | Procesa un único OID específico |
+| `--n-fields N` | todos | Número máximo de campos a procesar |
+| `--min-obs N` | 30 | Descarta OIDs con menos de N observaciones |
+| `--sort-by-obs` | off | Ordena por número total de observaciones (desc) antes de tomar los primeros N. Sin este flag el orden es alfabético. |
+| `--oids-file PATH` | — | Lista de OIDs (uno por línea). Si se pasa, ignora `--n-fields`, `--min-obs` y `--sort-by-obs` |
+| `--seed N` | aleatorio | Semilla global para reproducibilidad |
+| `--z-min F` | `Z_CONFIG` | Override del redshift mínimo (todos los tipos) |
+| `--z-max F` | `Z_CONFIG` | Override del redshift máximo (todos los tipos, ignora `z_max_by_type`) |
+| `--output-dir PATH` | `outputs/per_field` | Directorio raíz de salida |
+
+> **Nota sobre selección de campos:** `--sort-by-obs` ordena por observaciones *totales* sin considerar balance por banda ni span temporal. Para corridas de producción se recomienda pre-seleccionar con `tools/find_best_fields.py` (análisis de balance g/r/i + span) y pasar el resultado con `--oids-file`.
+
+### Precomputar extinción MW (recomendado antes de corridas grandes)
+
+```bash
+# Genera/actualiza data/sfd98_cache.parquet con los OIDs que tengan coordenadas
+python tools/precompute_sfd98.py
 ```
 
 ---
