@@ -1,271 +1,247 @@
 """
-ENCUENTRA CAMPOS ZTF CON MEJOR COBERTURA
-=========================================
-Script para encontrar los campos ZTF más observados
-para usar en pruebas con fixed_field
+ENCUENTRA CAMPOS ZTF CON MEJOR COBERTURA FOTOMÉTRICA
+=====================================================
+Selecciona los N objetos transitorios del catálogo ZTF con mayor número
+total de observaciones y exporta la lista de forma reproducible.
+
+Criterio de selección:
+  - Se calcula cuántas observaciones tiene cada objeto en total
+    (sumando todas las noches en todos los filtros ópticos: g, r, i).
+  - Se ordenan de mayor a menor número de observaciones.
+  - Se toman los primeros N (por defecto 1000).
+  - No se aplica ningún filtro adicional: se priorizan los objetos
+    con mayor cobertura observacional independientemente del filtro.
+
+Uso:
+  python tools/find_best_fields.py                  # top 1000 (default)
+  python tools/find_best_fields.py --n-fields 500   # top 500
+  python tools/find_best_fields.py --no-plots       # sin generar figuras
+
+Salidas (en outputs/field_analysis/):
+  oids_selected.txt    — lista de OIDs seleccionados (uno por línea)
+  oids_with_stats.csv  — tabla con estadísticas de cada objeto
 """
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
+import argparse
+from datetime import datetime
 from pathlib import Path
 
-# Cargar obslog ZTF
-obslog_path = "data/ZTF_observing_log_complete.csv"
-df = pd.read_csv(obslog_path)
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
-print("=" * 70)
-print("ANÁLISIS DE CAMPOS ZTF - MEJORES PARA PRUEBAS")
-print("=" * 70)
 
-# Verificar columnas
-print(f"\nColumnas disponibles: {df.columns.tolist()}")
-print(f"Primeras filas:\n{df.head()}\n")
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Selecciona los N objetos ZTF con más observaciones."
+    )
+    parser.add_argument(
+        "--n-fields", type=int, default=1000,
+        help="Cuántos objetos seleccionar (default: 1000)."
+    )
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("outputs/field_analysis"),
+        help="Directorio donde guardar los archivos de salida."
+    )
+    parser.add_argument(
+        "--obslog", type=Path, default=Path("data/ZTF_observing_log_complete.csv"),
+        help="Ruta al log de observaciones de ZTF."
+    )
+    parser.add_argument(
+        "--no-plots", action="store_true",
+        help="Omitir la generación de figuras."
+    )
+    return parser.parse_args()
 
-# Contar observaciones por OID
-obs_per_oid = df.groupby('oid').size().sort_values(ascending=False)
 
-print(f"\nTotal de campos únicos: {len(obs_per_oid):,}")
-print(f"Total de observaciones: {len(df):,}")
-print(f"Promedio obs/campo: {len(df)/len(obs_per_oid):.1f}")
+def compute_stats(df):
+    """
+    Para cada objeto (OID), calcula:
+      - n_total   : total de noches de observación en todos los filtros
+      - n_g       : noches en filtro verde  (fid=1, banda g, ~480 nm)
+      - n_r       : noches en filtro rojo   (fid=2, banda r, ~640 nm)
+      - n_i       : noches en infrarrojo cercano (fid=3, banda i, ~750 nm)
+      - span_days : duración del seguimiento en días (última obs - primera obs)
 
-print("\n" + "=" * 70)
-print("TOP 20 CAMPOS MÁS OBSERVADOS")
-print("=" * 70)
-print(f"{'Rank':<6} {'OID':<20} {'Total Obs':<12} {'g':<8} {'r':<8} {'i':<8}")
-print("-" * 70)
-
-for rank, (oid, total) in enumerate(obs_per_oid.head(20).items(), 1):
-    df_field = df[df['oid'] == oid]
-    
-    # Contar por filtro
-    g_count = len(df_field[df_field['filter'] == 'g'])
-    r_count = len(df_field[df_field['filter'] == 'r'])
-    i_count = len(df_field[df_field['filter'] == 'i'])
-    
-    print(f"{rank:<6} {oid:<20} {total:<12} {g_count:<8} {r_count:<8} {i_count:<8}")
-
-# Análisis temporal del mejor campo
-best_oid = obs_per_oid.index[0]
-df_best = df[df['oid'] == best_oid]
-
-print("\n" + "=" * 70)
-print(f"ANÁLISIS DETALLADO DEL MEJOR CAMPO: {best_oid}")
-print("=" * 70)
-
-print(f"\nTotal observaciones: {len(df_best)}")
-print(f"Rango temporal: MJD {df_best['mjd'].min():.1f} - {df_best['mjd'].max():.1f}")
-print(f"Duración: {df_best['mjd'].max() - df_best['mjd'].min():.1f} días")
-
-print("\nDistribución por filtro:")
-for filt in ['g', 'r', 'i']:
-    df_filt = df_best[df_best['filter'] == filt]
-    if len(df_filt) > 0:
-        print(f"  {filt}: {len(df_filt):4d} obs | "
-              f"MJD {df_filt['mjd'].min():.1f} - {df_filt['mjd'].max():.1f} | "
-              f"maglim med: {df_filt['maglimit'].median():.2f}")
-
-print("\n" + "=" * 70)
-print("CAMPOS CON COBERTURA MULTI-BANDA BALANCEADA")
-print("=" * 70)
-print(f"{'OID':<20} {'Total':<8} {'g':<8} {'r':<8} {'i':<8} {'Balance':<10}")
-print("-" * 70)
-
-# Buscar campos con buena cobertura en los 3 filtros
-balanced_fields = []
-for oid in obs_per_oid.head(100).index:
-    df_field = df[df['oid'] == oid]
-    g_count = len(df_field[df_field['filter'] == 'g'])
-    r_count = len(df_field[df_field['filter'] == 'r'])
-    i_count = len(df_field[df_field['filter'] == 'i'])
-    
-    total = g_count + r_count + i_count
-    
-    # Calcular balance (desviación estándar normalizada)
-    if i_count > 0:  # Solo campos con las 3 bandas
-        counts = np.array([g_count, r_count, i_count])
-        balance = np.std(counts) / np.mean(counts)
-        balanced_fields.append({
-            'oid': oid,
-            'total': total,
-            'g': g_count,
-            'r': r_count,
-            'i': i_count,
-            'balance': balance
+    En ZTF el filtro se codifica como entero (fid): 1=g, 2=r, 3=i.
+    """
+    def oid_stats(g):
+        return pd.Series({
+            "n_total":    len(g),
+            "n_g":        (g["fid"] == 1).sum(),
+            "n_r":        (g["fid"] == 2).sum(),
+            "n_i":        (g["fid"] == 3).sum(),
+            "span_days":  g["mjd"].max() - g["mjd"].min(),
         })
 
-# Ordenar por menor desbalance
-balanced_fields_sorted = sorted(balanced_fields, key=lambda x: x['balance'])
+    stats = (
+        df.groupby("oid")
+        .apply(oid_stats, include_groups=False)
+        .sort_values("n_total", ascending=False)
+        .reset_index()
+    )
+    return stats
 
-for field in balanced_fields_sorted[:10]:
-    print(f"{field['oid']:<20} {field['total']:<8} "
-          f"{field['g']:<8} {field['r']:<8} {field['i']:<8} "
-          f"{field['balance']:<10.3f}")
 
-print("\n" + "=" * 70)
-print("RECOMENDACIONES PARA config.py")
-print("=" * 70)
-print("\nPara usar un campo fijo, edita config.py:")
-print(f"\n    'fixed_field': '{best_oid}',  # Campo más observado")
-if balanced_fields_sorted:
-    print(f"    # O mejor balanceado: '{balanced_fields_sorted[0]['oid']}'")
-print("\nPara volver a modo aleatorio:")
-print("    'fixed_field': None,")
+def export_selected(stats, n_fields, output_dir, obslog_path):
+    """Exporta oids_selected.txt y oids_with_stats.csv con encabezados descriptivos."""
+    selected = stats.head(n_fields)
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-# =========================================================================
-# PLOTS DE VISUALIZACIÓN
-# =========================================================================
+    # --- oids_selected.txt ---
+    txt_path = output_dir / "oids_selected.txt"
+    header_lines = [
+        f"# OIDs seleccionados para simulación de supernovas — generado {generated_at}",
+        f"# Fuente: {obslog_path}",
+        f"# Criterio: top {n_fields} objetos con mayor número total de observaciones ZTF",
+        f"# Total seleccionados: {len(selected)}",
+        f"# Rango de observaciones: {int(selected['n_total'].max())} (1°) "
+        f"a {int(selected['n_total'].min())} ({len(selected)}°)",
+        "#",
+        "# Cada línea es el identificador único del objeto en ZTF (OID).",
+        "# Este archivo se usa como entrada para run_per_field.py --oids-file.",
+    ]
+    with open(txt_path, "w") as f:
+        f.write("\n".join(header_lines) + "\n")
+        for oid in selected["oid"]:
+            f.write(oid + "\n")
+    print(f"✓ Exportado: {txt_path}  ({len(selected)} OIDs)")
 
-print("\n" + "=" * 70)
-print("GENERANDO PLOTS DE LOS MEJORES CAMPOS...")
-print("=" * 70)
+    # --- oids_with_stats.csv ---
+    csv_path = output_dir / "oids_with_stats.csv"
+    csv_header = (
+        f"# Estadísticas de cobertura fotométrica — generado {generated_at}\n"
+        f"# Fuente: {obslog_path}\n"
+        f"# Criterio de selección: top {n_fields} por n_total (mayor a menor)\n"
+        "#\n"
+        "# Columnas:\n"
+        "#   oid        — identificador único del objeto transitorio en ZTF\n"
+        "#   n_total    — total de noches de observación (suma de todos los filtros)\n"
+        "#   n_g        — noches en filtro verde (banda g, ~480 nm)\n"
+        "#   n_r        — noches en filtro rojo (banda r, ~640 nm)\n"
+        "#   n_i        — noches en infrarrojo cercano (banda i, ~750 nm)\n"
+        "#   span_days  — duración del seguimiento en días (primera a última observación)\n"
+    )
+    with open(csv_path, "w") as f:
+        f.write(csv_header)
+        selected.to_csv(f, index=False)
+    print(f"✓ Exportado: {csv_path}")
 
-# Crear directorio para plots
-output_dir = Path("outputs/field_analysis")
-output_dir.mkdir(parents=True, exist_ok=True)
+    return selected
 
-# Plot para top 5 campos más observados
-fig, axes = plt.subplots(5, 1, figsize=(14, 16))
-fig.suptitle('TOP 5 CAMPOS ZTF MÁS OBSERVADOS', fontsize=16, fontweight='bold')
 
-for idx, (oid, total) in enumerate(obs_per_oid.head(5).items()):
-    ax = axes[idx]
-    df_field = df[df['oid'] == oid]
-    
-    # Plot observaciones por filtro
-    colors = {'g': 'green', 'r': 'red', 'i': 'purple'}
-    for filt in ['g', 'r', 'i']:
-        df_filt = df_field[df_field['filter'] == filt]
-        if len(df_filt) > 0:
-            ax.scatter(df_filt['mjd'], df_filt['maglimit'], 
-                      c=colors[filt], label=f'{filt} ({len(df_filt)} obs)',
-                      alpha=0.6, s=30, marker='o')
-    
-    ax.invert_yaxis()
-    ax.set_ylabel('Limiting Mag', fontsize=10, fontweight='bold')
-    ax.set_title(f"#{idx+1}: {oid} ({total} obs total)", 
-                fontsize=12, fontweight='bold')
-    ax.legend(loc='upper right', fontsize=9)
-    ax.grid(True, alpha=0.3, linestyle='--')
-    
-    if idx == 4:
-        ax.set_xlabel('MJD', fontsize=10, fontweight='bold')
+def print_summary(stats, selected, n_fields):
+    print("=" * 70)
+    print(f"ANÁLISIS DE CAMPOS ZTF — TOP {n_fields} POR COBERTURA OBSERVACIONAL")
+    print("=" * 70)
+    print(f"\nTotal objetos únicos en el catálogo: {len(stats):,}")
+    print(f"Total observaciones en el catálogo:  {int(stats['n_total'].sum()):,}")
+    print(f"Promedio de obs por objeto:          {stats['n_total'].mean():.1f}")
+    print(f"\nTop {n_fields} seleccionados:")
+    print(f"  Más observado:  {selected.iloc[0]['oid']}  "
+          f"({int(selected.iloc[0]['n_total'])} noches, "
+          f"{selected.iloc[0]['span_days']:.0f} días de seguimiento)")
+    print(f"  El número {n_fields}: {selected.iloc[-1]['oid']}  "
+          f"({int(selected.iloc[-1]['n_total'])} noches, "
+          f"{selected.iloc[-1]['span_days']:.0f} días de seguimiento)")
 
-plt.tight_layout()
-plot_path_top5 = output_dir / "top5_most_observed_fields.png"
-plt.savefig(plot_path_top5, dpi=150, bbox_inches='tight')
-print(f"\n✓ Guardado: {plot_path_top5}")
+    print("\n" + "=" * 70)
+    print("TOP 20 OBJETOS MÁS OBSERVADOS")
+    print("=" * 70)
+    print(f"{'#':<5} {'OID':<20} {'Total obs':<12} "
+          f"{'Verde (g)':<12} {'Rojo (r)':<12} {'Infrarrojo (i)':<16} {'Seguimiento (d)'}")
+    print("-" * 85)
+    for rank, row in enumerate(selected.head(20).itertuples(), 1):
+        print(f"{rank:<5} {row.oid:<20} {int(row.n_total):<12} "
+              f"{int(row.n_g):<12} {int(row.n_r):<12} {int(row.n_i):<16} "
+              f"{row.span_days:.0f}")
 
-# Plot para top 5 campos balanceados (multi-banda)
-if len(balanced_fields_sorted) >= 5:
+
+def make_plots(df, selected, output_dir):
+    # fid en ZTF: 1=g (verde), 2=r (rojo), 3=i (infrarrojo)
+    fid_meta = {1: ("g", "green"), 2: ("r", "red"), 3: ("i", "purple")}
+    maglim_col = "diffmaglim" if "diffmaglim" in df.columns else "maglimit"
+
+    # --- Top 5 más observados ---
     fig, axes = plt.subplots(5, 1, figsize=(14, 16))
-    fig.suptitle('TOP 5 CAMPOS CON MEJOR BALANCE MULTI-BANDA (g+r+i)', 
-                fontsize=16, fontweight='bold')
-    
-    for idx, field_info in enumerate(balanced_fields_sorted[:5]):
+    fig.suptitle("TOP 5 OBJETOS ZTF MÁS OBSERVADOS", fontsize=16, fontweight="bold")
+
+    for idx, row in enumerate(selected.head(5).itertuples()):
         ax = axes[idx]
-        oid = field_info['oid']
-        df_field = df[df['oid'] == oid]
-        
-        # Plot observaciones por filtro
-        colors = {'g': 'green', 'r': 'red', 'i': 'purple'}
-        for filt in ['g', 'r', 'i']:
-            df_filt = df_field[df_field['filter'] == filt]
-            if len(df_filt) > 0:
-                ax.scatter(df_filt['mjd'], df_filt['maglimit'], 
-                          c=colors[filt], label=f'{filt} ({len(df_filt)} obs)',
-                          alpha=0.6, s=30, marker='o')
-        
+        df_field = df[df["oid"] == row.oid]
+        for fid, (label, color) in fid_meta.items():
+            d = df_field[df_field["fid"] == fid]
+            if len(d) > 0:
+                ax.scatter(d["mjd"], d[maglim_col], c=color,
+                           label=f"{label} ({len(d)} noches)", alpha=0.6, s=30)
         ax.invert_yaxis()
-        ax.set_ylabel('Limiting Mag', fontsize=10, fontweight='bold')
-        title = (f"#{idx+1}: {oid} ({field_info['total']} obs) | "
-                f"Balance={field_info['balance']:.3f}")
-        ax.set_title(title, fontsize=11, fontweight='bold')
-        ax.legend(loc='upper right', fontsize=9)
-        ax.grid(True, alpha=0.3, linestyle='--')
-        
+        ax.set_ylabel("Mag límite", fontsize=10, fontweight="bold")
+        ax.set_title(f"#{idx+1}: {row.oid}  ({int(row.n_total)} obs, "
+                     f"{row.span_days:.0f} días)", fontsize=12, fontweight="bold")
+        ax.legend(loc="upper right", fontsize=9)
+        ax.grid(True, alpha=0.3, linestyle="--")
         if idx == 4:
-            ax.set_xlabel('MJD', fontsize=10, fontweight='bold')
-    
+            ax.set_xlabel("MJD (Tiempo Juliano Modificado)", fontsize=10)
+
     plt.tight_layout()
-    plot_path_balanced = output_dir / "top5_balanced_multiband_fields.png"
-    plt.savefig(plot_path_balanced, dpi=150, bbox_inches='tight')
-    print(f"✓ Guardado: {plot_path_balanced}")
+    path = output_dir / "top5_most_observed.png"
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"✓ Figura: {path}")
 
-# Plot comparativo: Histograma de observaciones por filtro
-fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-fig.suptitle('ANÁLISIS COMPARATIVO: MEJOR CAMPO vs MEJOR BALANCEADO', 
-            fontsize=14, fontweight='bold')
+    # --- Histograma de distribución de cobertura ---
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle("DISTRIBUCIÓN DE COBERTURA FOTOMÉTRICA — OBJETOS SELECCIONADOS",
+                 fontsize=13, fontweight="bold")
 
-# Campo más observado
-oid_most = best_oid
-df_most = df[df['oid'] == oid_most]
+    axes[0].hist(selected["n_total"], bins=50, color="steelblue", edgecolor="white", lw=0.5)
+    axes[0].set_xlabel("Total de noches de observación", fontsize=11)
+    axes[0].set_ylabel("Número de objetos", fontsize=11)
+    axes[0].set_title("Distribución por total de observaciones", fontsize=11)
+    axes[0].axvline(selected["n_total"].median(), color="orange", linestyle="--",
+                    label=f"Mediana: {selected['n_total'].median():.0f}")
+    axes[0].legend(fontsize=10)
+    axes[0].grid(True, alpha=0.3, axis="y")
 
-ax = axes[0, 0]
-for filt, color in [('g', 'green'), ('r', 'red'), ('i', 'purple')]:
-    df_filt = df_most[df_most['filter'] == filt]
-    if len(df_filt) > 0:
-        ax.scatter(df_filt['mjd'], df_filt['maglimit'], 
-                  c=color, label=f'{filt} ({len(df_filt)})',
-                  alpha=0.6, s=25)
-ax.invert_yaxis()
-ax.set_title(f'Más Observado: {oid_most}', fontsize=11, fontweight='bold')
-ax.set_xlabel('MJD', fontsize=10)
-ax.set_ylabel('Limiting Mag', fontsize=10)
-ax.legend(fontsize=9)
-ax.grid(True, alpha=0.3)
+    axes[1].hist(selected["span_days"], bins=50, color="salmon", edgecolor="white", lw=0.5)
+    axes[1].set_xlabel("Duración del seguimiento (días)", fontsize=11)
+    axes[1].set_ylabel("Número de objetos", fontsize=11)
+    axes[1].set_title("Distribución por duración del seguimiento", fontsize=11)
+    axes[1].axvline(selected["span_days"].median(), color="orange", linestyle="--",
+                    label=f"Mediana: {selected['span_days'].median():.0f} d")
+    axes[1].legend(fontsize=10)
+    axes[1].grid(True, alpha=0.3, axis="y")
 
-# Mejor balanceado
-if balanced_fields_sorted:
-    oid_bal = balanced_fields_sorted[0]['oid']
-    df_bal = df[df['oid'] == oid_bal]
-    
-    ax = axes[0, 1]
-    for filt, color in [('g', 'green'), ('r', 'red'), ('i', 'purple')]:
-        df_filt = df_bal[df_bal['filter'] == filt]
-        if len(df_filt) > 0:
-            ax.scatter(df_filt['mjd'], df_filt['maglimit'], 
-                      c=color, label=f'{filt} ({len(df_filt)})',
-                      alpha=0.6, s=25)
-    ax.invert_yaxis()
-    ax.set_title(f'Mejor Balance: {oid_bal}', fontsize=11, fontweight='bold')
-    ax.set_xlabel('MJD', fontsize=10)
-    ax.set_ylabel('Limiting Mag', fontsize=10)
-    ax.legend(fontsize=9)
-    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    path = output_dir / "coverage_distribution.png"
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"✓ Figura: {path}")
 
-# Histogramas de distribución temporal
-ax = axes[1, 0]
-for filt, color in [('g', 'green'), ('r', 'red'), ('i', 'purple')]:
-    df_filt = df_most[df_most['filter'] == filt]
-    if len(df_filt) > 0:
-        ax.hist(df_filt['mjd'], bins=30, alpha=0.5, color=color, 
-               label=f'{filt}', edgecolor='black', linewidth=0.5)
-ax.set_xlabel('MJD', fontsize=10)
-ax.set_ylabel('Observaciones', fontsize=10)
-ax.set_title('Distribución Temporal (Más Observado)', fontsize=10)
-ax.legend(fontsize=9)
-ax.grid(True, alpha=0.3, axis='y')
 
-if balanced_fields_sorted:
-    ax = axes[1, 1]
-    for filt, color in [('g', 'green'), ('r', 'red'), ('i', 'purple')]:
-        df_filt = df_bal[df_bal['filter'] == filt]
-        if len(df_filt) > 0:
-            ax.hist(df_filt['mjd'], bins=30, alpha=0.5, color=color, 
-                   label=f'{filt}', edgecolor='black', linewidth=0.5)
-    ax.set_xlabel('MJD', fontsize=10)
-    ax.set_ylabel('Observaciones', fontsize=10)
-    ax.set_title('Distribución Temporal (Mejor Balance)', fontsize=10)
-    ax.legend(fontsize=9)
-    ax.grid(True, alpha=0.3, axis='y')
+def main():
+    args = parse_args()
+    args.output_dir.mkdir(parents=True, exist_ok=True)
 
-plt.tight_layout()
-plot_path_comparison = output_dir / "field_comparison.png"
-plt.savefig(plot_path_comparison, dpi=150, bbox_inches='tight')
-print(f"✓ Guardado: {plot_path_comparison}")
+    print(f"Cargando log de observaciones: {args.obslog}")
+    df = pd.read_csv(args.obslog)
+    print(f"  {len(df):,} filas | {df['oid'].nunique():,} objetos únicos")
 
-print("\n" + "=" * 70)
-print(f"Plots guardados en: {output_dir.absolute()}")
-print("=" * 70)
+    print("Calculando estadísticas por objeto...")
+    stats = compute_stats(df)
+
+    selected = export_selected(stats, args.n_fields, args.output_dir, args.obslog)
+    print_summary(stats, selected, args.n_fields)
+
+    if not args.no_plots:
+        print("\nGenerando figuras...")
+        make_plots(df, selected, args.output_dir)
+
+    print("\n" + "=" * 70)
+    print(f"Archivos guardados en: {args.output_dir.absolute()}")
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()
 
