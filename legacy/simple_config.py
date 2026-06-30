@@ -114,8 +114,10 @@ SN_WHITELIST = {
         "SN2002hx.dat",
         # SN2003hn: sin premax, buena caída
         "SN2003hn.dat",
-        # SN2004dj: sí tiene premax
-        "SN2004dj.dat",
+        # SN2004dj: REMOVIDA (2026-06-27). El "premax" era de la curva de luz,
+        # no del espectro: la serie espectral arranca a +200 d (solo nebular,
+        # sin plateau ni peak) -> proyectada da una LC sintética irreal.
+        # "SN2004dj.dat",
         # SN2004et: sin máximo, buena caída
         "SN2004et.dat",
         # SN2005cs: incluye fase de transición (sin subida)

@@ -19,6 +19,12 @@ from scipy import interpolate
 import matplotlib.pyplot as plt
 from .utils import maximo_lc
 
+# Ruido fotométrico survey-agnóstico (ver el bloque de detección en
+# multiband_field_projection). El maglimit del obslog se define a 5σ -> de ahí sale
+# directo el ruido de cielo por época, sin parámetros específicos del survey.
+NOISE_SNR_AT_LIMIT = 5.0    # el maglimit (profundidad) está definido a 5 sigma
+NOISE_SIGMA_FLOOR  = 0.02   # floor instrumental (read-noise/sistemático), en mag
+
 def multiband_field_projection(
     curves_by_filter,  # Dict: {filter: (fases, flux_y)}
     df_obslog,
@@ -327,17 +333,27 @@ def multiband_field_projection(
             df_filter_in_range['mjd']
         )
         
-        # Determinar detecciones vs upper limits
-        df_filter_in_range['magnitud_proyectada'] = df_filter_in_range[
-            ['maglimit', 'magnitud_modelo']
-        ].min(axis=1)
-        
-        df_filter_in_range['upperlimit'] = (
-            df_filter_in_range['maglimit'] == df_filter_in_range['magnitud_proyectada']
-        ).map({True: 'T', False: 'F'})
-        
-        df_filter_in_range['detected'] = (df_filter_in_range['upperlimit'] == 'F')
-        
+        # Detección: el modelo (limpio) por encima del límite del survey.
+        mlim = df_filter_in_range['maglimit'].values.astype(float)
+        mmod = df_filter_in_range['magnitud_modelo'].values.astype(float)
+        is_det = mmod < mlim
+
+        # Ruido fotométrico survey-agnóstico (FIX 2026-06-28): el σ sale de la
+        # profundidad real del survey por época. m_lim está a 5σ, así que
+        #   S/N = 5 · 10^(0.4·(m_lim − m))   (régimen limitado por cielo, el de los
+        #   transientes débiles) y   σ_mag = 1.0857 / (S/N),  con floor instrumental.
+        # Se trabaja en espacio de MAGNITUD (evita el blowup flujo->mag del modelo viejo).
+        # Survey-agnóstico: solo usa m_lim, que todo survey reporta (ZTF hoy, SUDARE mañana).
+        snr = NOISE_SNR_AT_LIMIT * 10.0 ** (0.4 * (mlim - mmod))
+        sigma_mag = np.clip(1.0857 / np.maximum(snr, 1e-6), NOISE_SIGMA_FLOOR, None)
+        mag_obs = mmod + np.random.normal(0.0, sigma_mag)
+
+        # Detecciones: mag observada (con ruido) + su σ. Upper limits: el propio maglimit.
+        df_filter_in_range['magnitud_proyectada'] = np.where(is_det, mag_obs, mlim)
+        df_filter_in_range['magerr'] = np.where(is_det, sigma_mag, np.nan)
+        df_filter_in_range['upperlimit'] = np.where(is_det, 'F', 'T')
+        df_filter_in_range['detected'] = is_det
+
         all_projections.append(df_filter_in_range)
         
         detections = df_filter_in_range['detected'].sum()

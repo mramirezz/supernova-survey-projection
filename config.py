@@ -213,35 +213,49 @@ LUMINOSITY_CONFIG = {
     "use_reproducible_sampling": False   # True = usa random_seed si no es None
 }
 
-# 🌫️ CONFIGURACIÓN DE EXTINCIÓN
-# ===============================
+# 🌫️ CONFIGURACIÓN DE EXTINCIÓN DE HOST  (FUENTE ÚNICA DE VERDAD)
+# ================================================================
+# Modelo de MEZCLA por tipo: una fracción `frac_zero` SIN polvo (E(B-V)≈0, entornos
+# limpios) + el resto con una cola EXPONENCIAL en A_V de escala `tau`. Es el enfoque
+# estándar en simulaciones de SNe (Kessler+2009; Brout & Scolnic 2021), y la
+# distribución de core-collapse sigue a Hatano+1998 como en los frameworks modernos
+# de simulación de surveys (Vincenzi+2019, usado en DES/LSST).
+#
+# IMPORTANTE (fix 2026-06-28): `sample_extinction_by_type()` LEE de este dict.
+# Antes los valores estaban hardcodeados en core/correction.py y este dict solo se
+# guardaba en run_metadata.json -> la metadata mentía. Ahora hay una sola fuente.
 EXTINCTION_CONFIG = {
-    # Parámetros para SNe Ia (distribución exponencial académicamente validada)
+    # --- SNe Ia: poblaciones viejas Y jóvenes -> fracción alta sin polvo ---
     "SNIa": {
-        "tau": 0.4,            # Holwerda et al. (2014) - académicamente validado
-        "Av_max": 3.0,         # Corte físico en A_V
-        "Rv": 3.1              # R_V = A_V / E(B-V)
+        "tau":        0.35,  # escala exp. de A_V de la componente con polvo (Holwerda+2015, 2015MNRAS.446.3768H)
+        "frac_zero":  0.40,  # Ia en poblaciones limpias+polvorientas (Holwerda+2015; Brout&Scolnic+2021, 2021ApJ...909...26B)
+        "sigma_zero": 0.01,  # dispersión (mag) de la componente sin-polvo en E(B-V)
+        "Av_max":     3.0,   # cap numérico (P(A_V>3)<0.5% con este tau; inocuo)
+        "Rv":         3.1,   # MW canónico, Cardelli+1989
     },
-    
-    # Parámetros para SNe core-collapse (UNIFICADO: distribución exponencial)
-    # Eliminadas distribuciones mixtas por falta de justificación académica
+    # --- SNe II: solo en regiones star-forming, PERO reddening de host BAJO ---
+    # de Jaeger+2018: "host reddening is not a dominant parameter" para las II.
+    # Consistente con la sub-muestra DETECTABLE de CC de Hatano+1998 (<A_V>~0.2).
     "SNII": {
-        "tau": 0.4,            # Unificado con SNe Ia por consistencia científica
-        "Av_max": 3.0,         # Corte físico en A_V
-        "Rv": 3.1              # R_V = A_V / E(B-V)
-        # ELIMINADOS: f_dusty, tau_exp, sigma_gauss (distribuciones mixtas)
+        "tau":        0.25,  # de Jaeger+2018 (II reddening bajo) + Hatano+1998 (CC detectable)
+        "frac_zero":  0.20,  # CC en SF -> menos eventos limpios que Ia
+        "sigma_zero": 0.01,
+        "Av_max":     3.0,
+        "Rv":         3.1,   # Cardelli+1989
     },
-    
+    # --- SNe Ibc (stripped-envelope): MÁS extinguidas que las II ---
+    # II < Ibc por ~2x: Prentice 2016 (vía Vincenzi+2019) da Ib/Ic 2-3x mas que II;
+    # Stritzinger+2018 mide <A_V>~0.5 para SE SNe del CSP-I (las Ic, las mas rojas).
     "SNIbc": {
-        "tau": 0.4,            # Unificado con SNe Ia por consistencia científica
-        "Av_max": 3.0,         # Corte físico en A_V
-        "Rv": 3.1              # R_V = A_V / E(B-V)
-        # ELIMINADOS: f_dusty, tau_exp, sigma_gauss (distribuciones mixtas)
+        "tau":        0.50,  # Stritzinger+2018 (CSP-I SE SNe, <A_V>~0.5)
+        "frac_zero":  0.20,
+        "sigma_zero": 0.01,
+        "Av_max":     3.0,
+        "Rv":         3.1,   # Cardelli+1989. Nota: Stritzinger ve Rv por subtipo
+                             # (IIb~1.1, Ic~4.3); como mezclamos todo Ibc usamos un Rv único.
     },
-    
-    # Configuración general
-    "random_seed": None,           # None = aleatorio, número = reproducible
-    "use_reproducible_sampling": False  # Controla si usar semilla fija
+    "random_seed": None,           # None = aleatorio
+    "use_reproducible_sampling": False,
 }
 
 # 🎨 CONFIGURACIÓN DE GRÁFICOS
@@ -274,4 +288,32 @@ BATCH_CONFIG = {
     "pause_between_runs": 0.1,        # Pausa entre runs (segundos)
     "auto_update_index": True,        # Actualizar índice automáticamente
     "parallel_processing": False      # Procesamiento paralelo (futuro)
+}
+
+# ============================================================
+# 🎯 WHITELIST DE TEMPLATES POR TIPO
+# ============================================================
+# Limita qué templates se proyectan, sin borrar archivos de data/.
+# None = usar todos los .dat de la carpeta. Los nombres deben coincidir EXACTO
+# con los archivos en data/<tipo>/ (con .dat).
+#
+# Ia / Ibc: la carpeta data/ ya es la curación (13 Ia, 22 Ibc) -> None.
+# II: data/II tiene 31, pero solo 8 pasan el criterio de calidad (forma útil de
+#     la serie espectral). Ver bitácora de Proyección, 2026-06-27 (manifiesto de
+#     templates) para la justificación y los rangos de cada SN.
+SN_WHITELIST = {
+    "Ia": None,
+    "Ibc": None,
+    "II": {
+        "SN1999gi.dat",  # premax corto, puede aportar
+        "SN2002hx.dat",  # sin premax, la caída sirve
+        "SN2003hn.dat",  # sin premax, buena caída
+        "SN2004et.dat",  # sin máximo, buena caída
+        "SN2005cs.dat",  # rise temprano (~3 d post-explosión)
+        "SN2007aa.dat",  # sin subida, buena caída
+        "SN2013ej.dat",  # "una maravilla"
+        "SN2014cy.dat",  # por si acaso
+        # SN2004dj.dat REMOVIDA (2026-06-27): serie espectral solo nebular
+        # (1er espectro a +200 d, sin plateau) -> LC sintética irreal.
+    },
 }

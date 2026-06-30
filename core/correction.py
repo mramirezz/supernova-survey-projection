@@ -53,92 +53,66 @@ def sample_host_extinction_mixture(n_samples=1, tau=0.4, Av_max=3.0, Rv=3.1,
     if random_state is not None:
         np.random.seed(random_state)
 
-    n_zero = int(frac_zero * n_samples)
-    n_dusty = n_samples - n_zero
+    # FIX 2026-06-28: muestreo por-evento con un Bernoulli, NO un conteo entero.
+    # Antes era `n_zero = int(frac_zero * n_samples)`, que con n_samples=1 (como la
+    # proyección llama, una SN a la vez) da int(0.4)=0 -> la fracción sin-polvo NUNCA
+    # aplicaba (toda SN salía con polvo). Con el Bernoulli, cada evento tiene
+    # probabilidad frac_zero de ser limpio y la fracción correcta emerge sobre la
+    # población. Verificado en aislado: da 40/20/20 con n_samples=1 (ver bitácora).
+    is_zero = np.random.random(n_samples) < frac_zero
+    ebmv_host = np.empty(n_samples)
 
-    # Parte sin polvo (Gauss centrada en 0)
-    ebmv_zeros = np.abs(np.random.normal(0, sigma_zero, size=n_zero))
+    # Componente SIN polvo (Gauss estrecha centrada en 0)
+    n_zero = int(is_zero.sum())
+    ebmv_host[is_zero] = np.abs(np.random.normal(0, sigma_zero, size=n_zero))
 
-    # Parte con polvo (Exponencial en A_V, truncada)
-    Av_samples = np.random.exponential(tau, size=n_dusty)
-    Av_samples = np.clip(Av_samples, 0, Av_max)
-    ebmv_dusty = Av_samples / Rv
+    # Componente CON polvo (exponencial en A_V, truncada en Av_max, convertida a E(B-V))
+    Av_samples = np.clip(np.random.exponential(tau, size=n_samples - n_zero), 0, Av_max)
+    ebmv_host[~is_zero] = Av_samples / Rv
 
-    ebmv_host = np.concatenate([ebmv_zeros, ebmv_dusty])
-    np.random.shuffle(ebmv_host)
     return ebmv_host
 
 
 def sample_extinction_by_type(sn_type="Ia", n_samples=1, random_state=None):
     """
-    Despachador que llama a sample_host_extinction_mixture() con parámetros específicos
-    según el tipo de supernova (Ia o core-collapse: II, Ib, Ic, Ibc).
+    Muestrea E(B-V) de host por tipo de SN. Lee los parámetros del modelo de mezcla
+    desde config.EXTINCTION_CONFIG (FUENTE ÚNICA DE VERDAD: valores y citas allí) y
+    delega en sample_host_extinction_mixture().
 
-    Justificación por tipo:
-    -----------------------
+    Justificación de los valores (resumen; detalle y citas en config.EXTINCTION_CONFIG):
+    - Modelo de MEZCLA (frac_zero sin polvo + cola exponencial en A_V): estándar en
+      simulaciones de SNe (Kessler+2009; Brout & Scolnic 2021). La distribución de
+      core-collapse sigue a Hatano+1998 como en los frameworks modernos de simulación
+      de surveys (Vincenzi+2019, usado en DES/LSST).
+    - Ia : tau=0.35 (Holwerda+2015), frac_zero=0.40 (Ia en poblaciones limpias+polvorientas; Holwerda+2015, Brout&Scolnic+2021).
+    - II : tau=0.25, frac_zero=0.20 (de Jaeger+2018: el reddening de host NO es dominante en II).
+    - Ibc: tau=0.50 (Stritzinger+2018, CSP-I SE SNe <A_V>~0.5). II < Ibc por ~2x
+           (Prentice 2016 vía Vincenzi+2019: Ib/Ic 2-3x mas extinguidas que II).
 
-     Tipo Ia:
-    - Basado en Holwerda et al. (2015), Hallgren et al. (2023), y Pantheon+, se sabe que:
-        • ~30–50% de SNe Ia ocurren en entornos sin polvo (galaxias elípticas o regiones limpias).
-        • La parte polvorienta se modela bien con una exponencial en A_V con τ ≈ 0.35 mag.
-    - Por eso se usa:
-        frac_zero = 0.4 (fracción sin polvo)
-        tau = 0.35 (escala de la exponencial en A_V, según README)
-
-     Tipos Core-Collapse (II, Ibc, Ib, Ic):
-    - Solo ocurren en galaxias con formación estelar → más polvo en promedio.
-    - Estudios como Hatano et al. (1998), Riello & Patat (2005), y Hallgren et al. (2023)
-      sugieren que:
-        • Hay menos fracción de eventos libres de polvo.
-        • SNe II: τ ≈ 0.25 mag
-        • SNe Ibc: τ ≈ 0.50 mag (según README)
-    - Se reduce frac_zero a 0.2 para reflejar mayor prevalencia de polvo.
-
-    Parámetros:
-    -----------
-    sn_type : str
-        Tipo de supernova. Acepta: 'Ia', 'II', 'Ib', 'Ic', 'Ibc'
+    Parámetros
+    ----------
+    sn_type : str        'Ia', 'II', 'Ib', 'Ic', 'Ibc'
     n_samples : int
-        Número de muestras a generar.
-    random_state : int
-        Semilla para reproducibilidad.
+    random_state : int, opcional   Semilla para reproducibilidad.
 
-    Retorna:
-    --------
-    ebmv_host : ndarray
-        Arreglo de E(B–V) del host para las supernovas simuladas.
+    Retorna
+    -------
+    ebmv_host : ndarray   E(B-V) de host muestreado.
     """
-    sn_type = sn_type.upper()
+    from config import EXTINCTION_CONFIG
 
-    if sn_type == "IA":
-        return sample_host_extinction_mixture(
-            n_samples=n_samples,
-            tau=0.35,          # Según README: Exp(Aᵥ/0.35)
-            frac_zero=0.4,     # Hallgren+2023; ~30–50% sin polvo
-            sigma_zero=0.01,   # Dispersión típica de color intrínseco
-            random_state=random_state
-        )
-
-    elif sn_type == "II":
-        return sample_host_extinction_mixture(
-            n_samples=n_samples,
-            tau=0.25,          # Según README: Mixed(τ=0.25)
-            frac_zero=0.2,     # CCSNe ocurren en hosts más polvorientos
-            sigma_zero=0.01,
-            random_state=random_state
-        )
-        
-    elif sn_type in ["IB", "IC", "IBC"]:
-        return sample_host_extinction_mixture(
-            n_samples=n_samples,
-            tau=0.50,          # Según README: Mixed(τ=0.50)
-            frac_zero=0.2,     # CCSNe ocurren en hosts más polvorientos
-            sigma_zero=0.01,
-            random_state=random_state
-        )
-
-    else:
+    key = {"IA": "SNIa", "II": "SNII",
+           "IB": "SNIbc", "IC": "SNIbc", "IBC": "SNIbc"}.get(sn_type.upper())
+    if key is None:
         raise ValueError(f"Tipo de supernova no reconocido: {sn_type}")
+
+    p = EXTINCTION_CONFIG[key]
+    return sample_host_extinction_mixture(
+        n_samples=n_samples,
+        tau=p["tau"], frac_zero=p["frac_zero"], sigma_zero=p["sigma_zero"],
+        Av_max=p["Av_max"], Rv=p["Rv"],
+        random_state=random_state,
+    )
 
 
 def sample_cosmological_redshift(n_samples=1, z_min=0.01, z_max=0.5, 
@@ -167,20 +141,30 @@ def sample_cosmological_redshift(n_samples=1, z_min=0.01, z_max=0.5,
     if random_state is not None:
         np.random.seed(random_state)
     
-    # Crear grilla de redshift para calcular CDF
-    z_grid = np.linspace(z_min, z_max, 1000)
-    
-    # Calcular elemento de volumen comóvil dV/dz
-    dV_dz = (1 + z_grid)**2 / np.sqrt(Om * (1 + z_grid)**3 + OL)
-    
-    # Calcular CDF normalizada
-    cdf = np.cumsum(dV_dz)
+    # Elemento de volumen comóvil correcto: dV/dz ∝ D_C(z)² / E(z), con
+    # D_C(z) = (c/H0)∫₀ᶻ dz'/E(z') la distancia comóvil. La constante c/H0 se
+    # cancela en la CDF normalizada, así que no hace falta.
+    # FIX 2026-06-28: el código previo usaba (1+z)² en vez de D_C(z)², lo que
+    # aplanaba la distribución (~uniforme) y sesgaba el muestreo hacia z bajo
+    # (~8× exceso de SNe cercanas). Verificado contra astropy
+    # FlatLambdaCDM.differential_comoving_volume. Ver bitácora Proyección 2026-06-28.
+    z_grid = np.linspace(0.0, z_max, 2000)          # desde 0 para integrar D_C
+    E = np.sqrt(Om * (1 + z_grid)**3 + OL)
+    inv_E = 1.0 / E
+    # D_C(z) por integración acumulada (trapecio) de 1/E desde 0
+    D_C = np.concatenate([[0.0], np.cumsum(0.5 * (inv_E[1:] + inv_E[:-1]) * np.diff(z_grid))])
+    dV_dz = D_C**2 / E
+
+    # Restringir el muestreo al rango pedido [z_min, z_max] (volume-weighted dentro del rango)
+    mask = z_grid >= z_min
+    zg, w = z_grid[mask], dV_dz[mask]
+
+    # CDF normalizada + muestreo por inversión
+    cdf = np.cumsum(w)
     cdf = cdf / cdf[-1]
-    
-    # Muestreo por inversión de CDF
     u_samples = np.random.random(n_samples)
-    z_samples = np.interp(u_samples, cdf, z_grid)
-    
+    z_samples = np.interp(u_samples, cdf, zg)
+
     return z_samples
 
 

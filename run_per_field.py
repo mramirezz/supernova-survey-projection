@@ -26,13 +26,14 @@ import glob
 import argparse
 import time
 import json
+import hashlib
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
 from config import (PATHS, RESPONSE_FILES, PROCESSING_CONFIG, LUMINOSITY_CONFIG,
-                    Z_CONFIG, EXTINCTION_CONFIG, SURVEY)
+                    Z_CONFIG, EXTINCTION_CONFIG, SURVEY, SN_WHITELIST)
 import subprocess
 from config_loader import load_and_validate_config
 from core.utils import (
@@ -58,11 +59,19 @@ N_DIVISIONS = 10  # particiones determinísticas
 
 
 def scan_templates(data_dir):
-    """Escanea templates disponibles por tipo."""
+    """Escanea templates disponibles por tipo. Aplica SN_WHITELIST si está definida."""
     templates = {}
     for tipo_dir, tipo_label in [('Ia', 'Ia'), ('II', 'II'), ('Ibc', 'Ibc')]:
         pattern = os.path.join(data_dir, tipo_dir, '*.dat')
         files = sorted(glob.glob(pattern))
+        whitelist = SN_WHITELIST.get(tipo_label)
+        if whitelist is not None:
+            n_total = len(files)
+            files = [f for f in files if os.path.basename(f) in whitelist]
+            faltan = whitelist - {os.path.basename(f) for f in files}
+            print(f"   [templates] {tipo_label}: {n_total} disponibles, {len(files)} usados (whitelist)")
+            if faltan:
+                print(f"   [WARNING] whitelist {tipo_label}: no encontrados en data/{tipo_dir}/: {sorted(faltan)}")
         templates[tipo_label] = []
         for f in files:
             sn_name = os.path.splitext(os.path.basename(f))[0]
@@ -155,24 +164,19 @@ def generate_synthetic_curves(sn_name, tipo, path_spec, z_proy, ebmv_host, ebmv_
                 loess_result['flux'].values
             )
 
-        # Calibración + ruido
+        # Calibración (la curva queda LIMPIA; el ruido se aplica después)
         mul = FILTER_CONSTANTS[filt]
         flux_calibrado = np.array(lc_df['flux']) / mul
         mag = -2.5 * np.log10(np.clip(flux_calibrado, 1e-20, None))
 
-        flux_from_mag = 10 ** (-0.4 * mag)
-        minimo_flux = np.min(flux_from_mag)
-        flux_norm = flux_from_mag / minimo_flux
-
-        noise_level = processing_config['noise_level']
-        flux_noisy_norm = np.random.normal(
-            loc=flux_norm, scale=np.sqrt(np.abs(flux_norm)) * noise_level
-        )
-        flux_noisy = np.clip(flux_noisy_norm * minimo_flux, 1e-20, None)
-        mag_noisy = -2.5 * np.log10(flux_noisy)
-
-        curves_by_filter[filt] = (np.array(lc_df['fase']), mag_noisy)
-        synthetic_data[filt] = {'mag': mag, 'mag_noisy': mag_noisy}
+        # FIX 2026-06-28: el ruido fotométrico YA NO se inyecta aquí. Antes era un 15%
+        # fijo en espacio de FLUJO (Poisson de fuente, σ∝√F), no atado a la profundidad
+        # del survey y con blowup al pasar a magnitud (de ahí el clip a 1e-20 que tenía).
+        # Ahora se aplica POR ÉPOCA en multiband_field_projection desde el maglimit real
+        # (limitado por cielo, survey-agnóstico, en espacio de magnitud, sin blowup).
+        # Ver bitácora Proyección 2026-06-28.
+        curves_by_filter[filt] = (np.array(lc_df['fase']), mag)
+        synthetic_data[filt] = {'mag': mag, 'mag_noisy': mag}
 
     if len(curves_by_filter) == 0:
         return None, None
@@ -282,10 +286,11 @@ def run_single_simulation(oid, tipo, template, part_index, df_obslog_field,
 
 def run_field(oid, df_obslog_field, templates, response_folder,
               processing_config, lum_config, z_min=0.01, z_max=0.5,
-              oid_coords=None, z_max_by_type=None, ebmv_mw_oid=None):
+              oid_coords=None, z_max_by_type=None, ebmv_mw_oid=None, seed=None):
     """
     Ejecuta las 30 simulaciones para un campo (OID).
-    3 tipos × 10 posiciones determinísticas.
+    3 tipos × 10 posiciones. El orden de templates se baraja por (OID, tipo)
+    para evitar el sesgo del ciclo alfabético (ver run_field, bloque shuffle).
 
     z_max_by_type: dict opcional {tipo: z_max} — si se provee, sobreescribe
     z_max por tipo (p.ej. Ia=0.15, II=0.08, Ibc=0.10 para ZTF).
@@ -310,6 +315,19 @@ def run_field(oid, df_obslog_field, templates, response_folder,
             print(f"   [WARN] No hay templates para tipo {tipo}, saltando")
             continue
 
+        # Barajar templates por (OID, tipo). Con N_DIVISIONS != n_templates el
+        # ciclo alfabético sesga: duplica los primeros (II: 8<10) o trunca los
+        # últimos (Ia 10/13, Ibc 10/22). El shuffle reproducible reparte parejo
+        # sobre los OIDs. RNG aparte (default_rng) para NO tocar los draws de
+        # z/E/magnitud, que siguen saliendo del estado global de np.random.
+        if seed is not None:
+            _h = int(hashlib.md5(f"{oid}_{tipo}".encode()).hexdigest()[:8], 16)
+            _rng = np.random.default_rng(seed + _h)
+        else:
+            _rng = np.random.default_rng()
+        sim_templates = list(available_templates)
+        _rng.shuffle(sim_templates)
+
         # Override offset range by type
         offset_range_by_type = processing_config.get('offset_range_by_type', {}) or {}
         if tipo in offset_range_by_type:
@@ -322,8 +340,8 @@ def run_field(oid, df_obslog_field, templates, response_folder,
         z_max_tipo = z_max_by_type.get(tipo, z_max) if z_max_by_type else z_max
 
         for part_idx in range(N_DIVISIONS):
-            # Template cíclico
-            tpl = available_templates[part_idx % len(available_templates)]
+            # Template del orden barajado (reparte parejo sobre los OIDs)
+            tpl = sim_templates[part_idx % len(sim_templates)]
 
             # Muestrear z y extinción para cada simulación
             z_proy = float(sample_cosmological_redshift(n_samples=1, z_min=z_min, z_max=z_max_tipo)[0])
@@ -585,6 +603,7 @@ def main():
             oid_coords=oid_coords,
             z_max_by_type=z_max_by_type,
             ebmv_mw_oid=ebmv_mw_oid,
+            seed=args.seed,
         )
 
         n_ok = len(projections)

@@ -175,7 +175,7 @@ Cada simulación individual ejecuta los siguientes pasos en secuencia:
 
 La distribución de redshifts sigue un muestreo proporcional al volumen comóvil diferencial (*volume-weighted*):
 
-$$P(z) \propto \frac{dV_c}{dz} = \frac{(1+z)^2}{E(z)}$$
+$$P(z) \propto \frac{dV_c}{dz} = \frac{D_C(z)^2}{E(z)}, \quad D_C(z) = \frac{c}{H_0}\int_0^z \frac{dz'}{E(z')}$$
 
 donde el factor de expansión adimensional es:
 
@@ -193,7 +193,7 @@ $$E(z) = \sqrt{\Omega_m (1+z)^3 + \Omega_\Lambda}$$
 
 **Método numérico**: Inverse Transform Sampling de la CDF del elemento de volumen, discretizada en grilla de 1000 puntos en $z$. Se genera $u \sim \text{Uniform}(0, 1)$ y se invierte la CDF mediante interpolación lineal (`np.interp`).
 
-**Justificación física**: El número de SNe observables a redshift $z$ es proporcional al volumen de universo disponible en ese shell. El factor $(1+z)^2$ surge de la geometría del espacio comóvil en el modelo FLRW; $E(z)^{-1}$ corrige por el contenido materia/energía oscura del universo. Un muestreo uniforme en $z$ sobrerepresentaría las distancias cortas.
+**Justificación física**: El número de SNe observables a redshift $z$ es proporcional al volumen comóvil disponible en ese shell, $dV_c/dz \propto D_C(z)^2/E(z)$, con $D_C$ la distancia comóvil (la integral de arriba). El factor correcto es $D_C(z)^2$, **NO** $(1+z)^2$: usar este último (bug previo, corregido 2026-06-28) aplanaba la distribución y sesgaba el muestreo a $z$ bajo (~8x exceso de SNe cercanas, verificado contra astropy). $E(z)^{-1}$ corrige por el contenido materia/energía oscura. Un muestreo uniforme en $z$ también sobrerepresentaría las distancias cortas.
 
 > **Refs**: Hogg (1999, arXiv:astro-ph/9905116) — Distance measures in cosmology; Planck Collaboration (2020, A&A 641, A6).
 
@@ -213,13 +213,13 @@ donde:
 - $\tau$: escala exponencial en $A_V$ (mag), convertida a $E(B-V)$ vía $R_V = 3.1$
 - $A_V$ truncado en $[0, 3.0]$ mag
 
-**Parámetros por tipo de SN** (hardcoded en `sample_extinction_by_type()`):
+**Parámetros por tipo de SN** (en `config.EXTINCTION_CONFIG`, leído por `sample_extinction_by_type()` — fuente única de verdad desde 2026-06-28):
 
-| Tipo | $\tau$ (mag) | $f_\text{zero}$ | Justificación física |
+| Tipo | $\tau$ (mag) | $f_\text{zero}$ | Justificación física (citas verificadas en ADS) |
 |---|---|---|---|
-| **Ia** | 0.35 | 0.40 | ~40% en entornos sin polvo (galaxias elípticas, regiones limpias). Phillips+2013, Holwerda+2015, Pantheon+ (Scolnic+2022) |
-| **II** | 0.25 | 0.20 | Progenitores RSG 8–25 $M_\odot$, regiones HII moderadas. Hatano+1998, Riello & Patat 2005 |
-| **Ibc** | 0.50 | 0.20 | Progenitores WR >25 $M_\odot$, núcleos densos de formación estelar. Taddia+2015, Galbany+2018 |
+| **Ia** | 0.35 | 0.40 | ~40% sin polvo (Ia en poblaciones limpias+polvorientas). Holwerda+2015 (`2015MNRAS.446.3768H`), Brout & Scolnic 2021 (`2021ApJ...909...26B`) |
+| **II** | 0.25 | 0.20 | RSG, reddening de host **bajo** en II. de Jaeger+2018 (`2018MNRAS.476.4592D`); CC detectable de Hatano+1998 (`1998ApJ...502..177H`) |
+| **Ibc** | 0.50 | 0.20 | SE SNe, $\langle A_V\rangle\sim0.5$, Ic las más rojas. Stritzinger+2018 (`2018A&A...609A.135S`). II < Ibc ~2x (Vincenzi+2019 `2019MNRAS.489.5802V`, vía Prentice 2016) |
 
 **Justificación del modelo mixto**: Las distribuciones observadas de $E(B-V)$ en hosts (Jha+2007, Kessler+2009, Brout & Scolnic 2021) muestran un exceso de SNe con $E(B-V) \approx 0$ que una exponencial pura no puede reproducir. La componente "limpia" ($f_\text{zero}$) modela SNe en bordes de regiones HII o "burbujas" despejadas por vientos estelares de los progenitores. La componente exponencial modela SNe embebidas en polvo del medio interestelar local. Las SNe Ibc tienen $\tau$ mayor porque sus progenitores masivos viven y mueren en las regiones más densas de formación estelar.
 
@@ -365,18 +365,15 @@ Este método **preserva los colores y la forma** de la curva de luz: solo ajusta
 
 ### §8. Ruido fotométrico
 
-Se inyecta ruido realista simulando estadística de Poisson fotónica con un componente instrumental (implementado en `generate_synthetic_curves()`, `run_per_field.py` L127–140):
+**FIX 2026-06-28** — el ruido fotométrico se deriva de la **profundidad real del survey por época** (`maglimit`), no de un factor fijo. Antes era un 15% fijo Poisson-en-flujo ($\sigma\propto\sqrt{F}$), no atado al survey y con blowup al pasar a magnitud. Como `maglimit` está definido a 5σ:
 
-$$F_\text{noisy} = \mathcal{N}\left( F_\text{norm}, \; \sigma = \sqrt{|F_\text{norm}|} \times \epsilon \right) \times F_\text{min}$$
+$$\mathrm{S/N} = 5 \cdot 10^{\,0.4\,(m_\text{lim} - m)}, \qquad \sigma_\text{mag} = \frac{1.0857}{\mathrm{S/N}}, \qquad \sigma_\text{mag} \ge 0.02\ \text{(floor instrumental)}$$
 
-donde:
-- $F_\text{norm} = F / F_\text{min}$: flujo normalizado al mínimo (punto más brillante)
-- $\epsilon = 0.15$: factor de ruido (15%)
-- $F_\text{min}$: flujo del punto más brillante (re-escaleo tras inyectar ruido)
+- **Régimen limitado por cielo** (el de los transientes débiles, cerca del límite): más débil → $\sigma$ mayor, brillante → $\sigma$ menor (acotado por el floor). Es el régimen físico correcto, no el Poisson-de-fuente $\sqrt{F}$ (que domina solo en fuentes brillantes).
+- **En espacio de magnitud**: el $\sigma$ se calcula y aplica directo en mag, evitando el blowup flujo→mag de bajo S/N.
+- **Survey-agnóstico**: solo usa $m_\text{lim}$, que todo survey reporta por época (ZTF hoy, SUDARE mañana). Cero cambios de código para otro survey.
 
-La $\sigma$ proporcional a $\sqrt{F}$ reproduce la estadística de conteo de fotones: las fuentes más brillantes tienen mejor SNR relativo. El factor $\epsilon$ captura ruido instrumental adicional (read noise, sky background, etc.).
-
-Resultado: $m_\text{noisy} = -2.5 \log_{10}(F_\text{noisy})$
+Implementado en `multiband_field_projection()` (`core/multiband_projection.py`); el $\sigma$ se guarda como columna `magerr` del parquet, que el feature extraction usa como error del MCMC.
 
 ---
 
