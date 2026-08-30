@@ -23,14 +23,28 @@ s2 OT pares → s3 calibración → s4 promedio ponderado → serie diaria →
 s6 deredden → s8 mangling → dereddened/<clase> → proyección ZTF
 ```
 
-**Workspaces por campaña** (Google Drive, rutas con espacios, SIEMPRE entre comillas):
-- II: `Mi unidad/Spectral Time Series - Ramirez M II` (activo por defecto)
-- Ia: `Mi unidad/Spectral Time Series - Ramirez M - Ia`
-- Ibc: `Mi unidad/Spectral Time Series - Ramirez M`
-- SLSN: `Mi unidad/Spectral Time Series - Ramirez M SLSN`
-Se selecciona con `SPECTRAL_SERIES_WORKSPACE`. `SPECTRAL_SERIES_PRE_EXT=1` redirige
-la cadena OT a directorios `_ext` (A/B reversible, producción intacta).
-Registrados en `config.WORKSPACE_BY_CLASS`.
+**MAPA DE DATOS (unificación 2026-08-30, decisión delegada a Claude por Mauricio):**
+- **Punto único de revisión: `paper2_ZTF/REVIEW.html`** (regenerable con
+  `steps/make_review_index.py`): estado por clase + enlaces a cada gate Loess,
+  QA, productos y tablas maestras. Mauricio revisa TODO desde ahí.
+- **Productos canónicos** (todas las clases): `paper2_ZTF/dereddened/<clase>` y
+  `paper2_ZTF/uv_dereddened/<clase>`. Tabla maestra de extinción (todas las
+  clases): `nuevas_series_II/extinction_distance_table_ALL.csv`.
+- **Staging crudo por SN** (todas las clases, pese al nombre histórico):
+  `paper2_ZTF/nuevas_series_II/<SN>/`.
+- **Workspaces por campaña** (Drive, rutas con espacios, SIEMPRE entre comillas),
+  registrados en `config.WORKSPACE_BY_CLASS`, se activan con
+  `SPECTRAL_SERIES_WORKSPACE` (RUTA COMPLETA, no la clave):
+  - II: `Mi unidad/Spectral Time Series - Ramirez M II` (default)
+  - Ia: `Mi unidad/Spectral Time Series - Ramirez M - Ia`
+  - IIb: `Mi unidad/Spectral Time Series - Ramirez M IIb` (NUEVO 2026-08-30;
+    el de Barbara queda INTACTO como fuente de solo lectura)
+  - Ibc: `Mi unidad/Spectral Time Series - Ramirez M`
+  - SLSN: `Mi unidad/Spectral Time Series - Ramirez M SLSN`
+  - IIn: por crear cuando termine la descarga de datos.
+`SPECTRAL_SERIES_PRE_EXT=1` redirige la cadena OT a directorios `_ext` (A/B
+reversible, producción intacta). El pipeline vive en `Codes/spectral_series`
+(REPO GIT PROPIO desde 2026-08-30; antes corría sin versionar).
 
 ---
 
