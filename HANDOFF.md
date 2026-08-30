@@ -53,7 +53,7 @@ El debug trazó la causa en cadena:
 3. Diagnóstico de Mauricio (textual): "donde tenemos espectros UV se pone el UV para
    que esa feature sea transportada en el OT". El error estaba antes de interpolar.
 
-### 2.2 El orden nuevo (VALIDADO numéricamente, esperando su visto visual)
+### 2.2 El orden nuevo (APROBADO por Mauricio el 2026-08-30: cascada y serie completa)
 - El UV real de la propia SN (5 espectros Swift grism de 2012aw en +4.9/+6.9/+8.9/
   +11.9/+13.9, ya anclados por s6b con compuerta fotométrica UVOT ±0.2 mag) se
   **fusiona a los espectros observados ANTES del OT** (fusión coseno 500 Å,
@@ -148,11 +148,14 @@ tiene fotometría de 204 pero SUBCUENTA espectros — 1 de 32 para 2013L; usar
 WISeREP para espectros), filas en tabla de extinción, y DECIDIR el cero de fase
 de la clase (propuesta: máximo medido en la curva propia, como en el censo).
 
-### Ibc (22) / IIb (12) / SLSN-I (7)
+### Ibc (22) / IIb (12) / SLSN-I (14)
 - Ibc: insumos crudos completos en `Phd/Practica2` (buscar case-insensitive).
 - IIb: 8/12 con insumos; faltan datos de SN2008aq, SN2011ei, SN2011fu, SN2013df.
-- SLSN-I: 1/7 montada; fuentes de las otras 6 ubicadas en las búsquedas del 22-23
-  (WISeREP/arXiv, tarballs en scratchpad ya perdidos — rehacer descarga).
+- SLSN-I (CORREGIDO 2026-08-30, verificado en el workspace): la muestra son 14, no
+  7, y esta CASI CERRADA por datos desde las sesiones del 9-12 de agosto: 14/14 con
+  espectros staged + fotometria, Loess 70/70 bandas aprobadas por Mauricio,
+  maximos 14/14. Faltaban solo las filas de extincion de LSQ12dlf y LSQ14mo
+  (en curso). La nota anterior "1/7 montada" era obsoleta.
 Flujo para cada una: staging (espectros a `Data/spectra` del workspace de su
 campaña, fotometría cruda a `nuevas_series_II/<SN>/`), s0b, revisión de Mauricio
 banda por banda, s1, golden.
@@ -190,16 +193,30 @@ validación numérica de 2012aw, bug misma-noche, pasada de tesis. Escribirla al
 retomar. El resumen conceptual del comienzo sigue diciendo "Ia/II/Ibc, 3 tipos x 10
 pivotes" — desactualizado, NO editarlo sin visto bueno de Mauricio.
 
-## 7. Próximos pasos, en orden
-1. **Mauricio valida (o no) las 2 figuras de 2012aw** → si OK, el orden nuevo es LA
-   cadena de producción.
-2. Bitácora de la madrugada + actualizar HANDOFF.
-3. s6b para Ia (fuentes UV) → lanzar las 15 Ia por el orden nuevo.
-4. D(fase) + mezcla τ con LOO (diseño §2.5) → re-correr 2012aw completo con
-   mangling (s8) y compuerta de monotonía → comparación final vieja-vs-nueva.
-5. Loess de las 3 II históricas de la whitelist.
-6. IIn: montaje de datos + decisión de cero de fase.
-7. Ibc staging masivo; caza de datos IIb/SLSN-I.
+## 7. Próximos pasos, en orden (REORDENADO 2026-08-30 con Mauricio)
+El 2026-08-30 Mauricio APROBÓ visualmente las 2 figuras de 2012aw: el orden nuevo
+es LA cadena de producción. Decisiones de la misma sesión:
+- **No se lanza ninguna clase todavía**: primero se deja lista la DATA de todas
+  las clases, después se lanza (orden pedido por él).
+- **τ va antes del lanzamiento** (recomendación aceptada): D(fase) cambia el
+  relleno de todas las SNe, lanzarlas antes obligaría a regenerar y re-revisar.
+- **Fixes aplicados (sin commit aún)**: cero de fase Ia apunta al
+  `maximum_perband.txt` del workspace (antes legacy de OT_unidos_2; resultó tener
+  valores V idénticos para las 15, el fix es de fuente única, no de números) y
+  `_pool_clase` de s1b quedó SOLO con donantes reales (`uv_dereddened/`), las
+  series producidas no entran (circularidad template-de-template). Pool II
+  real-only: 38 espectros UV. Pendiente conocido: s1b no persiste flags por
+  época (agregarlo con τ).
+
+1. Bitácora Notion de la madrugada del 24 + esta sesión (Notion pide re-auth).
+2. Dejar data lista por clase: Loess de las 3 II históricas; s6b Ia
+   (`uv_dereddened/Ia`); staging+Loess Ibc (22); datos IIb faltantes (4);
+   descargas SLSN-I (6); montaje IIn (WISeREP + extinción + cero de fase).
+3. Implementar D(fase) + mezcla τ con LOO (diseño §2.5) + flags por época en s1b
+   → revalidar en 2012aw (compuertas + visto de Mauricio).
+4. Lanzar las clases con data cerrada (Ia primero) por el orden nuevo.
+5. Cadena 2012aw completa: mangling (s8) + compuerta de monotonía → comparación
+   final vieja-vs-nueva.
 
 ## 8. Reglas de trabajo con Mauricio (no negociables)
 - Figuras: MIRARLAS (Read) antes de entregar; entregar por SendUserFile con
