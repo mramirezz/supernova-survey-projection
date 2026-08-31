@@ -233,9 +233,13 @@ aprobado (§2.5). Lo que queda, en orden:
    re-auth al cierre de la sesión).
 3. Pendientes chicos declarados: número fino error→mag ZTF-g vs z para la
    defensa Ia; flag LSQ14mo host A_V=0.26 ("decidir"); grism Swift sin
-   publicar (6 objetos, decisión uvotpy/pedir); τ/ERR_RELLENO para
-   Ibc/IIn/SLSN-I antes de lanzar esas clases (IIn medible por LOO con las
-   20 épocas de 2009ip, Ibc/SLSN-I por adopción declarada).
+   publicar (6 objetos, decisión uvotpy/pedir).
+   [CERRADO 2026-08-31: τ/ERR_RELLENO de las clases del fondo, mismo LOO y
+   métrica de II/Ia. IIn: τ=7 d MEDIDO (404 pares, cruce en bin 3-7,
+   errores 0.05/0.055). SLSN-I: persistencia pura (P gana siempre, 6 pares,
+   errores adoptados = análogo Ia 0.15/0.173, declarado). Ibc: sin LOO
+   posible (solo 1994I), persistencia, error 0.25 = cota empírica interna de
+   1994I a Δ24 d, declarado. Detalle en docs/design_tau.md, commit 49fdc93.]
    [CERRADO 2026-08-31: los 12 FITS CDS de 2007pk. 6 eran duplicados del
    staged, 1 grism IR sin banda para K, 2 nebulares (54713/54740) sin
    fotometría simultánea (curva termina en 54493) → descartes declarados.
