@@ -231,9 +231,18 @@ aprobado (§2.5). Lo que queda, en orden:
    LSQ13zm 67%) y decidir regla de flexibilidad.
 2. Bitácora Notion del 30-31 (2 entradas grandes, autorizada; Notion pedía
    re-auth al cierre de la sesión).
-3. Pendientes chicos declarados: 12 FITS CDS de 2007pk → ASCII; número fino
-   error→mag ZTF-g vs z para la defensa Ia; flag LSQ14mo host A_V=0.26
-   ("decidir"); grism Swift sin publicar (6 objetos, decisión uvotpy/pedir).
+3. Pendientes chicos declarados: número fino error→mag ZTF-g vs z para la
+   defensa Ia; flag LSQ14mo host A_V=0.26 ("decidir"); grism Swift sin
+   publicar (6 objetos, decisión uvotpy/pedir); τ/ERR_RELLENO para
+   Ibc/IIn/SLSN-I antes de lanzar esas clases (IIn medible por LOO con las
+   20 épocas de 2009ip, Ibc/SLSN-I por adopción declarada).
+   [CERRADO 2026-08-31: los 12 FITS CDS de 2007pk. 6 eran duplicados del
+   staged, 1 grism IR sin banda para K, 2 nebulares (54713/54740) sin
+   fotometría simultánea (curva termina en 54493) → descartes declarados.
+   2 épocas NUEVAS staged y calibradas: 54417 (MAD 0.0005, golden, la mejor
+   de la SN) y 54497 (no calibró, 4 d después del fin de la curva, fuera).
+   2007pk queda 8 staged / 6 calibradas. Respaldo .pre_cds + ASCII de
+   trazabilidad en nuevas_series_II/SN2007pk/spectra_raw/.]
 4. Escritura de tesis de lo cerrado: clase IIn 11 SNe/ramas/regla sin-subida,
    datos por clase, tests y calibración de τ ("ya veremos cuando corresponda").
 5. Mauricio envía el dossier IIn al profesor
