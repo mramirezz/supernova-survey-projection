@@ -1,7 +1,12 @@
-# HANDOFF — estado y contexto completo del proyecto (2026-08-24, madrugada)
+# HANDOFF — estado y contexto completo del proyecto (2026-08-31, madrugada)
 
 Documento de continuación: si la sesión de Claude murió, esto es todo lo que hay que
-saber para retomar sin releer nada. Escrito tras la maratón del 22-24 de agosto.
+saber para retomar sin releer nada. Actualizado tras la maratón del 30-31 de agosto.
+
+**ESTADO GLOBAL 2026-08-31: Fase A (data de las 6 clases) CERRADA. Fase B (τ)
+IMPLEMENTADA, CALIBRADA y APROBADA por Mauricio (visto visual 2012aw v3,
+"dale demosle con v3"). El sistema queda ESPERANDO SU ORDEN EXPLÍCITA de
+lanzamiento (Ia primero). Nada se lanza sin esa orden.**
 
 ---
 
@@ -96,14 +101,24 @@ fases caen en lados opuestos del límite. Fix de raíz: `config.OT_MIN_DELTA_DAY
 aplicado en `ot_grid_sn` (core/ot_interp.py) y `_keep` (s2). El bug existía también
 en la cadena vieja de producción.
 
-### 2.5 Diseño pendiente de implementar: decaimiento τ fuera de cobertura UV
-Acordado con Mauricio (no codeado aún): fuera del rango con UV real, la feature no
-muere de golpe. Relleno(fase) = baricentro OT entre P(fase) (forma del último UV
-real re-anclada en nivel) y D(fase) (consenso de donantes construido UNA vez como
-curva suave en fase, cuantiles regularizados en fase — su cachada: mezclar por época
-contra donantes distintos rompe la suavidad aunque el peso sea suave). Peso w(Δfase)
-rampa coseno con τ MEDIDO por LOO (esconder el último UV y predecirlo). NUNCA
-promedio de flujos (fabrica features dobles), siempre transporte.
+### 2.5 Decaimiento τ fuera de cobertura UV — IMPLEMENTADO y APROBADO (2026-08-31)
+Relleno(fase) = baricentro OT entre P(fase) (forma del último UV real propio
+re-anclada en nivel) y D(fase) (consenso suave de donantes REALES, CurvaD) con
+peso w(Δfase) rampa coseno. NUNCA promedio de flujos, siempre transporte
+(cuantiles W2 exactos, NQ=2048). Calibración MEDIDA, no supuesta: LOO con épocas
+UV reales escondidas → τ_II=10 d (cruce en ~5 d, error mezcla 10.1% vs escalera
+~13% vs persistencia 24.8%), Ia=None (persistencia pura, P gana todos los bines,
+diversidad UV Foley+16). Licencia de span: τ solo cuando la costura queda a
+≤ tgt_b+550 Å (rango medido del LOO), más allá manda la escalera. Código:
+`core/tau_blend.py` (tests 7/7) + peldaño 1b en s1b + flags por época en
+`Data/_s1b_flags.csv` (metodo/w/dfase_uv/err_esperado) + `config.TAU_BLEND` y
+`config.ERR_RELLENO`. Compuertas de 2012aw v3: zona UV fusionado intacta
+(2.2-3.6%), suavidad mediana 5.79% vs 6.17% de la aprobada, sin escalones,
+rectángulo único 3005/10500. APROBADO por Mauricio tras comparar el zoom
+aprobada-vs-tau ("dale demosle con v3"). Serie de referencia:
+`dereddened/II_new_preot/SN2012aw.dat` (respaldos `_aprobada_20260830.dat` =
+escalera, `_tau_aprobada_20260831.dat` = snapshot del v3 aprobado). Detalle
+completo en `Codes/spectral_series/docs/design_tau.md`.
 
 ### 2.6 La lección transversal del proyecto (va al paper)
 Seleccionar templates por calidad de datos sesga hacia objetos peculiares: en Ia,
@@ -207,30 +222,41 @@ validación numérica de 2012aw, bug misma-noche, pasada de tesis. Escribirla al
 retomar. El resumen conceptual del comienzo sigue diciendo "Ia/II/Ibc, 3 tipos x 10
 pivotes" — desactualizado, NO editarlo sin visto bueno de Mauricio.
 
-## 7. Próximos pasos, en orden (REORDENADO 2026-08-30 con Mauricio)
-El 2026-08-30 Mauricio APROBÓ visualmente las 2 figuras de 2012aw: el orden nuevo
-es LA cadena de producción. Decisiones de la misma sesión:
-- **No se lanza ninguna clase todavía**: primero se deja lista la DATA de todas
-  las clases, después se lanza (orden pedido por él).
-- **τ va antes del lanzamiento** (recomendación aceptada): D(fase) cambia el
-  relleno de todas las SNe, lanzarlas antes obligaría a regenerar y re-revisar.
-- **Fixes aplicados (sin commit aún)**: cero de fase Ia apunta al
-  `maximum_perband.txt` del workspace (antes legacy de OT_unidos_2; resultó tener
-  valores V idénticos para las 15, el fix es de fuente única, no de números) y
-  `_pool_clase` de s1b quedó SOLO con donantes reales (`uv_dereddened/`), las
-  series producidas no entran (circularidad template-de-template). Pool II
-  real-only: 38 espectros UV. Pendiente conocido: s1b no persiste flags por
-  época (agregarlo con τ).
+## 7. Próximos pasos (ACTUALIZADO 2026-08-31, madrugada)
+Fase A cerrada en las 6 clases (ver §3 con las correcciones de abajo) y τ
+aprobado (§2.5). Lo que queda, en orden:
 
-1. Bitácora Notion de la madrugada del 24 + esta sesión (Notion pide re-auth).
-2. Dejar data lista por clase: Loess de las 3 II históricas; s6b Ia
-   (`uv_dereddened/Ia`); staging+Loess Ibc (22); datos IIb faltantes (4);
-   descargas SLSN-I (6); montaje IIn (WISeREP + extinción + cero de fase).
-3. Implementar D(fase) + mezcla τ con LOO (diseño §2.5) + flags por época en s1b
-   → revalidar en 2012aw (compuertas + visto de Mauricio).
-4. Lanzar las clases con data cerrada (Ia primero) por el orden nuevo.
-5. Cadena 2012aw completa: mangling (s8) + compuerta de monotonía → comparación
-   final vieja-vs-nueva.
+1. **ESPERAR LA ORDEN DE MAURICIO para lanzar** (Ia primero, después II, luego
+   el resto). Al lanzar: evaluar banderas golden (1999gi 69% con hueco de 51 d,
+   LSQ13zm 67%) y decidir regla de flexibilidad.
+2. Bitácora Notion del 30-31 (2 entradas grandes, autorizada; Notion pedía
+   re-auth al cierre de la sesión).
+3. Pendientes chicos declarados: 12 FITS CDS de 2007pk → ASCII; número fino
+   error→mag ZTF-g vs z para la defensa Ia; flag LSQ14mo host A_V=0.26
+   ("decidir"); grism Swift sin publicar (6 objetos, decisión uvotpy/pedir).
+4. Escritura de tesis de lo cerrado: clase IIn 11 SNe/ramas/regla sin-subida,
+   datos por clase, tests y calibración de τ ("ya veremos cuando corresponda").
+5. Mauricio envía el dossier IIn al profesor
+   (`nuevas_series_II/curvas_IIn_espectros.html`, 11 SNe, nomenclatura inglesa).
+
+**Correcciones al §3 (estado real 2026-08-31, manda esto sobre §3):**
+- II: COMPLETA (13 lote nuevo + 3 históricas con Loess aprobado, s1 corrido).
+- Ia: COMPLETA incluido s6b: 6/6 SNe con UV propio montado en `uv_dereddened/Ia`
+  (119 épocas), gate U/u/B, grism cortado <2650 Å rest (aprobado).
+- IIn: COMPLETA. Muestra final 11 = 9 históricas (regla sin-subida 13→9)
+  + 2024hpj + 2021foa. Workspace propio "Ramirez M IIn", Loess 63 bandas
+  aprobadas, cero de fase = máximo V (fallback r/R) 11/11, s1 11/11, extinción
+  15 filas, UV montado (2009ip 20 ép, 1998S 4, 2010jl 4).
+- IIb: workspace propio "Ramirez M IIb" (Barbara solo lectura), 12 SNe staged,
+  fotometría LEGACY adoptada (incidente loess-sobre-loess: curvas legacy
+  restauradas de .pre_s0b, guardia de crudeza instalada en s0b).
+- Ibc: 22 staged, legacy adoptada, s1 previo válido.
+- SLSN-I: COMPLETA (14; UV montado en 3: 2017egm, PTF12dam, 2011kg;
+  Gaia16apd/2011ke sin ancla posible, declarado).
+- Censos UV hasta 3000 Å: `censo_espectros_UV_Ia.md` y
+  `censo_espectros_UV_IIn_SLSN.md` en `nuevas_series_II/`.
+- Repo `Codes/spectral_series` es GIT PROPIO (~17 commits del arco 30-31).
+- Punto único de revisión: `paper2_ZTF/REVIEW.html`.
 
 ## 8. Reglas de trabajo con Mauricio (no negociables)
 - Figuras: MIRARLAS (Read) antes de entregar; entregar por SendUserFile con
