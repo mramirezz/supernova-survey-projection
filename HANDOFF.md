@@ -238,9 +238,22 @@ aprobado (§2.5). Lo que queda, en orden:
      subida 3->1; 2013df -113 d; 2009jf -163 d; 2006T 35 de 121 d; 2015da
      -527 de 1448 d; hoyos interiores nuevos: 2005cs 61 d, 2005hg 63 d,
      2015bn 57 d, 2005cp 54 d, 2009ip 53+72 d, 2015da 52+86 d; subida
-     debilitada 2->1: 2024hpj, 2011kg. Mecanismo previsto: relajacion del
-     umbral POR SN declarada (ej. 0.15) si las epocas caidas son borde
-     (MAD 0.10-0.15), o aceptar serie truncada/segmentada si son basura.
+     debilitada 2->1: 2024hpj, 2011kg.
+     [RESUELTO 2026-09-01, orden de Mauricio "modificar los cortes... podemos
+     ser flexibles con el mad porq mangleamos": RESCATE ESTRUCTURAL
+     implementado (steps/s1c_golden_rescue.py, commit f591d17). Epocas con
+     MAD 0.10-0.20 entran SOLO con rol estructural (subida / hoyo>50d /
+     cola encadenable), techo 0.20 porque el mangling corrige calibracion
+     suave, no forma; entran con su MAD real al peso (~4x menos que una
+     golden). Artefacto revisable: Data/golden_rescue.csv por workspace
+     (Ia 3, II 3, IIb 6, Ibc 15, IIn 21, SLSN-I 12 epocas; el de Ibc
+     incluye donantes fuera de muestra, inocuo). POST-RESCATE: ninguna SN
+     sin subida; unico hoyo golden restante = 2011fe 81 d nebular
+     +228/+309 (candidatas >0.20, declarado); coberturas truncadas
+     incurables declaradas (2006T -86, 2013df -113, 2004dk -230, 2004gt
+     -80, 2009jf -133, 2015da -512).
+     PENDIENTE al terminar la cadena Ia: re-correr s1b->s6 SOLO para
+     2004eo y 2012fr (unicas Ia con rescate; su s1b corrio pre-rescate).]
 2. **ESPERAR LA ORDEN DE MAURICIO para las clases restantes** (tras Ia: II,
    luego el resto), resolviendo el gate de cadencia + banderas golden
    (1999gi 69%, LSQ13zm 67%, 1996cb 27%, 2004gt 25%, 2018hti 35%).
