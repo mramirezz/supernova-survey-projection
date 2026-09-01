@@ -226,9 +226,24 @@ pivotes" — desactualizado, NO editarlo sin visto bueno de Mauricio.
 Fase A cerrada en las 6 clases (ver §3 con las correcciones de abajo) y τ
 aprobado (§2.5). Lo que queda, en orden:
 
-1. **ESPERAR LA ORDEN DE MAURICIO para lanzar** (Ia primero, después II, luego
-   el resto). Al lanzar: evaluar banderas golden (1999gi 69% con hueco de 51 d,
-   LSQ13zm 67%) y decidir regla de flexibilidad.
+1. **GATE DE CADENCIA GOLDEN por clase antes de cada lanzamiento** (requerimiento
+   completo de Mauricio 2026-09-01: cobertura total + cadencia + gaps >50 d +
+   subida pre-max para mapear el maximo; el sondeo de agosto solo cubria II/Ia).
+   Inventario medido (rms_mad, mad<=0.10):
+   - Ia (CORRIENDO, validada): subida intacta 15/15; solo colas (2009ig -58 d
+     isla inemparejable, 2012fr -27 d) y el hoyo nebular declarado de 2011fe
+     (81 d en +228/+309, decidir en QA si se rescata con relajacion por-SN).
+   - GRAVES a decidir con Mauricio al lanzar cada clase: 1996cb (IIb) PIERDE LA
+     SUBIDA + cobertura 95->57 + cadencia 3.5->21 d; 2004dk cobertura 282->38 y
+     subida 3->1; 2013df -113 d; 2009jf -163 d; 2006T 35 de 121 d; 2015da
+     -527 de 1448 d; hoyos interiores nuevos: 2005cs 61 d, 2005hg 63 d,
+     2015bn 57 d, 2005cp 54 d, 2009ip 53+72 d, 2015da 52+86 d; subida
+     debilitada 2->1: 2024hpj, 2011kg. Mecanismo previsto: relajacion del
+     umbral POR SN declarada (ej. 0.15) si las epocas caidas son borde
+     (MAD 0.10-0.15), o aceptar serie truncada/segmentada si son basura.
+2. **ESPERAR LA ORDEN DE MAURICIO para las clases restantes** (tras Ia: II,
+   luego el resto), resolviendo el gate de cadencia + banderas golden
+   (1999gi 69%, LSQ13zm 67%, 1996cb 27%, 2004gt 25%, 2018hti 35%).
 2. Bitácora Notion del 30-31 (2 entradas grandes, autorizada; Notion pedía
    re-auth al cierre de la sesión).
 3. Pendientes chicos declarados: número fino error→mag ZTF-g vs z para la
