@@ -252,8 +252,25 @@ aprobado (§2.5). Lo que queda, en orden:
      +228/+309 (candidatas >0.20, declarado); coberturas truncadas
      incurables declaradas (2006T -86, 2013df -113, 2004dk -230, 2004gt
      -80, 2009jf -133, 2015da -512).
-     PENDIENTE al terminar la cadena Ia: re-correr s1b->s6 SOLO para
-     2004eo y 2012fr (unicas Ia con rescate; su s1b corrio pre-rescate).]
+     RESUELTO tambien al relanzar la cadena Ia (2026-09-02): el crash de
+     sesion obligo a re-correr s1b para las 15 CON el rescate ya activo, asi
+     que no queda re-run pendiente de 2004eo/2012fr.]
+   [FASE LENTA MEDIDA Y HABILITADA EN IIb/Ibc (2026-09-02, commit d3dc130,
+   orden de Mauricio de cerrar el tema ahora). LOO de trios reales
+   (tools/loo_fase_lenta.py): lo que degrada la interpolacion NO es el
+   Delta_phi grande sino CRUZAR la transicion fotosferica->nebular
+   (21.2% IIb / 14.6% Ibc contra 9.9%/8.6% de pares normales). Con ambas
+   epocas nebulares (fase >= +40) el error vuelve al nivel normal: IIb
+   50-80 d = 6.3%, Ibc 50-80 = 8.1%, 80-120 = 11.0%; se dispara despues
+   (IIb 80-120 = 20.7%, 120-200 = 36.6%; Ibc 120-200 = 20.5%). Por eso el
+   tope es POR CLASE: config.OT_SLOW_MAX_DELTA_BY_CLASS = IIb 80, Ibc 120.
+   Habilita 82 pares nebulares nuevos en 13 SNe. Al lanzar IIb/Ibc hay que
+   pasar --slow-extend <clase> --pair-parallel a s2.
+   Fixes de camino: s2 resuelve la referencia de fase por clase (Ibc tiene
+   maximum_perband.DAT, IIb no tiene archivo propio) y aborta si se pide
+   --slow-extend sin --pair-parallel (antes se ignoraba EN SILENCIO).
+   PENDIENTE DECLARADO: II y SLSN-I usan tope 200 sin haber pasado por este
+   test. Medirlo antes de lanzarlas (cambia series ya aprobadas: consultar).]
 2. **ESPERAR LA ORDEN DE MAURICIO para las clases restantes** (tras Ia: II,
    luego el resto), resolviendo el gate de cadencia + banderas golden
    (1999gi 69%, LSQ13zm 67%, 1996cb 27%, 2004gt 25%, 2018hti 35%).
