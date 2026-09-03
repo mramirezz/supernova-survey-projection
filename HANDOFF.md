@@ -222,6 +222,48 @@ validación numérica de 2012aw, bug misma-noche, pasada de tesis. Escribirla al
 retomar. El resumen conceptual del comienzo sigue diciendo "Ia/II/Ibc, 3 tipos x 10
 pivotes" — desactualizado, NO editarlo sin visto bueno de Mauricio.
 
+## 6.bis LO DE 2026-09-01/03 (leer antes de tocar nada)
+
+**Criterio de entrada al OT (cerrado con Mauricio):**
+- golden MAD<=0.10 SIEMPRE + rescate hasta 0.40 con UNA condicion: que no haya
+  epoca golden a menos de 5 d (`GOLDEN_RESCUE_MIN_SEP`). Es lo que separa
+  2012aw (13 epocas malas con una buena a <=4.3 d: NO entran, devolverian el
+  borde azul malo que arreglamos) de 2011fe (dos epocas de MAD 0.20/0.34 a
+  22 y 29 d de todo: SI entran, son la unica informacion). 99% de las epocas
+  con estadistico medido entran; quedan fuera 13 de 0.41 a 1.43.
+- `steps/s1c_golden_rescue.py` genera `Data/golden_rescue.csv` por workspace,
+  revisable y vetable antes de producir. Roles: subida / peak / hoyo / cola /
+  bajo_techo (etiqueta, no condicion).
+
+**Tope de separacion de pares: 330 d** (`OT_MAX_DELTA_DAYS`). Historia: era 50
+(40 en el Paper I), Mauricio pidio quitarlo porque el peso ya penaliza, se
+quito, y medir mostro que el costo NO escala con el numero de pares sino con
+la SUMA de los Delta_phi (cada par genera tantos espectros como dias abarca):
+sin tope son 6.5x. 330 = el hueco mas grande de la biblioteca (SN2010jl,
++491 a +814, que a z<=0.03 SI se detecta) y cierra todos los huecos a 4.2x.
+
+**OT EN GPU (Metal)** — `core/ot_interp.py`. Misma funcion de POT, mismo
+algoritmo, tensores de torch en vez de numpy. Medido: 370->56 ms el baricentro
+(6.6x), >10 min -> 152 s el s2 de SN1998dh, diferencia del resultado 0.0000%.
+Con GPU **1 worker basta** (153/151/156 s con 1/4/8: la GPU se satura con un
+proceso). Fallback automatico a numpy; `SPECTRAL_SERIES_GPU=0` lo apaga.
+OJO: instalar torch subio numpy a 2.4 y removio `np.trapz` -> tau_blend.py
+necesito el guard de `trapezoid` (commit 256c8ee). Si algo mas revienta por
+numpy 2.x, es la misma causa.
+
+**Tiempos medidos de la corrida completa (90 series):** tope 50 = 8 h con GPU
+(45 h en CPU), tope 330 = 34 h con GPU (188 h en CPU).
+
+**Dossiers para el profesor** (`nuevas_series_II/`, autocontenidos):
+`IIn_censo_descartes.html` (las 204 del catalogo + la revision de literatura
+por ADS/VizieR + cross-check WISeREP, con curva desplegable bajo cada fila),
+`clasificador_resumen.html` (que se hizo y como se llego a los numeros),
+`curvas_IIn_espectros.html` (las 11 de la muestra).
+
+**Tesis:** 8 figuras nuevas en cap 2 y 3 (baricentro vs lineal, escalera de
+prioridades, calibracion de tau, meseta del error, fusion UV, borde azul,
+mapa fase-lambda, corte de calibracion). Pusheadas a Overleaf.
+
 ## 7. Próximos pasos (ACTUALIZADO 2026-08-31, madrugada)
 Fase A cerrada en las 6 clases (ver §3 con las correcciones de abajo) y τ
 aprobado (§2.5). Lo que queda, en orden:
