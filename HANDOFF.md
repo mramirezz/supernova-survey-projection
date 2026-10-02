@@ -366,3 +366,15 @@ aprobado (§2.5). Lo que queda, en orden:
   disco local; datos reales o declarar NO ENCONTRADO.
 - Citas solo verificadas contra ADS/arXiv. Commits/push solo cuando él pida.
 - Español chileno directo, sin rodeos; reportar errores propios sin maquillaje.
+
+## 9. Pendiente chico: el z de las simulaciones en un solo archivo (2026-09-13, sesion tesis)
+- Problema: el z de cada simulacion vive solo dentro de los 1000 parquets por campo
+  (`outputs/<run>/ZTF*.parquet`). Los scripts del clasificador (`opt_clasificador/05_*.py`,
+  `ab_*.py`) abren los 1000 solo para sacar (oid, part_index, z). Google Drive desaloja esos
+  parquets del disco (modo streaming) y la lectura pasa de segundos a mas de una hora.
+- Parche ya hecho (derivado de lectura, no toca el run): `outputs/run_1000_v2_consolidated/_tasks_index_z.parquet`
+  (26 954 filas: oid, sn_type, part_index, z; cobertura 100 % del `_tasks_index.parquet`).
+  Los scripts del clasificador pueden leer ese archivo en vez del glob de parquets.
+- Fix de raiz (una linea): `ztf_literature_features/parquet_reader.py` (~l.143-163) construye el
+  cache `_tasks_index.parquet` abriendo cada parquet; agregar la columna `z` a ese cache y
+  ningun run futuro tiene el problema. Orden de Mauricio 2026-09-13 ("ok hazlo").

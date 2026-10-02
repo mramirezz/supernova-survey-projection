@@ -5,7 +5,7 @@ VERIFICADOR DE RESULTADOS — PIPELINE DE PROYECCIÓN POR CAMPO
 Valida que los outputs del runner por campo (run_per_field.py) sean:
   1. Estructuralmente correctos (columnas, tipos, sin NaN inesperados)
   2. Físicamente razonables (magnitudes, redshifts, extinciones)
-  3. Completos (30 sims por campo: 3 tipos × 10 particiones)
+  3. Completos (10 sims por tipo y campo; tipos de run_metadata o de config)
   4. Internamente consistentes (upperlimit ↔ mag, detección ↔ maglimit)
   5. Estadísticamente plausibles (tasas de detección vs z, distribuciones)
 
@@ -33,9 +33,10 @@ REQUIRED_COLUMNS = [
     'sn_type', 'template', 'z', 'ebmv_host', 'ebmv_mw',
     'part_index', 'n_divisions', 'desplazamiento',
 ]
-EXPECTED_TYPES = ['Ia', 'II', 'Ibc']
+from config import TEMPLATE_DIRS
+EXPECTED_TYPES = list(TEMPLATE_DIRS)  # mismos tipos que el default de run_per_field
 N_DIVISIONS = 10
-EXPECTED_SIMS_PER_FIELD = len(EXPECTED_TYPES) * N_DIVISIONS  # 30
+EXPECTED_SIMS_PER_FIELD = len(EXPECTED_TYPES) * N_DIVISIONS
 
 # Rangos físicos
 ZTF_MJD_RANGE = (58100, 62000)       # ~2018 - ~2028
@@ -134,7 +135,7 @@ def check_structure(df, v):
 
 
 def check_completeness(df, v):
-    """30 sims esperadas: 3 tipos × 10 particiones."""
+    """10 sims por tipo esperado (EXPECTED_TYPES) × particiones."""
     sims = df.groupby(['sn_type', 'part_index']).size().reset_index(name='n')
     n_sims = len(sims)
 
@@ -144,7 +145,7 @@ def check_completeness(df, v):
     if missing_types:
         v.fail('completeness', f'Tipos faltantes: {missing_types}')
     else:
-        v.ok('completeness', f'3 tipos presentes: {types_present}')
+        v.ok('completeness', f'{len(EXPECTED_TYPES)} tipos presentes: {types_present}')
 
     # Particiones por tipo
     for tipo in EXPECTED_TYPES:
@@ -183,7 +184,9 @@ def check_physical_ranges(df, v):
         v.warn('ranges', f'maglimit fuera de lo típico: [{ml_min:.1f}, {ml_max:.1f}]')
 
     # mag_modelo
-    mm_min, mm_max = df['magnitud_modelo'].min(), df['magnitud_modelo'].max()
+    # sin las epocas pre-explosion (magnitud_modelo=99 por construccion)
+    _mm = df.loc[df['magnitud_modelo'] < 90, 'magnitud_modelo']
+    mm_min, mm_max = _mm.min(), _mm.max()
     if MAG_MODEL_RANGE[0] <= mm_min and mm_max <= MAG_MODEL_RANGE[1]:
         v.ok('ranges', f'mag_modelo: [{mm_min:.1f}, {mm_max:.1f}]')
     else:
@@ -402,6 +405,15 @@ def verify_file(path, strict=False):
 def verify_run(run_dir, strict=False, max_files=None):
     """Verifica todos los parquet de un run."""
     parquet_files = sorted(glob.glob(os.path.join(run_dir, '*.parquet')))
+    # Tipos esperados = los que corrio el run (run_metadata['tipos']), si existe
+    global EXPECTED_TYPES, EXPECTED_SIMS_PER_FIELD
+    _meta = os.path.join(run_dir, 'run_metadata.json')
+    if os.path.exists(_meta):
+        import json
+        _tipos = json.load(open(_meta)).get('tipos')
+        if _tipos:
+            EXPECTED_TYPES = list(_tipos)
+            EXPECTED_SIMS_PER_FIELD = len(EXPECTED_TYPES) * N_DIVISIONS
 
     if len(parquet_files) == 0:
         print(f"[ERROR] No se encontraron archivos .parquet en {run_dir}")

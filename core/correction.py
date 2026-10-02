@@ -7,6 +7,13 @@ from scipy import interpolate
 from .utils import DL_calculator
 
 
+# Tipo de SN -> clave de config.EXTINCTION_CONFIG. Una sola tabla para el
+# sampler de E(B-V) y para el R_V que se aplica al espectro (deben coincidir).
+EXT_KEY_BY_TYPE = {"IA": "SNIa", "II": "SNII",
+                   "IB": "SNIbc", "IC": "SNIbc", "IBC": "SNIbc",
+                   "IIB": "SNIIb", "IIN": "SNIIn", "SLSN-I": "SNSLSN"}
+
+
 def sample_host_extinction_mixture(n_samples=1, tau=0.4, Av_max=3.0, Rv=3.1,
                                    frac_zero=0.4, sigma_zero=0.01, random_state=None):
     """
@@ -101,8 +108,7 @@ def sample_extinction_by_type(sn_type="Ia", n_samples=1, random_state=None):
     """
     from config import EXTINCTION_CONFIG
 
-    key = {"IA": "SNIa", "II": "SNII",
-           "IB": "SNIbc", "IC": "SNIbc", "IBC": "SNIbc"}.get(sn_type.upper())
+    key = EXT_KEY_BY_TYPE.get(sn_type.upper())
     if key is None:
         raise ValueError(f"Tipo de supernova no reconocido: {sn_type}")
 
@@ -247,7 +253,20 @@ def redden_spectrum_adjusted(la, spec, Rv, ebmv, norm='n'):
     spec_out = spec * abs_flux
     return spec_out
 
-def correct_redeening(sn,ESPECTRO,fases,ebmv=None,ebmv_host=None,ebmv_mw=None,mu=None,z=None,path_save='',reverse=False,to_abs_mag=False,write=False,use_DL=False,ubuntu=False):
+def rv_host_for_type(sn_type):
+    """R_V del host por tipo, desde EXTINCTION_CONFIG (misma clave que el
+    sampler de E(B-V)): el mismo R_V que convierte A_V->E(B-V) al muestrear
+    DEBE usarse al aplicar el enrojecimiento al espectro, o la extincion
+    efectiva queda escalada por (Rv_aplicado/Rv_muestreado). Detectado
+    2026-08-15 al cablear las IIb (Rv=1.1, Stritzinger+2018)."""
+    from config import EXTINCTION_CONFIG
+    key = EXT_KEY_BY_TYPE.get(sn_type.upper())
+    if key is None:
+        return 3.1
+    return float(EXTINCTION_CONFIG[key].get("Rv", 3.1))
+
+
+def correct_redeening(sn,ESPECTRO,fases,ebmv=None,ebmv_host=None,ebmv_mw=None,mu=None,z=None,path_save='',reverse=False,to_abs_mag=False,write=False,use_DL=False,ubuntu=False,rv_host=None):
     '''
     El codigo busca el archivo modulus donde esta toda la info de las SN
     sn_list: lista de las SN con la extension para leerlas, ex ['SN2005cs.dat','SN2013ej.dat']
@@ -265,8 +284,18 @@ def correct_redeening(sn,ESPECTRO,fases,ebmv=None,ebmv_host=None,ebmv_mw=None,mu
     print(sn)
     name=sn
     NEW_ESPECTRO=[]
+    rv_host_val = float(rv_host) if rv_host is not None else 3.1
     if mu ==None:
-        mu=float(modulus[modulus['Sn']==name]['modulus'])
+        # Lookup PEREZOSO: las SNe nuevas (IIb/SLSN) no estan en la tabla
+        # historica de modulos. Con use_DL la distancia sale de DL(z) y mu no
+        # se usa; sin use_DL, faltar en la tabla si es un error real.
+        _row = modulus.loc[modulus['Sn'] == name, 'modulus']
+        if len(_row):
+            mu = float(_row.iloc[0])
+        elif use_DL:
+            mu = None
+        else:
+            raise KeyError(f"{name}: sin modulo en la tabla y use_DL=False")
     else:
         mu=mu
     
@@ -308,9 +337,9 @@ def correct_redeening(sn,ESPECTRO,fases,ebmv=None,ebmv_host=None,ebmv_mw=None,mu
             # 2. Quitar redshift → pasar a rest-frame
             df['wave'] = df['wave'] / (1 + z)
             df['flux'] = df['flux'] * (1 + z) 
-            # 3. Quitar extinción del host (en rest-frame)
+            # 3. Quitar extinción del host (en rest-frame, con el R_V del host)
             if ebmv_host_val > 0:
-                df['flux'] = redden_spectrum_adjusted(df['wave'], df['flux'], Rv=3.1, ebmv=-ebmv_host_val)
+                df['flux'] = redden_spectrum_adjusted(df['wave'], df['flux'], Rv=rv_host_val, ebmv=-ebmv_host_val)
 
             # 4. Llevar a 10 pc si to_abs_mag = True
             if to_abs_mag:
@@ -329,9 +358,9 @@ def correct_redeening(sn,ESPECTRO,fases,ebmv=None,ebmv_host=None,ebmv_mw=None,mu
             # ORDEN FÍSICO CORRECTO para añadir efectos observacionales:
             # SN intrinsic → Host extinction → Redshift → MW extinction → Distance
             
-            # 1. Aplicar extinción del host (más cercana a la SN)
+            # 1. Aplicar extinción del host (más cercana a la SN, R_V del host)
             if ebmv_host_val > 0:
-                new_spectro=redden_spectrum_adjusted(df.wave,df.flux,Rv=3.1,ebmv=ebmv_host_val)
+                new_spectro=redden_spectrum_adjusted(df.wave,df.flux,Rv=rv_host_val,ebmv=ebmv_host_val)
                 df['flux']=new_spectro
             
             # 2. Aplicar redshift cosmológico

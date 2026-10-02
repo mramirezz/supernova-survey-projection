@@ -17,7 +17,13 @@ import numpy as np
 import pandas as pd
 from scipy import interpolate
 import matplotlib.pyplot as plt
-from .utils import maximo_lc
+
+# Config global del pipeline (para pre_explosion_ul_days). Fallback vacío si el
+# módulo se importa fuera del contexto del repo (p.ej. tests aislados).
+try:
+    from config import PROCESSING_CONFIG as _PROC_CFG
+except Exception:
+    _PROC_CFG = {}
 
 # Ruido fotométrico survey-agnóstico (ver el bloque de detección en
 # multiband_field_projection). El maglimit del obslog se define a 5σ -> de ahí sale
@@ -134,36 +140,31 @@ def multiband_field_projection(
     # ---------------------------------------------------------------------
     # DEFINICIÓN DE ANCLA ("anchor_time")
     # ---------------------------------------------------------------------
-    # Para II: NO usar maximo_lc() (depende de maximum_II.txt con definición externa).
-    #         Usamos el máximo flujo del template disponible: min(mag) en la banda
-    #         requerida (si existe), si no en 'r', si no el primer filtro disponible.
-    # Para otros tipos: mantener maximo_lc() como antes.
-    maximum = None
-    anchor_source = None
+    # Para TODOS los tipos (2026-10-02): máximo flujo de la curva sintética, min(mag)
+    # en la banda requerida (si existe), si no en 'r', si no el primer filtro.
+    # Antes Ia/Ibc usaban maximo_lc() (tablas externas de MJD de máximo): las Ibc
+    # quedaban con el tiempo duplicado (fase MJD + MJD de máximo, desplazamiento
+    # ~ -50000 en run_1000_v2) y el ancla caía al inicio del template; IIb/IIn no
+    # están en esas tablas y fallaban. La curva ya trae su propio tiempo (MJD
+    # dilatado por 1+z), así que el ancla sale de ella misma.
+    preferred = None
+    if required_filter is not None and required_filter in curves_by_filter:
+        preferred = required_filter
+    elif 'r' in curves_by_filter:
+        preferred = 'r'
+    elif len(curves_by_filter) > 0:
+        preferred = list(curves_by_filter.keys())[0]
 
-    if str(tipo) == 'II':
-        # Elegir filtro para definir el máximo (ancla)
-        preferred = None
-        if required_filter is not None and required_filter in curves_by_filter:
-            preferred = required_filter
-        elif 'r' in curves_by_filter:
-            preferred = 'r'
-        elif len(curves_by_filter) > 0:
-            preferred = list(curves_by_filter.keys())[0]
-
-        if preferred is None:
-            # extremo raro: sin curvas
-            maximum = float(df_best['mjd'].min())
-            anchor_source = 'fallback_grid_start'
-        else:
-            f_arr, mag_arr = curves_by_filter[preferred]
-            # fecha de máximo flujo (mínima mag) en esa banda
-            idx = int(np.argmin(np.asarray(mag_arr)))
-            maximum = float(np.asarray(f_arr)[idx])
-            anchor_source = f'min_mag_{preferred}'
+    if preferred is None:
+        # extremo raro: sin curvas
+        maximum = float(df_best['mjd'].min())
+        anchor_source = 'fallback_grid_start'
     else:
-        maximum = float(maximo_lc(tipo, sn))
-        anchor_source = 'maximo_lc'
+        f_arr, mag_arr = curves_by_filter[preferred]
+        # fecha de máximo flujo (mínima mag) en esa banda
+        idx = int(np.argmin(np.asarray(mag_arr)))
+        maximum = float(np.asarray(f_arr)[idx])
+        anchor_source = f'min_mag_{preferred}'
 
     # Si el anchor cae fuera del rango del template (p.ej. templates sin premax),
     # anclar en el primer MJD del template para no perder la ventana observacional.
@@ -310,8 +311,15 @@ def multiband_field_projection(
         obs_max = f"{df_filter['mjd'].max():.1f}" if len(df_filter) > 0 else "N/A"
         print(f"      • [DEBUG] Buscando overlap entre SN [{fases_ajustadas.min():.1f}, {fases_ajustadas.max():.1f}] y obs [{obs_min}, {obs_max}]")
         
+        # Ventana pre-explosión: épocas hasta N días ANTES del inicio de la SN se
+        # incluyen como upper limits (SN aún no explota). Ver config
+        # PROCESSING_CONFIG['pre_explosion_ul_days'] (auditoría banda g 2026-08-02).
+        pre_ul_days = float(_PROC_CFG.get('pre_explosion_ul_days', 0) or 0)
+        # Inicio COMUN a todas las bandas (si una banda pierde epocas iniciales por
+        # cobertura, no debe marcar 99 donde otra ya ve la SN)
+        sn_start = (phase_min if phase_min is not None else float(np.min(fases))) + desplazamiento
         df_filter_in_range = df_filter[
-            (df_filter['mjd'] >= fases_ajustadas.min()) &
+            (df_filter['mjd'] >= sn_start - pre_ul_days) &
             (df_filter['mjd'] <= fases_ajustadas.max())
         ].copy()
         
@@ -332,6 +340,11 @@ def multiband_field_projection(
         df_filter_in_range['magnitud_modelo'] = interpolation_function(
             df_filter_in_range['mjd']
         )
+        # Épocas pre-explosión: la SN no existe todavía. Sin flujo (mag 99), NO se
+        # extrapola el modelo hacia atrás -> quedan como upper limits al maglimit.
+        pre_mask = df_filter_in_range['mjd'] < sn_start
+        if pre_mask.any():
+            df_filter_in_range.loc[pre_mask, 'magnitud_modelo'] = 99.0
         
         # Detección: el modelo (limpio) por encima del límite del survey.
         mlim = df_filter_in_range['maglimit'].values.astype(float)

@@ -127,7 +127,29 @@ def _validate_parameters(config):
             raise ValueError("LUMINOSITY_CONFIG enabled pero M_peak está vacío o no es dict")
         if 'min' in clip and 'max' in clip and clip['min'] > clip['max']:
             raise ValueError("LUMINOSITY_CONFIG.clip inválido: min > max")
-    
+
+    # Validación de la relación ancho-luminosidad (Phillips), si existe
+    try:
+        phil = PHILLIPS_CONFIG
+    except NameError:
+        phil = {'enabled': False}
+    if phil.get('enabled', False):
+        if not (phil.get('slope', 0) > 0):
+            raise ValueError(f"PHILLIPS_CONFIG.slope debe ser > 0, es {phil.get('slope')}")
+        if not (phil.get('sigma_resid', 0) > 0):
+            raise ValueError(f"PHILLIPS_CONFIG.sigma_resid debe ser > 0, es {phil.get('sigma_resid')}")
+        dm15_path = os.path.join(PATHS['data_dir'], phil.get('dm15_file', 'dm15_Ia.json'))
+        if not os.path.exists(dm15_path):
+            raise ValueError(f"PHILLIPS_CONFIG enabled pero falta {dm15_path} "
+                             "(generar con precompute_dm15_Ia.py)")
+        # Phillips solo se ejecuta dentro de la rama de luminosidad habilitada
+        lum_types = set(lum.get('apply_to_types', []))
+        phil_types = set(phil.get('apply_to_types', []))
+        if not phil_types.issubset(lum_types):
+            raise ValueError(f"PHILLIPS_CONFIG.apply_to_types {sorted(phil_types)} debe ser "
+                             f"subconjunto de LUMINOSITY_CONFIG.apply_to_types {sorted(lum_types)} "
+                             "(Phillips corre dentro de esa rama)")
+
     print("   Parametros validados correctamente")
 
 
