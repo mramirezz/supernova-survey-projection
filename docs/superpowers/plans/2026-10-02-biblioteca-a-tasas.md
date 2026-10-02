@@ -946,7 +946,7 @@ git commit -m "pipeline78: motor fotometrico vectorizado con dilatacion temporal
   - `load_log(path, fields=None) -> dict[field][band] = (mjd ndarray, maglim ndarray)`, ordenado por mjd
   - `SUDARE_SEASON_SPLIT`
 
-- [ ] **Step 1: Escribir los tests**
+- [x] **Step 1: Escribir los tests**
 
 ```python
 # tests/test_p78_survey.py
@@ -981,12 +981,12 @@ if __name__ == "__main__":
         if n.startswith("test_"): f(); print("ok", n)
 ```
 
-- [ ] **Step 2: Correrlos y ver que fallan**
+- [x] **Step 2: Correrlos y ver que fallan**
 
 Run: `$PY tests/test_p78_survey.py`
 Expected: `ModuleNotFoundError: No module named 'pipeline78.survey'`
 
-- [ ] **Step 3: Implementar**
+- [x] **Step 3: Implementar**
 
 ```python
 # pipeline78/survey.py
@@ -1048,12 +1048,12 @@ def load_log(path, fields=None):
     return out
 ```
 
-- [ ] **Step 4: Correr los tests y ver que pasan**
+- [x] **Step 4: Correr los tests y ver que pasan**
 
 Run: `$PY tests/test_p78_survey.py`
 Expected: dos `ok`. Si los conteos de SUDARE no calzan, revisar el corte de temporadas contra las fechas de `estado_sudare/index.html`.
 
-- [ ] **Step 5: Construir el log de ZTF.** Lee 355 MB de Drive y tarda unos minutos.
+- [x] **Step 5: Construir el log de ZTF.** Lee 355 MB de Drive y tarda unos minutos.
 
 ```bash
 $PY -c "
@@ -1064,7 +1064,7 @@ cat "$REPO"/data/oids_1000_v2_p{1,2,3,4}.txt > ~/thesis_store/ztf_fields_1000.tx
 
 Expected: unos 4.4 a 5.0 millones de filas y 1000 campos.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pipeline78/survey.py tests/test_p78_survey.py
