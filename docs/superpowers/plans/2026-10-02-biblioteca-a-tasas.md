@@ -673,7 +673,7 @@ git commit -m "pipeline78: almacen npy de la biblioteca congelada con md5 establ
   - `peak_and_dm15(t, m) -> (t_peak, m_peak, at_edge, dm15)`
   - `build_catalog(store_dir=STORE) -> DataFrame`, que escribe `STORE/catalog.csv` y agrega a cada `meta.json` las claves t_peak, peak_at_edge, M_ref, ref_band, dm15_B y clf_class
 
-- [ ] **Step 1: Escribir los tests**
+- [x] **Step 1: Escribir los tests**
 
 ```python
 # tests/test_p78_catalog.py
@@ -705,12 +705,12 @@ if __name__ == "__main__":
         if n.startswith("test_"): f(); print("ok", n)
 ```
 
-- [ ] **Step 2: Correrlos y ver que fallan**
+- [x] **Step 2: Correrlos y ver que fallan**
 
 Run: `$PY tests/test_p78_catalog.py`
 Expected: `ModuleNotFoundError: No module named 'pipeline78.catalog'`
 
-- [ ] **Step 3: Implementar**
+- [x] **Step 3: Implementar**
 
 ```python
 # pipeline78/catalog.py
@@ -767,12 +767,12 @@ if __name__ == "__main__":
     print(c[["sn", "clase", "t_peak", "peak_at_edge", "M_ref", "dm15_B"]].to_string(index=False))
 ```
 
-- [ ] **Step 4: Correr los tests y ver que pasan**
+- [x] **Step 4: Correr los tests y ver que pasan**
 
 Run: `$PY tests/test_p78_catalog.py`
 Expected: dos `ok`.
 
-- [ ] **Step 5: Catálogo real y revisión de sanidad**
+- [x] **Step 5: Catálogo real y revisión de sanidad**
 
 Run: `cd "$REPO" && $PY -m pipeline78.catalog | tee ~/thesis_store/catalog.log`
 
@@ -782,7 +782,7 @@ Expected:
 - Ninguna Ia con peak_at_edge.
 - Si alguna II, IIb, IIn o Ibc sale con peak_at_edge, anotarla y mostrársela a Mauricio. Una serie que empieza después del máximo queda anclada en su primera época.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pipeline78/catalog.py tests/test_p78_catalog.py
