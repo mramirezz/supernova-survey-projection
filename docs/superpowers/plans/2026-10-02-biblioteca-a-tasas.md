@@ -447,7 +447,7 @@ git commit -m "pipeline78: curvas ZTF y OmegaCAM del SVO, punto cero AB y fotome
   - `build_store(force=False) -> DataFrame`, que escribe `STORE/build_report.csv`
   - en `tests/p78_fakes.py`: `fake_template(d, sn, clase, t_peak, n_ep)` y `write_dat(path, times, wave, fluxes)`
 
-- [ ] **Step 1: Escribir los tests y los falsos**
+- [x] **Step 1: Escribir los tests y los falsos**
 
 ```python
 # tests/p78_fakes.py
@@ -526,12 +526,12 @@ if __name__ == "__main__":
         if n.startswith("test_"): f(); print("ok", n)
 ```
 
-- [ ] **Step 2: Correrlos y ver que fallan**
+- [x] **Step 2: Correrlos y ver que fallan**
 
 Run: `$PY tests/test_p78_store.py`
 Expected: `ModuleNotFoundError: No module named 'pipeline78.store'`
 
-- [ ] **Step 3: Implementar**
+- [x] **Step 3: Implementar**
 
 ```python
 # pipeline78/store.py
@@ -633,12 +633,12 @@ if __name__ == "__main__":
     build_store()
 ```
 
-- [ ] **Step 4: Correr los tests y ver que pasan**
+- [x] **Step 4: Correr los tests y ver que pasan**
 
 Run: `$PY tests/test_p78_store.py`
 Expected: cuatro `ok`.
 
-- [ ] **Step 5: Construir el almacén real.** Lee 2.4 GB de Drive dos veces. Avisar a Mauricio, porque tarda de 30 a 60 minutos.
+- [x] **Step 5: Construir el almacén real.** Lee 2.4 GB de Drive dos veces. Avisar a Mauricio, porque tarda de 30 a 60 minutos.
 
 ```bash
 cd "$REPO" && nohup $PY -m pipeline78.store > ~/thesis_store/build.log 2>&1 &
@@ -651,7 +651,7 @@ du -sh ~/thesis_store/templates
 
 Expected: `{'II': 13, 'IIb': 10, 'IIn': 10, 'Ia': 15, 'Ibc': 30}`, sin filas de error y unos 0.6 a 1.2 GB en disco.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pipeline78/store.py tests/p78_fakes.py tests/test_p78_store.py
