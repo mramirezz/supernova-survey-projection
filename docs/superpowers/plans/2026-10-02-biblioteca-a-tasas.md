@@ -802,7 +802,7 @@ git commit -m "pipeline78: catalogo con ancla en el maximo de reposo, M de refer
   - `t_rel = (tpl["time"] - tpl["t_peak"]) * (1+z)`, en días observados respecto del máximo
   - una banda sin cobertura mayor que `COVERAGE_MIN` no aparece en el dict
 
-- [ ] **Step 1: Escribir los tests**
+- [x] **Step 1: Escribir los tests**
 
 ```python
 # tests/test_p78_engine.py
@@ -876,12 +876,12 @@ if __name__ == "__main__":
         if n.startswith("test_"): f(); print("ok", n)
 ```
 
-- [ ] **Step 2: Correrlos y ver que fallan**
+- [x] **Step 2: Correrlos y ver que fallan**
 
 Run: `$PY tests/test_p78_engine.py`
 Expected: `ModuleNotFoundError: No module named 'pipeline78.engine'`
 
-- [ ] **Step 3: Implementar**
+- [x] **Step 3: Implementar**
 
 ```python
 # pipeline78/engine.py
@@ -921,12 +921,12 @@ def observed_lightcurves(tpl, z, ebv_host, rv_host, ebv_mw, bands, dmag=0.0):
     return t_rel, mags
 ```
 
-- [ ] **Step 4: Correr los tests y ver que pasan**
+- [x] **Step 4: Correr los tests y ver que pasan**
 
 Run: `$PY tests/test_p78_engine.py`
 Expected: seis `ok`. La prueba dorada imprime las diferencias si falla. Si falla por más de 0.01 mag, comparar paso a paso el orden de las operaciones y la regrilla a 1 Å del código viejo (`correction.py:386-389`). No aflojar el umbral sin mostrárselo a Mauricio.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pipeline78/engine.py tests/test_p78_engine.py
