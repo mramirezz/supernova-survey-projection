@@ -233,7 +233,7 @@ LUMINOSITY_CONFIG = {
     "enabled": True,
 
     # Tipos a los que se aplica
-    "apply_to_types": ["Ia", "II", "Ibc", "IIb", "IIn", "SLSN-I"],
+    "apply_to_types": ["Ia", "II", "Ibc", "Ib", "Ic", "Ic-BL", "IIb", "IIn", "SLSN-I"],
 
     # Filtro de referencia para medir el peak del template (para ZTF, 'r' suele ser estable)
     # En multibanda, si este filtro no existe para el template, se usa el primer filtro disponible.
@@ -244,6 +244,11 @@ LUMINOSITY_CONFIG = {
     "M_peak": {
         "Ia":  {"mean": -19.3, "sigma": 0.3},
         "Ibc": {"mean": -17.3, "sigma": 0.9},
+        # Ib, Ic, Ic-BL: Drout+2011 (2011ApJ...741...97D), banda R (Vega), corregidas
+        # por extincion del host, decision Mauricio 2026-10-02 (G1). "Ibc" queda para el runner viejo.
+        "Ib":    {"mean": -17.9, "sigma": 0.9},
+        "Ic":    {"mean": -18.3, "sigma": 0.6},
+        "Ic-BL": {"mean": -19.0, "sigma": 1.1},
         "II":  {"mean": -16.9, "sigma": 1.1},#-16.9 para SNII
         # IIb: banda r, MW+host corregido; Taddia+2018 (2018A&A...609A.136T,
         # Tabla 5, 10 IIb CSP-I). Cross-check Richardson+2014: M_B=-16.99+/-0.45.

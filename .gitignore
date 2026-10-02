@@ -3,6 +3,7 @@
 data/*
 !data/filters/
 # dm15(B) por template Ia (config derivada de precompute_dm15_Ia.py)
+!data/ibc_subtypes.csv
 !data/dm15_Ia.json
 # md5 de las 78 congeladas copiadas a data/<clase>_v78 (2026-10-02)
 !data/templates_v78_md5.csv

@@ -25,6 +25,17 @@ def test_same_seed_same_draws():
     a = sample_mpeak(np.random.default_rng([7, 1, 2]), "II"); b = sample_mpeak(np.random.default_rng([7, 1, 2]), "II")
     assert a == b
 
+def test_subtype_ic_bl_mean():
+    rng = np.random.default_rng(3)
+    m = np.array([sample_mpeak(rng, "Ibc", subtype="Ic-BL") for _ in range(20000)])
+    assert abs(m.mean() - (-19.0)) < 0.03
+
+def test_unknown_subtype_falls_back_to_class():
+    from config import LUMINOSITY_CONFIG
+    rng = np.random.default_rng(4)
+    m = np.array([sample_mpeak(rng, "Ibc", subtype="XYZ") for _ in range(20000)])
+    assert abs(m.mean() - LUMINOSITY_CONFIG["M_peak"]["Ibc"]["mean"]) < 0.03
+
 def test_volumetric_favours_high_z():
     z, c = zgrid_cdf(0.05, 1.0)
     assert np.interp(0.5, c, z) > 0.6

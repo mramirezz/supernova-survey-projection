@@ -52,6 +52,28 @@ def test_build_catalog_on_fake_store():
         assert np.isfinite(r.dm15_B)
         assert not r.early_peak and r.t_peak_argmin == r.t_peak
 
+def test_ibc_subtype_from_csv_and_missing_raises():
+    with tempfile.TemporaryDirectory() as td:
+        os.environ["P78_STORE"] = td
+        import importlib, pipeline78.paths, pipeline78.store, pipeline78.catalog
+        for m in (pipeline78.paths, pipeline78.store, pipeline78.catalog): importlib.reload(m)
+        from tests.p78_fakes import fake_template
+        fake_template(pathlib.Path(td) / "templates/Ia/FAKE1", t_peak=55000.0)
+        fake_template(pathlib.Path(td) / "templates/Ibc/FAKEIBC", sn="FAKEIBC", clase="Ibc", t_peak=55000.0)
+        csv = pathlib.Path(td) / "sub.csv"
+        csv.write_text("sn,subtype,source\nFAKEIBC,Ic,test\n")
+        cat = pipeline78.catalog.build_catalog(pathlib.Path(td), subtypes_csv=csv)
+        d = dict(zip(cat.sn, cat.subtype))
+        assert d["FAKEIBC"] == "Ic" and d["FAKE1"] == "Ia"
+        assert pipeline78.catalog.REF_BAND["Ibc"] == "R_rest"
+        csv.write_text("sn,subtype,source\nOTRA,Ic,test\n")
+        try:
+            pipeline78.catalog.build_catalog(pathlib.Path(td), subtypes_csv=csv)
+        except ValueError as e:
+            assert "FAKEIBC" in str(e)
+        else:
+            raise AssertionError("no levanto ValueError")
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"): f(); print("ok", n)

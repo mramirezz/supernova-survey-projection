@@ -18,14 +18,15 @@ def sample_ebv_host(rng, cls):
     return av / float(p["Rv"]), float(p["Rv"])
 
 
-def sample_mpeak(rng, cls, dm15=None):
+def sample_mpeak(rng, cls, dm15=None, subtype=None):
     """M intrinseco (libre de polvo) en la banda de referencia del catalogo (D4)."""
     if cls == "Ia" and PHILLIPS_CONFIG.get("enabled", False):
         d = dm15 if dm15 is not None and np.isfinite(dm15) else PHILLIPS_CONFIG["dm15_default"]
         m = (PHILLIPS_CONFIG["M0"] + PHILLIPS_CONFIG["slope"] * (d - PHILLIPS_CONFIG["dm15_ref"])
              + rng.normal(0.0, PHILLIPS_CONFIG["sigma_resid"]))
     else:
-        p = LUMINOSITY_CONFIG["M_peak"][cls]
+        mp = LUMINOSITY_CONFIG["M_peak"]
+        p = mp[subtype] if subtype in mp and subtype != "Ia" else mp[cls]
         if "median" in p:      # split-normal asimetrica (SLSN-I): brillante = M mas negativo
             n = rng.normal()
             m = p["median"] + n * (p["sigma_bright"] if n < 0 else p["sigma_faint"])

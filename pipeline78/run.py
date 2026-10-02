@@ -7,6 +7,7 @@ from multiprocessing import Pool
 from pathlib import Path
 import numpy as np
 import pandas as pd
+from config import EXTINCTION_CONFIG, LUMINOSITY_CONFIG, PHILLIPS_CONFIG
 from pipeline78.paths import REPO, STORE, FILTERS, DATA
 from pipeline78 import bands as B, engine, sampling, project, runcfg, survey
 from pipeline78.store import load_template, md5_file
@@ -38,10 +39,10 @@ def simulate(field, cls, k, epochs, mw):
     z = _W["z"](rng, cls)
     ebv, rv = sampling.sample_ebv_host(rng, cls)
     dm15 = tpl.get("dm15_B")
-    M = sampling.sample_mpeak(rng, cls, dm15)
+    M = sampling.sample_mpeak(rng, cls, dm15, tpl.get("subtype"))
     t_rel, mags = engine.observed_lightcurves(tpl, z, ebv, rv, mw, _W["bands"], M - tpl["M_ref"])
     sim = dict(sim_id=_h(f"{field}|{cls}|{k}"), field=field, part_index=k, sn_type=cls,
-               clf_class=tpl["clf_class"], template=tpl["sn"], z=z, ebmv_host=ebv, rv_host=rv,
+               clf_class=tpl["clf_class"], template=tpl["sn"], subtype=tpl.get("subtype"), z=z, ebmv_host=ebv, rv_host=rv,
                ebmv_mw=mw, m_peak_abs=M, dm15_used=np.nan if dm15 is None else dm15, t_anchor=np.nan,
                status="no_coverage", n_rows=0, found=False, **{f"n_det_{b}": 0 for b in cfg["bands"]})
     if not mags:
@@ -54,7 +55,7 @@ def simulate(field, cls, k, epochs, mw):
         return sim, None
     sim.update(status="ok", n_rows=len(df), found=bool(df["found"].any()),
                **{f"n_det_{b}": int(df.loc[df["filter"] == b, "detected"].sum()) for b in cfg["bands"]})
-    for c in ("sim_id", "part_index", "sn_type", "template", "z", "ebmv_host", "rv_host", "ebmv_mw",
+    for c in ("sim_id", "part_index", "sn_type", "template", "subtype", "z", "ebmv_host", "rv_host", "ebmv_mw",
               "m_peak_abs", "dm15_used"):
         df[c] = sim[c]
     df["oid"] = field
@@ -109,7 +110,8 @@ def config_hash(cfg):
         inputs[f] = md5_file(DATA / f)
     if cfg.get("mw_mode") == "ztf_sfd":
         inputs["sfd98_cache.parquet"] = md5_file(DATA / "sfd98_cache.parquet")
-    blob = json.dumps(dict(cfg=cfg, catalog=md5_file(STORE / "catalog.csv"), filters=filt, inputs=inputs),
+    blob = json.dumps(dict(cfg=cfg, catalog=md5_file(STORE / "catalog.csv"), filters=filt, inputs=inputs,
+                           lf=LUMINOSITY_CONFIG, ext=EXTINCTION_CONFIG, phillips=PHILLIPS_CONFIG),
                       sort_keys=True)
     return hashlib.md5(blob.encode()).hexdigest()
 
