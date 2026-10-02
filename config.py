@@ -354,15 +354,18 @@ PHILLIPS_CONFIG = {
 # guardaba en run_metadata.json -> la metadata mentía. Ahora hay una sola fuente.
 EXTINCTION_CONFIG = {
     # --- SNe Ia: poblaciones viejas Y jóvenes -> fracción alta sin polvo ---
-    # RECALIBRADO 2026-08-06 (ver opt_clasificador/DIAGNOSTICO_gcorr_leakage.md):
+    # HISTORICO: RECALIBRADO 2026-08-06 (ver opt_clasificador/DIAGNOSTICO_gcorr_leakage.md):
     # con tau=0.35/frac_zero=0.40 el M_peak_r observado de las Ia sinteticas quedaba
     # std 0.27 vs 0.55 (robusta) de las Ia reales ZTF -> Phillips las dejaba "clones"
     # y el clasificador tiraba a Ibc las Ia reales de las colas (recall 0.79->0.69).
     # tau=0.65/frac_zero=0.25 aporta ~0.50 mag de polvo en r (+0.13 resid Phillips
     # = 0.52-0.55 total ✓). El test ab_dust_test.py confirma que recupera Ia~0.78.
+    # D4 2026-10: el M ahora es intrinseco y el polvo atenua; la recalibracion 0.65/0.25 del
+    # 2026-08-06 suponia que la normalizacion cancelaba la extincion (H5). Se re-verifica la
+    # dispersion en el piloto de la Tarea 8. VIGENTE: tau 0.35 / frac_zero 0.40 (literatura).
     "SNIa": {
-        "tau":        0.65,  # escala exp. de A_V con polvo (recalibrada a la std observada ZTF; antes 0.35 de Holwerda+2015, 2015MNRAS.446.3768H)
-        "frac_zero":  0.25,  # antes 0.40 (Holwerda+2015; Brout&Scolnic+2021, 2021ApJ...909...26B); bajada para reproducir la dispersion observada
+        "tau":        0.35,  # escala exp. de A_V con polvo (Holwerda+2015, 2015MNRAS.446.3768H; D4 2026-10, vuelve a literatura)
+        "frac_zero":  0.40,  # Holwerda+2015; Brout&Scolnic+2021, 2021ApJ...909...26B (D4 2026-10, vuelve a literatura)
         "sigma_zero": 0.01,  # dispersión (mag) de la componente sin-polvo en E(B-V)
         "Av_max":     3.0,   # cap numérico (P(A_V>3)<0.5% con este tau; inocuo)
         "Rv":         3.1,   # MW canónico, Cardelli+1989
