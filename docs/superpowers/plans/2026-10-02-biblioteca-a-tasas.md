@@ -287,7 +287,7 @@ git commit -m "pipeline78: rutas y plan"
   - `legacy_band(name) -> Band`
   - las constantes `C_AA`, `COVERAGE_MIN = 0.95`
 
-- [ ] **Step 1: Bajar las curvas del SVO**
+- [x] **Step 1: Bajar las curvas del SVO**
 
 ```bash
 mkdir -p "$REPO/data/filters"
@@ -303,7 +303,7 @@ for f in sorted(glob.glob('$REPO/data/filters/*.dat')):
 
 Expected: seis archivos de dos columnas. ZTF g va de ~3700 a 5600 Å, r de ~5500 a 7400 y i de ~6800 a 9000. OmegaCAM g va de ~3900 a 5600, r de ~5300 a 7100 e i de ~6700 a 8600. Si alguno trae HTML en vez de números, el id cambió: buscarlo en `http://svo2.cab.inta-csic.es/theory/fps/` y repetir.
 
-- [ ] **Step 2: Escribir los tests**
+- [x] **Step 2: Escribir los tests**
 
 ```python
 # tests/test_p78_bands.py
@@ -339,12 +339,12 @@ if __name__ == "__main__":
         if n.startswith("test_"): f(); print("ok", n)
 ```
 
-- [ ] **Step 3: Correrlos y ver que fallan**
+- [x] **Step 3: Correrlos y ver que fallan**
 
 Run: `$PY tests/test_p78_bands.py`
 Expected: `ModuleNotFoundError: No module named 'pipeline78.bands'`
 
-- [ ] **Step 4: Implementar**
+- [x] **Step 4: Implementar**
 
 ```python
 # pipeline78/bands.py
@@ -418,12 +418,12 @@ def legacy_band(name):
     return make_band(name, LEGACY_RESP / f, getattr(utils, "cte" + name))
 ```
 
-- [ ] **Step 5: Correr los tests y ver que pasan**
+- [x] **Step 5: Correr los tests y ver que pasan**
 
 Run: `$PY tests/test_p78_bands.py`
 Expected: cuatro `ok`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add data/filters pipeline78/bands.py tests/test_p78_bands.py
