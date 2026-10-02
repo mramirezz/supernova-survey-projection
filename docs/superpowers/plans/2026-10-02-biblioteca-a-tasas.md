@@ -1231,7 +1231,7 @@ git commit -m "pipeline78: sorteos con rng por simulacion; M intrinseco; polvo I
   - `run.main(argv) -> Path` (la carpeta de la corrida), `run.sim_rng(seed, field, cls, k)`, `run.config_hash(cfg)`
   - la carpeta con el formato de la sección 3
 
-- [ ] **Step 1: Escribir los tests**
+- [x] **Step 1: Escribir los tests**
 
 ```python
 # tests/test_p78_run.py
@@ -1305,12 +1305,12 @@ if __name__ == "__main__":
         if n.startswith("test_"): f(); print("ok", n)
 ```
 
-- [ ] **Step 2: Correrlos y ver que fallan**
+- [x] **Step 2: Correrlos y ver que fallan**
 
 Run: `$PY tests/test_p78_run.py`
 Expected: `ModuleNotFoundError: No module named 'pipeline78.runcfg'`
 
-- [ ] **Step 3: Implementar el proyector**
+- [x] **Step 3: Implementar el proyector**
 
 ```python
 # pipeline78/project.py
@@ -1365,7 +1365,7 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg):
     return pd.concat(frames, ignore_index=True) if frames else None
 ```
 
-- [ ] **Step 4: Implementar las configuraciones y el runner**
+- [x] **Step 4: Implementar las configuraciones y el runner**
 
 ```python
 # pipeline78/runcfg.py
@@ -1545,12 +1545,12 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 5: Correr los tests y ver que pasan**
+- [x] **Step 5: Correr los tests y ver que pasan**
 
 Run: `$PY tests/test_p78_run.py`
 Expected: cuatro `ok`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pipeline78/project.py pipeline78/runcfg.py pipeline78/run.py tests/test_p78_run.py
