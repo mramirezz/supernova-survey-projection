@@ -211,7 +211,7 @@ git checkout -b pipeline78
 mkdir -p ~/thesis_store ~/thesis_runs
 ```
 
-- [ ] **Step 3: Escribir el test de rutas**
+- [x] **Step 3: Escribir el test de rutas**
 
 ```python
 # tests/test_p78_paths.py
@@ -229,12 +229,12 @@ if __name__ == "__main__":
         if n.startswith("test_"): f(); print("ok", n)
 ```
 
-- [ ] **Step 4: Correrlo y ver que falla**
+- [x] **Step 4: Correrlo y ver que falla**
 
 Run: `cd "$REPO" && $PY tests/test_p78_paths.py`
 Expected: `ModuleNotFoundError: No module named 'pipeline78'`
 
-- [ ] **Step 5: Implementar**
+- [x] **Step 5: Implementar**
 
 ```python
 # pipeline78/__init__.py
@@ -260,12 +260,12 @@ STORE = Path(os.environ.get("P78_STORE", Path.home() / "thesis_store"))
 RUNS = Path(os.environ.get("P78_RUNS", Path.home() / "thesis_runs"))
 ```
 
-- [ ] **Step 6: Correrlo y ver que pasa**
+- [x] **Step 6: Correrlo y ver que pasa**
 
 Run: `$PY tests/test_p78_paths.py`
 Expected: `ok test_paths_exist`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add pipeline78/__init__.py pipeline78/paths.py tests/test_p78_paths.py docs/superpowers/plans/2026-10-02-biblioteca-a-tasas.md
