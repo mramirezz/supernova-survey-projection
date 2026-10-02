@@ -1089,7 +1089,7 @@ git commit -m "pipeline78: logs de ZTF y SUDARE en esquema comun, temporadas de 
   - `load_mw(cfg) -> dict field -> ebv_mw`
   - `EXT_KEY`
 
-- [ ] **Step 1: Escribir los tests**
+- [x] **Step 1: Escribir los tests**
 
 ```python
 # tests/test_p78_sampling.py
@@ -1125,12 +1125,12 @@ if __name__ == "__main__":
         if n.startswith("test_"): f(); print("ok", n)
 ```
 
-- [ ] **Step 2: Correrlos y ver que fallan**
+- [x] **Step 2: Correrlos y ver que fallan**
 
 Run: `$PY tests/test_p78_sampling.py`
 Expected: `ModuleNotFoundError: No module named 'pipeline78.sampling'`
 
-- [ ] **Step 3: Implementar**
+- [x] **Step 3: Implementar**
 
 ```python
 # pipeline78/sampling.py
@@ -1199,14 +1199,14 @@ def load_mw(cfg):
     raise ValueError(mode)
 ```
 
-- [ ] **Step 4: Correr los tests y ver que pasan**
+- [x] **Step 4: Correr los tests y ver que pasan**
 
 Run: `$PY tests/test_p78_sampling.py`
 Expected: cinco `ok`.
 
-- [ ] **Step 5: Polvo de las Ia (solo si D4 fue sí).** En `config.py:349-351` volver a `"tau": 0.35` y `"frac_zero": 0.40`. Agregar este comentario: "D4 2026-10: el M ahora es intrinseco y el polvo atenua; la recalibracion 0.65/0.25 del 2026-08-06 suponia que la normalizacion cancelaba la extincion (H5). Se re-verifica la dispersion en el piloto de la Tarea 8."
+- [x] **Step 5: Polvo de las Ia (solo si D4 fue sí).** En `config.py:349-351` volver a `"tau": 0.35` y `"frac_zero": 0.40`. Agregar este comentario: "D4 2026-10: el M ahora es intrinseco y el polvo atenua; la recalibracion 0.65/0.25 del 2026-08-06 suponia que la normalizacion cancelaba la extincion (H5). Se re-verifica la dispersion en el piloto de la Tarea 8."
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pipeline78/sampling.py tests/test_p78_sampling.py config.py
