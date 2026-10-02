@@ -64,6 +64,50 @@ def test_refuses_config_mismatch():
         except SystemExit as e:
             assert "otra configuracion" in str(e)
 
+def test_field_without_log_is_recorded():
+    with tempfile.TemporaryDirectory() as td:
+        run, _ = _setup(td)
+        (pathlib.Path(td) / "fields.txt").write_text("F1\nNOLOG\n")
+        out = run.main(_argv(td, "r6"))
+        assert (out / "_sin_log.txt").read_text().split() == ["NOLOG"]
+        s = pd.read_parquet(out / "_sims_all.parquet")
+        assert len(s) == 6 and set(s.field) == {"F1"}
+
+def test_refuses_other_commit():
+    with tempfile.TemporaryDirectory() as td:
+        run, _ = _setup(td)
+        run.main(_argv(td, "r7"))
+        orig = run.git_state
+        run.git_state = lambda: ("deadbeef", False)
+        try:
+            run.main(_argv(td, "r7")); raise AssertionError("debio negarse")
+        except SystemExit as e:
+            assert "otro commit" in str(e)
+        finally:
+            run.git_state = orig
+
+def test_refuses_changed_log():
+    with tempfile.TemporaryDirectory() as td:
+        run, cfg = _setup(td)
+        run.main(_argv(td, "r8"))
+        h1 = run.config_hash(cfg)
+        lp = pathlib.Path(cfg["log_path"]); df = pd.read_parquet(lp); df.loc[0, "maglim"] = 19.0
+        df.to_parquet(lp, index=False)
+        assert run.config_hash(cfg) != h1
+        try:
+            run.main(_argv(td, "r8")); raise AssertionError("debio negarse")
+        except SystemExit as e:
+            assert "otra configuracion" in str(e)
+
+def test_untracked_source_is_dirty():
+    import pipeline78.run as r
+    f = pathlib.Path(r.REPO) / "pipeline78" / "_zz_untracked_probe.py"
+    f.write_text("x=1\n")
+    try:
+        assert r.git_state()[1] is True
+    finally:
+        f.unlink()
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"): f(); print("ok", n)

@@ -7,7 +7,7 @@ from multiprocessing import Pool
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from pipeline78.paths import REPO, STORE, FILTERS
+from pipeline78.paths import REPO, STORE, FILTERS, DATA
 from pipeline78 import bands as B, engine, sampling, project, runcfg, survey
 from pipeline78.store import load_template, md5_file
 
@@ -96,12 +96,21 @@ def git_state():
     c = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True).stdout.strip()
     d = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO,
                        capture_output=True, text=True).stdout.strip()
-    return c, bool(d)
+    u = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--",
+                        "pipeline78", "tests", "core", "config.py"], cwd=REPO,
+                       capture_output=True, text=True).stdout.strip()
+    return c, bool(d or u)
 
 
 def config_hash(cfg):
     filt = {n: md5_file(FILTERS / B.SURVEY_FILES[cfg["survey"]].format(n)) for n in cfg["bands"]}
-    blob = json.dumps(dict(cfg=cfg, catalog=md5_file(STORE / "catalog.csv"), filters=filt), sort_keys=True)
+    inputs = {"log": md5_file(Path(runcfg.log_path(cfg)))}
+    for f in sorted(set(cfg.get("z_files", {}).values())):
+        inputs[f] = md5_file(DATA / f)
+    if cfg.get("mw_mode") == "ztf_sfd":
+        inputs["sfd98_cache.parquet"] = md5_file(DATA / "sfd98_cache.parquet")
+    blob = json.dumps(dict(cfg=cfg, catalog=md5_file(STORE / "catalog.csv"), filters=filt, inputs=inputs),
+                      sort_keys=True)
     return hashlib.md5(blob.encode()).hexdigest()
 
 
@@ -126,6 +135,8 @@ def main(argv=None):
         old = json.loads(man.read_text())
         if old["config_hash"] != h or old["seed"] != a.seed:
             sys.exit(f"ERROR: {out} tiene otra configuracion o semilla. No se mezcla: usa otra carpeta.")
+        if old.get("git") != commit:
+            sys.exit(f"ERROR: {out} se creo con otro commit ({old.get('git')} vs {commit}). No se mezcla: usa otra carpeta.")
     else:
         out.mkdir(parents=True, exist_ok=True)
         man.write_text(json.dumps(dict(run=a.run, cfg=cfg, seed=a.seed, config_hash=h, git=commit, dirty=dirty,
@@ -133,12 +144,23 @@ def main(argv=None):
     fields = [l.strip() for l in open(a.fields_file) if l.strip()][: a.limit]
     us = runcfg.units(cfg, fields)
     t0 = time.time()
+    sin_log = []
     with Pool(a.workers, initializer=_init, initargs=(cfg, a.seed, runcfg.log_path(cfg), fields, str(out))) as pool:
         for i, (u, st) in enumerate(pool.imap_unordered(run_unit, us), 1):
+            if st == "sin_log":
+                sin_log.append(u[0])
             print(f"[{i}/{len(us)}] {u[0]} {u[1]}-{u[2]} {st}  {time.time() - t0:.0f}s", flush=True)
-    sims = pd.concat([pd.read_parquet(p) for p in sorted((out / "_sims").glob("*.parquet"))], ignore_index=True)
+    sin_log = sorted(set(sin_log))
+    (out / "_sin_log.txt").write_text("".join(f + "\n" for f in sin_log))
+    parts = [pd.read_parquet(p) for p in sorted((out / "_sims").glob("*.parquet"))]
+    if not parts:
+        print(f"WARNING: {len(sin_log)} campos sin log; no hay simulaciones", flush=True)
+        sys.exit("ERROR: no se genero ninguna simulacion (ver _sin_log.txt).")
+    sims = pd.concat(parts, ignore_index=True)
     sims.to_parquet(out / "_sims_all.parquet", index=False)
     print(sims.groupby(["sn_type", "status"]).size().to_string())
+    if sin_log:
+        print(f"WARNING: {len(sin_log)} campos sin log, NO simulados (ver {out / '_sin_log.txt'})", flush=True)
     return out
 
 
