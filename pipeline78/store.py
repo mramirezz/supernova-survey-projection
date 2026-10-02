@@ -75,10 +75,11 @@ def parse_dat(path, return_crop=False):
 
     # Crop todos los bloques al overlap y validar
     cropped_blocks = []
-    for b in blocks:
+    wave = None
+    for i, b in enumerate(blocks):
         w = b[:, 0]
-        # Encontrar índices dentro del overlap (con tolerancia)
-        mask = (w >= w_min_overlap - 1e-3) & (w <= w_max_overlap + 1e-3)
+        # Encontrar índices dentro del overlap (con tolerancia 1e-4 consistente)
+        mask = (w >= w_min_overlap - 1e-4) & (w <= w_max_overlap + 1e-4)
         cropped_b = b[mask]
 
         # Validar que la grilla dentro del overlap es correcta
@@ -86,9 +87,16 @@ def parse_dat(path, return_crop=False):
         if not np.allclose(cropped_b[:, 0], expected_wave, rtol=0.0, atol=1e-4):
             raise ValueError(f"{path}: la grilla de lambda del bloque difiere del primero")
 
+        # Si es el primer bloque, guardar la wave de referencia
+        if i == 0:
+            wave = cropped_b[:, 0]
+        else:
+            # Validar que este bloque tenga exactamente la misma grilla que el primero
+            if cropped_b.shape[0] != wave.size or not np.allclose(cropped_b[:, 0], wave, rtol=0.0, atol=1e-4):
+                raise ValueError(f"{path}: la grilla de lambda del bloque {times[i]} difiere del primero")
+
         cropped_blocks.append(cropped_b)
 
-    wave = cropped_blocks[0][:, 0]
     flux = np.vstack([b[:, 1] for b in cropped_blocks])
     order = np.argsort(times)
 

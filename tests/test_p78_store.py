@@ -65,6 +65,24 @@ def test_parse_with_different_edges():
         assert np.allclose(f[0], [3006.0, 3007.0, 3008.0, 3009.0, 3010.0])
         assert np.allclose(f[1], [6012.0, 6014.0, 6016.0, 6018.0, 6020.0])
 
+def test_parse_rejects_offset_grid():
+    """Bloque offset por 0.5 Å debe ser rechazado (grilla distinta)."""
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / "x.dat"
+        # Bloque 1: 3000, 3001, 3002, 3003, 3004
+        # Bloque 2: 3000.5, 3001.5, 3002.5, 3003.5, 3004.5 (offset 0.5 Å)
+        with open(p, "w") as fh:
+            fh.write("# time: 55000\n")
+            for w in [3000.0, 3001.0, 3002.0, 3003.0, 3004.0]:
+                fh.write(f"{w} {w * 1.0}\n")
+            fh.write("# time: 55001\n")
+            for w in [3000.5, 3001.5, 3002.5, 3003.5, 3004.5]:
+                fh.write(f"{w} {w * 2.0}\n")
+        try:
+            parse_dat(p); raise AssertionError("debio fallar")
+        except ValueError as e:
+            assert "grilla" in str(e)
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"): f(); print("ok", n)
