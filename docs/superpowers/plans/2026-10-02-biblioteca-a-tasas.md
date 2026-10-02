@@ -1569,7 +1569,7 @@ git commit -m "pipeline78: runner paralelo, determinista y reanudable con tabla 
 - Consumes: una carpeta de corrida, `OC/data/real_val.parquet` (columnas sn_name, label, z, M_peak_r)
 - Produces: `report(run_dir, out_dir)`
 
-- [ ] **Step 1: Piloto.** Son 50 campos y menos de 5 minutos. No necesita orden, porque es un piloto chico.
+- [x] **Step 1: Piloto.** Son 50 campos y menos de 5 minutos. No necesita orden, porque es un piloto chico.
 
 ```bash
 cd "$REPO" && $PY -m pipeline78.run --run ztf_v78 --out ~/thesis_runs/ztf_v78_piloto \
@@ -1579,7 +1579,7 @@ cd "$REPO" && $PY -m pipeline78.run --run ztf_v78 --out ~/thesis_runs/ztf_v78_pi
 
 Expected: 1500 sims. La gran mayoría `ok` (v2 tuvo 92 %). Anotar el tiempo total, que da la estimación para la Tarea 9.
 
-- [ ] **Step 2: Implementar el reporte**
+- [x] **Step 2: Implementar el reporte**
 
 ```python
 # pipeline78/pilot_report.py
@@ -1655,7 +1655,7 @@ if __name__ == "__main__":
     print(report(sys.argv[1], PHD / "paper2_ZTF/figures_templates/pipeline78_piloto_ztf").to_string(index=False))
 ```
 
-- [ ] **Step 3: Generar el reporte y publicarlo en el atlas**
+- [x] **Step 3: Generar el reporte y publicarlo en el atlas**
 
 ```bash
 $PY -m pipeline78.pilot_report ~/thesis_runs/ztf_v78_piloto
@@ -1670,7 +1670,7 @@ zsh "$PHD/paper2_ZTF/Codes/spectral_series/run/sync_atlas_local.sh"
 
   Si (b) o (c) fallan, la palanca es el polvo o la LF de esa clase en `config.py`. Se cambia, se usa un nombre de configuración nuevo y se repite el piloto. **No se pasa a la Tarea 9 sin el ok.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pipeline78/pilot_report.py
