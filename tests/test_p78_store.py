@@ -43,6 +43,28 @@ def test_stable_md5_detects_change():
     except IOError:
         pass
 
+def test_parse_with_different_edges():
+    """Dos bloques con el mismo step pero bordes distintos: parsea al overlap con las flux correctas."""
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / "x.dat"
+        # Bloque 1: 3005-3010
+        # Bloque 2: 3006-3011
+        # Overlap: 3006-3010
+        with open(p, "w") as fh:
+            fh.write("# time: 55000\n")
+            for w in [3005.0, 3006.0, 3007.0, 3008.0, 3009.0, 3010.0]:
+                fh.write(f"{w} {w * 1.0}\n")
+            fh.write("# time: 55001\n")
+            for w in [3006.0, 3007.0, 3008.0, 3009.0, 3010.0, 3011.0]:
+                fh.write(f"{w} {w * 2.0}\n")
+        t, ww, f = parse_dat(p)
+        # El overlap es 3006-3010, así que 5 puntos
+        assert list(t) == [55000.0, 55001.0]
+        assert np.allclose(ww, [3006.0, 3007.0, 3008.0, 3009.0, 3010.0])
+        assert f.shape == (2, 5)
+        assert np.allclose(f[0], [3006.0, 3007.0, 3008.0, 3009.0, 3010.0])
+        assert np.allclose(f[1], [6012.0, 6014.0, 6016.0, 6018.0, 6020.0])
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"): f(); print("ok", n)
