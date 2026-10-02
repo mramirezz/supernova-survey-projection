@@ -2901,4 +2901,9 @@ EOF
 - **Enmiendas de tasas:** pesos por subtipo (Li+2011b) y área de CDFS con solape.
 - **Pendientes:** D6 en G2, D7 en G4, D8 y D9 antes de la Tarea 18.
 
+**Puerta G1 (2026-10-02, Mauricio):**
+- Ibc pasa a la LF de Drout+2011 por subtipo (2011ApJ...741...97D, banda R, corregida por polvo): Ib −17.9 ± 0.9, Ic −18.3 ± 0.6, Ic-BL −19.0 ± 1.1. Los subtipos están en `data/ibc_subtypes.csv`.
+- Piloto repetido (`ztf_v78_piloto_b`). Δ mediana del M observado: Ia +0.24, II +0.33 (+0.18 con el corte m<19 de la muestra espectroscópica) e Ibc −0.06. Dispersión de las Ia 0.63.
+- La ventana pre-explosión queda como está y se mide en G3 con t_rise.
+
 Avance y rulings del ejecutor: `.superpowers/sdd/2026-10-02-biblioteca-a-tasas/progress.md`.
