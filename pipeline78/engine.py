@@ -18,13 +18,23 @@ def extinction_factor(wave, rv, ebv):
 
 
 def observed_lightcurves(tpl, z, ebv_host, rv_host, ebv_mw, bands, dmag=0.0):
+    if z <= 0:
+        raise ValueError(f"observed_lightcurves: z debe ser > 0 (z={z})")
+
     w = np.asarray(tpl["wave"], dtype=float)
-    f = np.asarray(tpl["flux"], dtype=np.float64) * 10.0 ** (-0.4 * dmag)
-    f = f * extinction_factor(w, rv_host, ebv_host)[None, :]
     wo = w * (1.0 + z)
-    f = f / (1.0 + z)
-    f = f * extinction_factor(wo, 3.1, ebv_mw)[None, :]
-    f = f * (1e-5 / DL_calculator(z)) ** 2
+
+    # Compute one 1-D wavelength factor
+    # g = 10**(-0.4*dmag) * ext_host(w) / (1+z) * ext_mw(w*(1+z)) * (1e-5/D_L)**2
+    g = 10.0 ** (-0.4 * dmag)
+    g = g * extinction_factor(w, rv_host, ebv_host)
+    g = g / (1.0 + z)
+    g = g * extinction_factor(wo, 3.1, ebv_mw)
+    g = g * (1e-5 / DL_calculator(z)) ** 2
+
+    # Create one full float64 array
+    f = np.asarray(tpl["flux"], dtype=np.float64) * g[None, :]
+
     mags = {}
     for b in bands:
         F, cov = synphot(wo, f, b)

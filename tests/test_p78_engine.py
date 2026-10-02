@@ -19,6 +19,14 @@ def test_time_dilation():
     t_rel, _ = observed_lightcurves(_tpl(), 0.5, 0.0, 3.1, 0.0, survey_bands("ZTF", ("r",)))
     assert np.allclose(t_rel, np.arange(-20.0, 100.0) * 1.5)
 
+def test_z_zero_raises():
+    """z <= 0 should raise ValueError."""
+    try:
+        observed_lightcurves(_tpl(), 0.0, 0.0, 3.1, 0.0, survey_bands("ZTF", ("r",)))
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        assert "z debe ser > 0" in str(e)
+
 def test_high_z_drops_blue_band():
     _, mags = observed_lightcurves(_tpl(), 0.6, 0.0, 3.1, 0.0, survey_bands("SUDARE"))
     assert "g" not in mags and "i" in mags
