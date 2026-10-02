@@ -1,6 +1,7 @@
 # Data files (large files, should be downloaded separately)
 # data/* en vez de data/ para poder whitelistear archivos chicos derivados
 data/*
+!data/filters/
 # dm15(B) por template Ia (config derivada de precompute_dm15_Ia.py)
 !data/dm15_Ia.json
 # md5 de las 78 congeladas copiadas a data/<clase>_v78 (2026-10-02)
