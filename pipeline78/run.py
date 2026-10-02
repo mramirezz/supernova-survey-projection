@@ -1,0 +1,146 @@
+# pipeline78/run.py
+"""Runner v78. Uso:
+    $PY -m pipeline78.run --run ztf_v78 --out ~/thesis_runs/ztf_v78 --fields-file ~/thesis_store/ztf_fields_1000.txt --seed 20261002 --workers 4
+"""
+import argparse, hashlib, json, os, subprocess, sys, time
+from multiprocessing import Pool
+from pathlib import Path
+import numpy as np
+import pandas as pd
+from pipeline78.paths import REPO, STORE, FILTERS
+from pipeline78 import bands as B, engine, sampling, project, runcfg, survey
+from pipeline78.store import load_template, md5_file
+
+_W = {}
+
+
+def _h(s):
+    return int.from_bytes(hashlib.blake2b(s.encode(), digest_size=8).digest(), "little", signed=True)
+
+
+def sim_rng(seed, field, cls, k):
+    return np.random.default_rng([seed, _h(field) & 0xFFFFFFFF, _h(cls) & 0xFFFFFFFF, k])
+
+
+def _init(cfg, seed, log_path, fields, out):
+    cat = pd.read_csv(STORE / "catalog.csv")
+    _W.update(cfg=cfg, seed=seed, out=Path(out), bands=B.survey_bands(cfg["survey"], cfg["bands"]),
+              log=survey.load_log(log_path, fields), mw=sampling.load_mw(cfg), z=sampling.z_sampler(cfg),
+              tpl={c: [load_template(p) for p in cat[cat.clase == c].sort_values("sn").store_path]
+                   for c in cfg["classes"]})
+
+
+def simulate(field, cls, k, epochs, mw):
+    cfg, tpls = _W["cfg"], _W["tpl"][cls]
+    rng = sim_rng(_W["seed"], field, cls, k)
+    order = np.random.default_rng([_W["seed"], _h(field) & 0xFFFFFFFF, _h(cls) & 0xFFFFFFFF]).permutation(len(tpls))
+    tpl = tpls[order[k % len(tpls)]]
+    z = _W["z"](rng, cls)
+    ebv, rv = sampling.sample_ebv_host(rng, cls)
+    dm15 = tpl.get("dm15_B")
+    M = sampling.sample_mpeak(rng, cls, dm15)
+    t_rel, mags = engine.observed_lightcurves(tpl, z, ebv, rv, mw, _W["bands"], M - tpl["M_ref"])
+    sim = dict(sim_id=_h(f"{field}|{cls}|{k}"), field=field, part_index=k, sn_type=cls,
+               clf_class=tpl["clf_class"], template=tpl["sn"], z=z, ebmv_host=ebv, rv_host=rv,
+               ebmv_mw=mw, m_peak_abs=M, dm15_used=np.nan if dm15 is None else dm15, t_anchor=np.nan,
+               status="no_coverage", n_rows=0, found=False, **{f"n_det_{b}": 0 for b in cfg["bands"]})
+    if not mags:
+        return sim, None
+    t_anchor = project.anchor_time(cfg, rng, k, cfg["n_by_class"][cls], epochs)
+    df = project.project_one(t_rel, mags, epochs, t_anchor, rng, cfg)
+    sim["t_anchor"] = t_anchor
+    if df is None:
+        sim["status"] = "no_epochs"
+        return sim, None
+    sim.update(status="ok", n_rows=len(df), found=bool(df["found"].any()),
+               **{f"n_det_{b}": int(df.loc[df["filter"] == b, "detected"].sum()) for b in cfg["bands"]})
+    for c in ("sim_id", "part_index", "sn_type", "template", "z", "ebmv_host", "rv_host", "ebmv_mw",
+              "m_peak_abs", "dm15_used"):
+        df[c] = sim[c]
+    df["oid"] = field
+    df["part_index"] = df["part_index"].astype(np.int32)
+    return sim, df
+
+
+def _atomic_parquet(df, path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    df.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
+
+
+def run_unit(u):
+    field, k0, k1 = u
+    cfg, out = _W["cfg"], _W["out"]
+    name = f"{field}__{k0:05d}.parquet"
+    if (out / "_sims" / name).exists():
+        return u, "skip"
+    epochs = _W["log"].get(field)
+    if not epochs:
+        return u, "sin_log"
+    mw = _W["mw"].get(field, cfg.get("mw_const", 0.02))
+    sims, dfs = [], []
+    for cls in cfg["classes"]:
+        for k in range(k0, min(k1, cfg["n_by_class"][cls])):
+            s, d = simulate(field, cls, k, epochs, mw)
+            sims.append(s)
+            if d is not None:
+                dfs.append(d)
+    if dfs:
+        _atomic_parquet(pd.concat(dfs, ignore_index=True), out / name)
+    _atomic_parquet(pd.DataFrame(sims), out / "_sims" / name)       # al final: marca la unidad como completa
+    return u, f"{sum(s['status'] == 'ok' for s in sims)}/{len(sims)} ok"
+
+
+def git_state():
+    c = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True).stdout.strip()
+    d = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO,
+                       capture_output=True, text=True).stdout.strip()
+    return c, bool(d)
+
+
+def config_hash(cfg):
+    filt = {n: md5_file(FILTERS / B.SURVEY_FILES[cfg["survey"]].format(n)) for n in cfg["bands"]}
+    blob = json.dumps(dict(cfg=cfg, catalog=md5_file(STORE / "catalog.csv"), filters=filt), sort_keys=True)
+    return hashlib.md5(blob.encode()).hexdigest()
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--run", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--fields-file", required=True)
+    ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--seed", type=int, required=True)
+    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--allow-dirty", action="store_true")
+    a = ap.parse_args(argv)
+    cfg = runcfg.RUNS_CFG[a.run]
+    commit, dirty = git_state()
+    if dirty and not a.allow_dirty:
+        sys.exit("ERROR: el repo tiene cambios sin commit. Commitea (o --allow-dirty solo para pilotos).")
+    out = Path(a.out).expanduser()
+    man = out / "run_manifest.json"
+    h = config_hash(cfg)
+    if man.exists():
+        old = json.loads(man.read_text())
+        if old["config_hash"] != h or old["seed"] != a.seed:
+            sys.exit(f"ERROR: {out} tiene otra configuracion o semilla. No se mezcla: usa otra carpeta.")
+    else:
+        out.mkdir(parents=True, exist_ok=True)
+        man.write_text(json.dumps(dict(run=a.run, cfg=cfg, seed=a.seed, config_hash=h, git=commit, dirty=dirty,
+                                       started=time.strftime("%Y-%m-%d %H:%M:%S")), indent=1))
+    fields = [l.strip() for l in open(a.fields_file) if l.strip()][: a.limit]
+    us = runcfg.units(cfg, fields)
+    t0 = time.time()
+    with Pool(a.workers, initializer=_init, initargs=(cfg, a.seed, runcfg.log_path(cfg), fields, str(out))) as pool:
+        for i, (u, st) in enumerate(pool.imap_unordered(run_unit, us), 1):
+            print(f"[{i}/{len(us)}] {u[0]} {u[1]}-{u[2]} {st}  {time.time() - t0:.0f}s", flush=True)
+    sims = pd.concat([pd.read_parquet(p) for p in sorted((out / "_sims").glob("*.parquet"))], ignore_index=True)
+    sims.to_parquet(out / "_sims_all.parquet", index=False)
+    print(sims.groupby(["sn_type", "status"]).size().to_string())
+    return out
+
+
+if __name__ == "__main__":
+    main()
