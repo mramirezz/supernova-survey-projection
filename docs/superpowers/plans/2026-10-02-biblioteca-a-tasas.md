@@ -123,6 +123,52 @@ Las estimaciones marcadas con * se miden en el piloto anterior antes de lanzar.
 
 Las horas de cómputo están en las etapas G y K. Todo lo anterior a ellas existe para que no haya que repetirlas.
 
+## 2b. Enmiendas del 2026-10-03: revisión adversarial y tasa de Nivel 1
+
+Fuente: la revisión de tres revisores (tasas, clasificación y fotometría), en tres rondas y con consenso. Está en `.superpowers/sdd/2026-10-02-biblioteca-a-tasas/consenso-revision-plan.md` y en la página `figures_templates/plan_biblioteca_a_tasas/consenso.html`.
+
+**Decisión de Mauricio (2026-10-03): la tasa se calcula cambiando solo el clasificador de SUDARE por el nuestro.**
+- **Nivel 1 (resultado principal):**
+  - Por tipo y bin de z se toma la exposición de SUDARE I de su Tabla 5: A = N_SUDARE / r_SUDARE = V·CT/(1+z).
+  - Nuestra tasa es r = N_nuestra / A, con N_nuestra contada sobre **los mismos candidatos** (cdfs1, cdfs2 y cosmos, sn y psn).
+  - No se recalcula el control time. El m50, la cola de la DE, la LF y el polvo del CT son de SUDARE y vienen dentro de A.
+- **Nivel 2 (solo si hay tiempo):** N corregida con nuestra matriz de confusión en función de z, como promete el capítulo 1.
+- **Falta para el Nivel 1:**
+  - las curvas de las psn, que pide Enrico;
+  - la regla para los candidatos que nuestro clasificador no puede clasificar porque tienen menos de 7 detecciones (~20–25 %). Opciones: dejarles el tipo de SUDARE, repartirlos con nuestras fracciones por bin, o bajar el umbral solo para ellos. **Decisión de Mauricio pendiente.**
+
+**Lo que bloquea la Tarea 9 (proyección ZTF completa):**
+1. **Un solo modelo físico intrínseco:** una tabla de LF y polvo emparejados por fuente, con banda, sistema, H0 = 70, selección y cita con página. La tabla verificada está en `tabla-LF-polvo.md`, en preparación. En particular:
+   - Ibc se re-decide con criterio con error;
+   - las Ic-BL se ponderan a su fracción real, no 7/30;
+   - IIn va sin SLSN-IIn (−18.72 ± 1.32) y con su polvo coherente;
+   - la II necesita fuente.
+2. **Re-cierre de G1 con estimador equivalente** en ambos lados (detección r más brillante agrupada en 8 h, o el pico SPM) y una barra de ±0.15 mag. Con el estimador corregido, la Ibc con Drout quedaba 0.37–0.42 mag demasiado brillante.
+3. **Selección del entrenamiento ZTF:**
+   - z volumétrico por clase en la proyección;
+   - la selección espectroscópica se modela al entrenar con S(m) sobre min(g, r): forma y prior desde la BTS (Perley+2020), parámetros libres con la mitad de validación;
+   - se acepta si reproduce ρ(M, z), m y z reales.
+   - Nada de cortes duros.
+4. **Puerta de realismo de features:** sobre ~300 sims del piloto, con dos variantes de borde de plantilla, se compara la distribución de t_rise, t_fall, γ, M y color contra la validación por clase. Las variantes son:
+   - límites solo antes de una t_exp estimada;
+   - cola extendida declarada.
+
+   Así se decide la ventana pre-explosión (la advertencia de Mauricio sobre el fit de Villar) con números. Necesita antes la Tarea 10 (benchmark del MCMC) sobre el piloto.
+
+**Validación de ZTF:** la mitad final de las 675 está contaminada. Once scripts la usaron, el τ 0.65 se decidió mirándola, y SN2021krf (una plantilla) está dentro. Se arma un **holdout nuevo desde TNS**, sin las 675 ni las plantillas (2021krf, 2021yja, 2023ixf, 2024ggi, 2024hpj), en la Tarea 11. Las 338 viejas se reportan como segunda validación, declarando su historia.
+
+**Diversidad:** se proyectan las 78 plantillas. No hay whitelist (`SN_WHITELIST` del runner viejo no aplica a pipeline78). Los pesos por subtipo cambian la frecuencia, no excluyen plantillas.
+
+**Del consenso que pasa a "solo si se recalcula el CT o Nivel 2":**
+- m50 publicado separado de `mlim` (C01);
+- DE truncada por S/N (C02);
+- inversión por tipo con IIn ±50 % (C08);
+- GroupKFold más paridad más puente ZTF (C07);
+- área de CDFS;
+- (1+z) por sim.
+
+Para el **entrenamiento** de SUDARE igual se usa el m50 publicado para decidir qué sims serían candidatas, y el `mlim` del log para el ruido.
+
 ## 3. Contratos de datos
 
 **Almacén de plantillas.** `~/thesis_store/templates/<clase>/<SN>/` contiene:
@@ -1217,6 +1263,8 @@ git commit -m "pipeline78: sorteos con rng por simulacion; M intrinseco; polvo I
 
 ### Task 7: Proyector y runner (paralelo, determinista, reanudable)
 
+> **Enmienda 2026-10-03 (ver §2b).** `ztf_v78` pasa a z volumétrico por clase, con z_max por horizonte de detección. La selección se modela al entrenar. Además, la plantilla dentro de cada clase se elige con pesos por subtipo (fracciones verificadas en `tabla-LF-polvo.md`), usando las 78. Se implementa antes de la Tarea 9.
+
 > **Enmienda 2026-10-02 (D1 de Mauricio).** `ztf_v78` lleva además IIn 10 con su etiqueta: `classes=["Ia","II","IIb","IIn","Ibc"]`, `n_by_class={"Ia":10,"II":8,"IIb":2,"IIn":10,"Ibc":10}`, `z_files["IIn"]="z_empirical_Ia.txt"` (M medio de IIn ~ Ia, no hay IIn reales en ZTF). La ventana pre-explosión (`pre_ul_days`) queda como el plan: Mauricio advirtió que cambiarla afecta el fit de Villar (el extractor exige un UL previo a la primera detección); se mide en el piloto (Tarea 8) y se decide en G1.
 
 **Files:**
@@ -1559,6 +1607,8 @@ git commit -m "pipeline78: runner paralelo, determinista y reanudable con tabla 
 
 ### Task 8: Piloto ZTF y puerta G1
 
+> **Enmienda 2026-10-03.** G1 se re-cierra con el estimador equivalente en ambos lados y barra de ±0.15 mag, después de fijar la tabla única de LF y polvo (§2b). El piloto se repite con esa física.
+
 > **Enmienda 2026-10-02.** El reporte agrega un diagnóstico de la ventana pre-explosión por clase: fracción de sims con UL antes de la primera detección, separación entre el último UL y la primera detección, y cuántos UL caen entre la explosión estimada y la primera época del template (donde la SN real se vería). Con eso Mauricio decide en G1. Verificar antes que `real_val.parquet` tenga las columnas `label` y `M_peak_r`.
 
 **Files:**
@@ -1679,6 +1729,8 @@ git commit -m "pipeline78: reporte de piloto para el atlas"
 
 ### Task 9: Proyección ZTF completa
 
+> **Enmienda 2026-10-03.** Bloqueada hasta cumplir §2b puntos 1 a 4. Tiempo medido en el piloto: 1000 campos × 40 sims ≈ 8 min con 2 workers.
+
 - [ ] **Step 1: ORDEN.** Pedirle a Mauricio la orden de lanzar. Darle el tiempo estimado, que es el del piloto multiplicado por 20.
 
 - [ ] **Step 2: Repo limpio y lanzamiento**
@@ -1712,6 +1764,8 @@ cp -R ~/thesis_runs/ztf_v78 "$D/" && (cd ~/thesis_runs/ztf_v78 && find . -type f
 ### Parte C: features y clasificador ZTF
 
 ### Task 10: Benchmark del MCMC y puerta G2
+
+> **Enmienda 2026-10-03.** Se adelanta: corre sobre el piloto, antes de la Tarea 9, porque la puerta de realismo de features (§2b, punto 4) la necesita.
 
 **Files:**
 - Modify: `ZLF/config.py:50-56`
@@ -1793,6 +1847,8 @@ cd "$REPO" && git add pipeline78/compare_features.py && git commit -m "pipeline7
 ```
 
 ### Task 11: Features reales de ZTF con el mismo código
+
+> **Enmienda 2026-10-03.** Incluye el holdout nuevo desde TNS, sin las 675 ni las plantillas, con regla documentada y semilla fija. También incluye un set extendido de IIb, IIn e Ic-BL para decidir en G3 el mapeo de clases.
 
 **Files:**
 - Create: `pipeline78/real_to_parquet.py`, `tests/test_p78_real.py`
@@ -1930,6 +1986,8 @@ print(f.groupby(['sn_type','filter_band']).size().to_dict()); print(e.iloc[:,-1]
 Después, el espejo de la Tarea 9 Step 4 con `ztf_v78_features`.
 
 ### Task 13: Receta del clasificador con el merge arreglado y puerta G3
+
+> **Enmienda 2026-10-03.** La selección espectroscópica se modela con S(m) sobre min(g, r), con forma de la BTS y parámetros con la mitad de validación (§2b). El número final se mide una vez sobre el holdout nuevo.
 
 > **Enmienda 2026-10-02 (D1).** En ZTF, las sims `sn_type == "IIn"` quedan fuera del entrenamiento por defecto (la muestra real no tiene IIn). G3 decide si entran como II.
 
@@ -2523,6 +2581,8 @@ EOF
 
 ### Task 22: Módulo de tasas y prueba de cierre
 
+> **Enmienda 2026-10-03 (Nivel 1).** El módulo de tasas del Nivel 1 es r = N_nuestra / A, con A = N/r de la Tabla 5 de SUDARE I por tipo y bin, y errores de Poisson de Gehrels sobre N. La matriz de respuesta de abajo queda para el Nivel 2 (solo si hay tiempo).
+
 > **Enmienda 2026-10-02 (tasas).** `response_matrix` pondera cada sim por `w = fracción intrínseca de su subtipo / fracción en la corrida` (Tarea 18) y usa `area_deg2` por campo de `sudare_fields.csv` (Tarea 14) en vez de un área única. El (1+z) del control time va por sim, no por el centro del bin. Agregar un test de cierre con dos subtipos de distinta eficiencia y pesos distintos de 1.
 
 **Files:**
@@ -2743,6 +2803,8 @@ git commit -m "pipeline78: tasas por control time Monte Carlo con matriz de clas
 
 ### Task 23: Validación contra SUDARE I con su propia clasificación
 
+> **Enmienda 2026-10-03 (Nivel 1).** Se reduce a transcribir la Tabla 5 (N, r y errores por tipo y bin) a `data/sudare_I_table5.csv` y a verificar que N_SUDARE / A reproduce r_SUDARE. Recalcular el CT propio queda como chequeo opcional.
+
 > **Enmienda 2026-10-02.** `data/sudare_I_table5.csv` lleva columnas `z1, z2` (no `zbin`), que son las que usa el código.
 
 - [ ] **Step 1: Transcribir la Tabla 5 de SUDARE I** a `data/sudare_I_table5.csv`, con las columnas tipo, zbin, n_sne, rate, stat_lo, stat_hi, sys_lo, sys_hi y página. Se lee del PDF (`papers_varios/Rate/Sudare_I.pdf`, página 14) y se verifica cada número dos veces.
@@ -2796,6 +2858,8 @@ EOF
   No se avanza a la Tarea 24 sin explicar las diferencias.
 
 ### Task 24: Tasas de SUDARE con nuestra clasificación
+
+> **Enmienda 2026-10-03 (Nivel 1).** Se clasifican los mismos candidatos que SUDARE I (cdfs1, cdfs2 y cosmos, sn y psn). Falta decidir la regla para los que no se pueden clasificar (§2b) y que lleguen las psn.
 
 - [ ] **Step 1: Predecir.**
   - La submuestra sintética se predice con validación cruzada en dos mitades por paridad de `sim_id`. Cada sim lo predice el modelo entrenado con la otra mitad, así la matriz no sale optimista.
@@ -2905,5 +2969,7 @@ EOF
 - Ibc pasa a la LF de Drout+2011 por subtipo (2011ApJ...741...97D, banda R, corregida por polvo): Ib −17.9 ± 0.9, Ic −18.3 ± 0.6, Ic-BL −19.0 ± 1.1. Los subtipos están en `data/ibc_subtypes.csv`.
 - Piloto repetido (`ztf_v78_piloto_b`). Δ mediana del M observado: Ia +0.24, II +0.33 (+0.18 con el corte m<19 de la muestra espectroscópica) e Ibc −0.06. Dispersión de las Ia 0.63.
 - La ventana pre-explosión queda como está y se mide en G3 con t_rise.
+
+**2026-10-03, Mauricio:** la tasa es de Nivel 1 (cambiar solo el clasificador de SUDARE). El Nivel 2 solo si hay tiempo. Faltan las psn. Las 78 plantillas sin whitelist. Se incorporan las enmiendas del consenso (§2b).
 
 Avance y rulings del ejecutor: `.superpowers/sdd/2026-10-02-biblioteca-a-tasas/progress.md`.
