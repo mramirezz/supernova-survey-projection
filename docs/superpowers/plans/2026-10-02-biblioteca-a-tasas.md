@@ -1837,7 +1837,7 @@ cd "$REPO" && $PY -m pipeline78.compare_features ~/thesis_runs/bench_ref/feature
 
 Si no se cumple, se repite con 50 walkers, 3000 pasos y 500 de burn-in.
 
-- [ ] **Step 4: Puerta G2.** Mauricio elige la configuración y se anota en "Decisiones tomadas". Desde aquí, **todas** las features (reales y sintéticas, ZTF y SUDARE) se extraen con esa misma configuración.
+- [x] **Step 4: Puerta G2.** Mauricio elige la configuración y se anota en "Decisiones tomadas". Desde aquí, **todas** las features (reales y sintéticas, ZTF y SUDARE) se extraen con esa misma configuración.
 
 - [ ] **Step 5: Commit en los dos repos**
 
@@ -2974,5 +2974,13 @@ EOF
 **2026-10-03, Mauricio:** la tasa es de Nivel 1 (cambiar solo el clasificador de SUDARE). El Nivel 2 solo si hay tiempo. Faltan las psn. Las 78 plantillas sin whitelist. Se incorporan las enmiendas del consenso (§2b).
 
 **2026-10-03, Mauricio:** sí al holdout nuevo desde TNS. La clasificación anterior fue una prueba, y ahora va la versión real de la tesis. El set real cubre **solo los tipos de las series**: Ia; II (TNS SN II, IIP e IIL); IIb; IIn; e Ibc (Ib, Ic e Ic-BL). Nada fuera de la biblioteca: ni Iax, ni Ca-rich, ni Ibn, ni SLSN, ni 91T/91bg como clases propias.
+
+**2026-10-03, Mauricio (LF y polvo, Fix B):** las Ibc pasan a Taddia+2018 por subtipo, con el polvo de Stritzinger+2018 por subtipo, σ de Ic 0.85 (Barbarino+2021), Ic-BL de Taddia+2019 y fracciones Ib:Ic:Ic-BL de Shivvers+2017 (0.556:0.386:0.058). IIb a −17.57 (H0 = 70). IIn −18.72 ± 1.32, sin SLSN-IIn. Esto reemplaza la Drout de G1. En la tesis queda en el cap. 3 (commit 007c900, en Overleaf).
+
+**Puerta G2 (2026-10-03, Mauricio):** el MCMC oficial queda en **100 walkers, 5000 pasos y 500 de burn-in** (ref) para todo lo que va a la tesis: entrenamiento, holdout ZTF y SUDARE. La configuración mid (50/3000/500) se usa solo en pilotos y puertas diagnósticas. Ruido medido con 61 ajustes, |Δ|/σ mediana / p90: ref contra ref con otra semilla, f 0.07/0.46 y γ 0.09/0.45. mid contra mid, f 0.10/1.05 y γ 0.10/1.22.
+
+**2026-10-03, Mauricio (II y polvo de las LF sin corregir):**
+- **LF de las II:** Li+2011b (2011MNRAS.412.1441L), Tabla 6, en R a H0 = 70. IIP N(−15.75, 1.23) e IIL N(−17.53, 0.64), con pesos 0.875/0.125. Las 13 plantillas II se etiquetan IIP/IIL con el criterio de Li, y las etiquetas pasan por Mauricio antes de usarse.
+- **Polvo de las LF no corregidas por host (II y IIn):** el polvo queda ON y la LF se impone en la banda de referencia de reposo **después** del polvo, como en la variante de Vincenzi+2021 §6.2 (2021MNRAS.505.2819V). La distribución de polvo es la de SUDARE I (Cappellaro+2015), pendiente de verificar en el texto. Esto reemplaza el "polvo OFF" de las IIn.
 
 Avance y rulings del ejecutor: `.superpowers/sdd/2026-10-02-biblioteca-a-tasas/progress.md`.
