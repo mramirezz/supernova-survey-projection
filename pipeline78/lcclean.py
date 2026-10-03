@@ -5,7 +5,10 @@ AGN, puntos sueltos). Ninguna regla usa la clase espectroscopica: sirve igual pa
 (a) Ventana [t_ref - PRE, t_ref + POST]: detecciones y UL, todas las bandas.
 (b) Las detecciones (todas las bandas, por mjd) se cortan en grupos donde el salto es > GAP d. Los UL no se tocan.
     1. Grupo del pico: el de la deteccion mas brillante en r (en g si no hay r) entre los grupos con >= MIN_GROUP
-       detecciones (si ninguno llega, entre todos). Un punto suelto brillante no ancla el pico.
+       detecciones que empiezan antes de t_ref + TARDIA. La SN es, por definicion, lo que TNS descubrio: el grupo del
+       descubrimiento la ancla y un grupo posterior apenas mas brillante (re-brillo, AGN, fuente plana) no lo desplaza.
+       Si no hay, entre todos los grupos con >= MIN_GROUP, y si ninguno llega, entre todos. Un punto suelto brillante
+       no ancla el pico.
     2. Antes del pico: fuera todos los grupos. Un salto > GAP antes del pico es otra cosa.
     3. Despues del pico, en orden: fuera los grupos con < MIN_GROUP. Un grupo grande se queda solo si la SN sigue
        bajando a traves del salto: la mediana de su banda de referencia tiene que ser al menos FADE_MIN mas debil que la
@@ -19,7 +22,7 @@ import numpy as np
 PRE, POST = 50.0, 400.0     # desde el descubrimiento: una IIn de un anio cabe en la ventana
 GAP, MIN_GROUP = 60.0, 3
 FADE_MIN = 0.0              # mag: un grupo posterior tiene que estar al menos asi de mas debil
-TARDIA = 30.0               # d despues de t_ref
+TARDIA = 30.0               # d despues de t_ref: ancla del grupo del pico y bandera primera_det_tardia
 
 
 def _span(mjd):
@@ -45,7 +48,11 @@ def clean_lc(df, t_ref, pre=PRE, post=POST, gap=GAP, min_group=MIN_GROUP, fade_m
         grupo = np.concatenate([[0], np.cumsum(np.diff(mjd[i]) > gap)])
         f, mag = df["filter"].to_numpy()[i], df["magnitud_proyectada"].to_numpy(float)[i]
         n = np.bincount(grupo)
-        cand = n[grupo] >= min_group if (n >= min_group).any() else np.ones(len(i), bool)
+        ini = mjd[i][np.r_[0, np.flatnonzero(np.diff(grupo)) + 1]]          # primera deteccion de cada grupo
+        for ok in ((n >= min_group) & (ini <= t_ref + tardia), n >= min_group, np.ones(len(n), bool)):
+            if ok.any():
+                break
+        cand = ok[grupo]
         for b in ("r", "g", None):                          # None: cualquier banda
             k = np.flatnonzero(cand & ((f == b) if b else True))
             if len(k):

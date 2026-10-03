@@ -73,10 +73,22 @@ def test_grupo_posterior_mas_debil_se_queda_banda_g():
 
 
 def test_grupo_anterior_al_pico_sale():
-    """Un grupo grande antes de un salto > 60 d y antes del pico es otra cosa, aunque tenga >= 3 detecciones."""
-    out, s = clean_lc(_lc(_grupo(-45, 20.5, n=4) + _sn(110, 211)), T)
-    assert (out.mjd >= T + 110).all() and len(out) == 42
+    """Un grupo grande antes de un salto > 60 d y antes del pico es otra cosa, aunque tenga >= 3 detecciones (los dos
+    empiezan antes de t_ref + 30 d: el pico decide)."""
+    out, s = clean_lc(_lc(_grupo(-50, 20.5, n=3) + _sn(20, 121)), T)    # -50, -47, -44 y la SN desde +20: salto 64 d
+    assert (out.mjd >= T + 20).all() and len(out) == 42
     assert s["n_grupos_antes_pico"] == 1 and s["n_grupos_eliminados"] == 1
+
+
+def test_grupo_del_descubrimiento_ancla_el_pico():
+    """ZTF18abskzjm: un grupo posterior de >= 3 puntos apenas mas brillante que el pico de la SN no desplaza al grupo del
+    descubrimiento (la SN no sale como 'anterior al pico'). Despues sale por la regla 3 (no sigue bajando)."""
+    out, s = clean_lc(_lc(_sn(0, 101) + _grupo(200, 17.9)), T)              # pico de la SN 18.0, grupo a +200 d en 17.9
+    assert len(out) == 42 and out.mjd.max() <= T + 100
+    assert s["n_grupos_antes_pico"] == 0 and s["n_grupos_no_bajan"] == 1 and not s["primera_det_tardia"]
+    # sin grupo grande que empiece antes de t_ref + 30 d: vuelve a la regla del mas brillante
+    out, s = clean_lc(_lc(_grupo(40, 20.5) + _grupo(200, 18.0)), T)
+    assert (out.mjd >= T + 200).all() and len(out) == 5 and s["n_grupos_antes_pico"] == 1 and s["primera_det_tardia"]
 
 
 def test_primera_det_tardia():
