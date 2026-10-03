@@ -3001,4 +3001,13 @@ Las Ibc siguen llegando a z mayor que las reales incluso con el mismo corte (0.0
 2. Adoptar la cola para la Tarea 9.
 3. Investigar antes de la Tarea 9 las diferencias físicas, partiendo por el color de las II (el polvo de SUDARE suma ~0.18 mag en g−r) y luego la M de las IIn.
 
+**Limpieza de las curvas reales (2026-10-03, Mauricio: "todo lo que no es supernova hay que sacarlo").** Los archivos de ALeRCE juntan todo lo que ZTF detectó en esa posición, de todos los años.
+- **Regla, sin usar la clase** (`pipeline78/lcclean.py`):
+  - ventana de −50 a +400 d desde el descubrimiento TNS (en las sims, desde la primera detección);
+  - el grupo de la SN es el del descubrimiento;
+  - se eliminan los grupos anteriores, los grupos sueltos de menos de 3 detecciones y los grupos posteriores que no siguen bajando.
+- **Resultado:** 149 de 1843 SNe pierden puntos. Las curvas que no son IIn y tenían más de 500 d de detecciones bajan de 58 a 0.
+- **Exclusión:** se sacan del holdout 7 SNe cuyos datos de ZTF no contienen la supernova. Son 2018yt, 2018bbk, ZTF24abhzafp, ZTF25aaknnlf, ZTF23abrhsym, ZTF19aarzaod y ZTF18aaiajvb, y Mauricio las revisó.
+- **Detección en las sims:** eficiencia logística sobre la magnitud medida y sin UL después de la última detección. El m0 se calibra con la duración de las curvas reales limpias (en curso).
+
 Avance y rulings del ejecutor: `.superpowers/sdd/2026-10-02-biblioteca-a-tasas/progress.md`.
