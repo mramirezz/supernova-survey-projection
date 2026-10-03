@@ -2990,4 +2990,15 @@ EOF
 
 Las Ibc siguen llegando a z mayor que las reales incluso con el mismo corte (0.045 contra 0.026). Hay dos causas posibles: la cola brillante del σ = 0.85 de las Ic, o una selección extra en la muestra real. Se vuelve a medir cuando S(m) esté calibrada. Siguiente paso, con el ok de Mauricio: implementar y correr la puerta de realismo de features (§2b, punto 4).
 
+**Puerta de realismo (2026-10-03).** Se corrió con 50 simuladas por clase contra el holdout nuevo (mitad val), con m < 18.5 y z igualadas, MCMC mid y banda r. Resultados en `~/thesis_runs/realismo/realismo_tabla.csv` y en `figures_templates/pipeline78_realismo/`.
+- **Ia e Ibc:** quedan dentro de 1.6σ en todas las features.
+- **Borde inicial de las Ia:** con el actual, t_rise da −0.46 d (−1.5σ). Con texp (eliminar las épocas entre t_exp y el inicio de la plantilla) se pasa a +0.53 d (+2.6σ).
+- **Cola lineal de 150 d:** acerca t_fall a la real en 4 de 5 clases.
+- **Diferencias que no son de borde:** II g−r +0.21 (2.7σ), II γ +31 d (2.1σ), IIb t_rise −1.5 d (2.5σ) e IIn M_r −0.74 (2.5σ).
+
+**Decisiones de Mauricio:**
+1. Probar el borde inicial *fireball* en las Ia: flujo ∝ (t − t_exp)² desde t_Bmax − 18.9 d, que es el método de la tesis para las otras clases, con α_r = 2.01 de Miller+2020.
+2. Adoptar la cola para la Tarea 9.
+3. Investigar antes de la Tarea 9 las diferencias físicas, partiendo por el color de las II (el polvo de SUDARE suma ~0.18 mag en g−r) y luego la M de las IIn.
+
 Avance y rulings del ejecutor: `.superpowers/sdd/2026-10-02-biblioteca-a-tasas/progress.md`.
