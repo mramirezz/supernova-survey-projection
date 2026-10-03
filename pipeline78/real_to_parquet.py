@@ -4,7 +4,9 @@ Dos listas: el holdout nuevo (origen=holdout, split val/final) y las 675 viejas 
 split val_viejo/final_viejo). Los upper limits se respetan: upperlimit 'T' con magerr NaN.
 Limpieza (Fix G, 2026-10-03): ALeRCE junta todo lo de esa posicion del cielo. Cada SN pasa por clean_lc con t_ref =
 descubrimiento de TNS (discoverydate, cruce por el ZTF de internal_names como en holdout.py), o la primera deteccion
-si no esta en TNS. revisar_reales.csv: < 7 detecciones en r o span de detecciones > 300 d sin ser IIn."""
+si no esta en TNS. revisar_reales.csv (motivo): "<7 det r" o "span>300 sin gap" (span de detecciones > 300 d sin ser IIn).
+excluir_reales.csv: primera_det_tardia (la curva no tiene la fase principal). Se marcan con excluir=True en meta pero
+siguen en los parquets: decide Mauricio."""
 import sys
 from pathlib import Path
 import numpy as np
@@ -93,8 +95,12 @@ def ztf_real_to_parquet(out_dir, holdout=None, oc=OC, phot=PHOT, tns=TNS):
     bad = set(missing) | set(empty)
     m = meta[~meta.oid.isin(bad)].assign(part_index=0)
     m = m.join(pd.DataFrame.from_dict(res, orient="index"), on="oid")
+    m["excluir"] = m.primera_det_tardia
     m.drop(columns="n_det_r").to_csv(out_dir / "meta_real_ztf.csv", index=False)
-    rev = m[(m.n_det_r < 7) | ((m.span_det_despues > 300) & (m.sn_type != "IIn"))]
+    m[m.excluir].drop(columns="n_det_r").assign(motivo="primera_det_tardia").to_csv(out_dir / "excluir_reales.csv", index=False)
+    pocas, largo = m.n_det_r < 7, (m.span_det_despues > 300) & (m.sn_type != "IIn")
+    motivo = np.where(pocas & largo, "<7 det r + span>300 sin gap", np.where(pocas, "<7 det r", "span>300 sin gap"))
+    rev = m.assign(motivo=motivo)[pocas | largo]
     rev.to_csv(out_dir / "revisar_reales.csv", index=False)
     print(f"{len(meta)} SNe en las listas, {len(missing)} sin archivo de fotometria {missing[:10]}, {len(empty)} sin g/r o sin "
           f"detecciones en la ventana {empty[:10]}")
@@ -102,7 +108,10 @@ def ztf_real_to_parquet(out_dir, holdout=None, oc=OC, phot=PHOT, tns=TNS):
     print(m.groupby(["origen", "split", "sn_type"]).size())
     print("SNe que pierden filas al limpiar (pierden / total):")
     print(m.assign(pierden=m.n_filas_despues < m.n_filas_antes).groupby(["origen", "sn_type"]).pierden.agg(["sum", "size"]))
-    print(f"{len(rev)} a revisar (< 7 det en r, o span > 300 d sin ser IIn) -> {out_dir / 'revisar_reales.csv'}")
+    print("Grupos eliminados por regla (antes del pico, chicos tras el pico, no siguen bajando):")
+    print(m.groupby(["origen", "sn_type"])[["n_grupos_antes_pico", "n_grupos_chicos", "n_grupos_no_bajan"]].sum())
+    print(f"{len(rev)} a revisar ({rev.motivo.value_counts().to_dict()}) -> {out_dir / 'revisar_reales.csv'}")
+    print(f"{int(m.excluir.sum())} a excluir (primera_det_tardia, siguen en los parquets): {m.oid[m.excluir].tolist()}")
     return m
 
 

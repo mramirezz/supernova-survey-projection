@@ -35,10 +35,12 @@ def test_real_to_parquet_limpia_desde_tns(tmp_path):
     _dat(phot / "SN Ia" / "ZTF20aaa_photometry.dat", "ZTF20aaa", sn + basura)
     _dat(phot / "SN II" / "ZTF20bbb_photometry.dat", "ZTF20bbb",                 # sin TNS: t_disc = primera deteccion
          [(t + 10 + d, "r", 18.5, "F") for d in range(0, 30, 6)] + [(t, "r", 20.0, "T")])
-    pd.DataFrame({"name": ["2020aaa"], "discoverydate": ["2020-03-01 12:00:00"],
-                  "internal_names": ["ATLAS20x, ZTF20aaa"]}).to_csv(tmp_path / "tns.csv", index=False)
-    pd.DataFrame({"oid": ["ZTF20aaa"], "clase": ["Ia"], "subtipo": ["Ia"], "z": [0.05], "split": ["val"]}).to_csv(
-        tmp_path / "holdout.csv", index=False)
+    _dat(phot / "SN II" / "ZTF20ccc_photometry.dat", "ZTF20ccc",                 # descubierta antes de las alertas
+         [(t + 100 + 3 * k, "r", 19.3, "F") for k in range(10)])
+    pd.DataFrame({"name": ["2020aaa", "2020ccc"], "discoverydate": ["2020-03-01 12:00:00"] * 2,
+                  "internal_names": ["ATLAS20x, ZTF20aaa", "ZTF20ccc"]}).to_csv(tmp_path / "tns.csv", index=False)
+    pd.DataFrame({"oid": ["ZTF20aaa", "ZTF20ccc"], "clase": ["Ia", "II"], "subtipo": ["Ia", "II"], "z": [0.05, 0.02],
+                  "split": ["val", "final"]}).to_csv(tmp_path / "holdout.csv", index=False)
     pd.DataFrame({"sn_name": ["ZTF20bbb"], "label": ["II"], "z": [0.02]}).to_parquet(oc / "data/real_val.parquet")
     pd.DataFrame({"sn_name": pd.Series([], dtype=str), "label": pd.Series([], dtype=str),
                   "z": pd.Series([], dtype=float)}).to_parquet(oc / "data/real_final.parquet")
@@ -48,15 +50,22 @@ def test_real_to_parquet_limpia_desde_tns(tmp_path):
     assert ia.mjd.between(t - 50, t + 400).all() and len(ia) == len(sn)    # ventana desde t_disc y el aislado de +250
     meta = pd.read_csv(out / "meta_real_ztf.csv").set_index("oid")
     nuevas = ["t_disc", "n_filas_antes", "n_filas_despues", "n_grupos_eliminados", "span_det_antes", "span_det_despues"]
+    nuevas += ["n_grupos_antes_pico", "n_grupos_chicos", "n_grupos_no_bajan", "dt_primera_det", "primera_det_tardia", "excluir"]
     assert set(nuevas) <= set(meta.columns) and "n_det_r" not in meta.columns
     a = meta.loc["ZTF20aaa"]
     assert abs(a.t_disc - t) < 1e-6 and a.n_filas_antes == len(sn) + 4 and a.n_filas_despues == len(sn)
     assert a.n_grupos_eliminados == 1 and a.span_det_antes == 1000.0 and a.span_det_despues == 90.0
     b = meta.loc["ZTF20bbb"]
     assert b.t_disc == t + 10 and b.n_filas_despues == 6 and b.origen == "viejas"
+    assert not a.excluir and not b.excluir
+    c = meta.loc["ZTF20ccc"]                                                   # marcada, pero sigue en el parquet
+    assert c.primera_det_tardia and c.excluir and c.dt_primera_det == 100.0
+    assert (pd.read_parquet(out / "II.parquet").oid == "ZTF20ccc").sum() == 10
+    ex = pd.read_csv(out / "excluir_reales.csv")
+    assert list(ex.oid) == ["ZTF20ccc"] and list(ex.motivo) == ["primera_det_tardia"]
     rev = pd.read_csv(out / "revisar_reales.csv")
-    assert list(rev.oid) == ["ZTF20bbb"]                                       # 5 detecciones en r
-    assert len(m) == 2
+    assert list(rev.oid) == ["ZTF20bbb"] and list(rev.motivo) == ["<7 det r"]  # 5 detecciones en r
+    assert len(m) == 3
 
 
 if __name__ == "__main__":
