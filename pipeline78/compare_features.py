@@ -9,6 +9,9 @@ PARS = ["f", "t_rise", "t_fall", "gamma"]
 
 def compare(csv_a, csv_b):
     a, b = pd.read_csv(csv_a), pd.read_csv(csv_b)
+    # Drop duplicates on merge keys to ensure clean comparison
+    a = a.drop_duplicates(subset=KEYS, keep='first')
+    b = b.drop_duplicates(subset=KEYS, keep='first')
     m = a.merge(b, on=KEYS, suffixes=("_a", "_b"))
     rows = []
     for p in PARS:
