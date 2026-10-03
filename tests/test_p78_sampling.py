@@ -99,7 +99,7 @@ def test_fixb_config_values():
     mp = LUMINOSITY_CONFIG["M_peak"]
     assert mp["Ib"] == {"mean": -17.33, "sigma": 0.60} and mp["Ic"] == {"mean": -17.78, "sigma": 0.85}
     assert mp["Ic-BL"] == {"mean": -18.57, "sigma": 0.63} and mp["IIb"]["mean"] == -17.57
-    assert mp["IIn"] == {"mean": -18.72, "sigma": 1.32}
+    assert mp["IIn"] == {"mean": -17.99, "sigma": 0.95} and mp["IIn_nyholm"] == {"mean": -18.72, "sigma": 1.32}
     f = SUBTYPE_FRACTIONS["Ibc"]
     assert f == {"Ib": 0.556, "Ic": 0.386, "Ic-BL": 0.058} and abs(sum(f.values()) - 1) < 1e-9
     from config import EXTINCTION_CONFIG as E
@@ -178,7 +178,16 @@ def test_fixd_iin_truncada_en_menos21():
     rng = np.random.default_rng(9)
     m = np.array([sample_mpeak(rng, "IIn", subtype="IIn") for _ in range(20000)])
     assert m.min() >= -21.0
-    assert abs(np.median(m) + 18.72) < 0.15, np.median(m)
+    assert abs(np.median(m) + 17.99) < 0.1, np.median(m)
+    assert abs(m.std() - 0.95) < 0.1, m.std()          # casi sin truncar (-21 esta a 3 sigma)
+    # variante Nyholm: -18.72/1.32 truncada en -21
+    rng = np.random.default_rng(9)
+    mn = np.array([sample_mpeak(rng, "IIn", subtype="IIn", iin_lf="nyholm") for _ in range(20000)])
+    assert mn.min() >= -21.0 and abs(np.median(mn) + 18.72) < 0.15, np.median(mn)
+    # el interruptor no toca a las otras clases
+    for cls, st in (("II", "IIP"), ("IIb", None), ("Ibc", "Ib")):
+        a = sample_mpeak(np.random.default_rng(3), cls, None, st)
+        assert a == sample_mpeak(np.random.default_rng(3), cls, None, st, None, "nyholm")
 
 def test_mpeak_truncated_by_resampling():
     from config import LUMINOSITY_CONFIG

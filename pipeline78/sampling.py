@@ -23,7 +23,7 @@ def sample_ebv_host(rng, cls, subtype=None, ii_dust=None):
     return av / float(p["Rv"]), float(p["Rv"])
 
 
-def sample_mpeak(rng, cls, dm15=None, subtype=None, ii_dust=None):
+def sample_mpeak(rng, cls, dm15=None, subtype=None, ii_dust=None, iin_lf=None):
     """M intrinseco (libre de polvo) en la banda de referencia del catalogo (D4), salvo las clases en
     LF_AFTER_HOST_DUST, donde M es el pico con el polvo del host adentro. Truncado a clip por re-sorteo."""
     c = dict(LUMINOSITY_CONFIG["clip"])
@@ -36,6 +36,8 @@ def sample_mpeak(rng, cls, dm15=None, subtype=None, ii_dust=None):
         else:
             mp = LUMINOSITY_CONFIG["M_peak"]
             p = mp[subtype] if subtype in mp and subtype != "Ia" else mp[cls]
+            if cls == "IIn" and iin_lf == "nyholm":                                   # variante: LF de Nyholm+2020
+                p = mp["IIn_nyholm"]
             if cls == "II" and ii_dust == "sudare" and subtype and subtype + "_dered" in mp:     # variante: LF desenrojecida
                 p = mp[subtype + "_dered"]
             if "median" in p:      # split-normal asimetrica (SLSN-I): brillante = M mas negativo

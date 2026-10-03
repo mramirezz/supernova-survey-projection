@@ -37,6 +37,24 @@ def test_end_to_end_and_determinism():
         assert need <= set(a.columns)
         assert (a.loc[a.upperlimit == "T", "magerr"].isna()).all()
 
+def test_fixf_stale_catalog_guard(monkeypatch):
+    # catalogo con ref_band distinta de REF_BAND de la clase: _init debe fallar con un mensaje claro
+    import pytest
+    with tempfile.TemporaryDirectory() as td:
+        run, cfg = _setup(td)
+        monkeypatch.setitem(run.REF_BAND, "Ia", "r_rest")
+        with pytest.raises(RuntimeError, match="desactualizado"):
+            run._init(cfg, 1, cfg["log_path"], ["F1"], td)
+
+def test_fixf_simulate_iin_lf_switch(monkeypatch):
+    import pipeline78.run as r
+    from config import LUMINOSITY_CONFIG as L
+    out, _ = _spy_simulate(monkeypatch, "IIn", n=400)
+    assert abs(np.mean([s["m_peak_abs"] for s, _ in out]) - L["M_peak"]["IIn"]["mean"]) < 0.15
+    r._W["cfg"]["iin_lf"] = "nyholm"
+    m = [r.simulate("F1", "IIn", k, [], 0.02)[0]["m_peak_abs"] for k in range(400)]
+    assert abs(np.mean(m) - L["M_peak"]["IIn_nyholm"]["mean"]) < 0.25
+
 def test_no_coverage_is_logged():
     with tempfile.TemporaryDirectory() as td:
         run, cfg = _setup(td, n=2)

@@ -8,7 +8,7 @@ from pipeline78.store import load_template
 from pipeline78.bands import rest_bands, synphot, COVERAGE_MIN
 
 CLF_CLASS = {"Ia": "Ia", "II": "II", "IIb": "II", "IIn": "II", "Ibc": "Ibc"}           # D1
-REF_BAND = {"Ia": "R_rest", "II": "R_rest", "IIb": "r_rest", "IIn": "r_rest", "Ibc": "r_rest"}
+REF_BAND = {"Ia": "R_rest", "II": "R_rest", "IIb": "r_rest", "IIn": "R_rest", "Ibc": "r_rest"}
 SUBTYPES_OK = {"II": {"IIP", "IIL"}, "Ibc": {"Ib", "Ic", "Ic-BL"}}
 # Ia: Prieto+2006 calibra en R (Bessell). IIb: Taddia+2018 en r. Ibc: Taddia (2018, 2019) mide en r (antes R por Drout+2011). II: Li+2011b mide en R (Vega).
 

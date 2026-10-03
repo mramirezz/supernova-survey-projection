@@ -59,6 +59,11 @@ def _init(cfg, seed, log_path, fields, out):
               tpl={c: [load_template(p) for p in cat[cat.clase == c].sort_values("sn").store_path]
                    for c in cfg["classes"]})
     for c in cfg["classes"]:
+        bad = sorted({t["ref_band"] for t in _W["tpl"][c] if t["ref_band"] != REF_BAND[c]})
+        if bad:
+            raise RuntimeError(f"catalog.csv desactualizado: clase {c} tiene ref_band {bad} y REF_BAND pide "
+                               f"{REF_BAND[c]}. Reconstruir el catalogo (pipeline78.catalog).")
+    for c in cfg["classes"]:
         if SUBTYPE_FRACTIONS.get(c):
             _by_subtype(_W["tpl"][c], SUBTYPE_FRACTIONS[c], c)
 
@@ -75,7 +80,7 @@ def simulate(field, cls, k, epochs, mw):
         w_z = 1.0
     ebv, rv = sampling.sample_ebv_host(rng, cls, tpl.get("subtype"), cfg.get("ii_dust"))
     dm15 = tpl.get("dm15_B")
-    M = sampling.sample_mpeak(rng, cls, dm15, tpl.get("subtype"), cfg.get("ii_dust"))
+    M = sampling.sample_mpeak(rng, cls, dm15, tpl.get("subtype"), cfg.get("ii_dust"), cfg.get("iin_lf"))
     dmag = M - tpl["M_ref"]
     A_ref = 0.0
     if cls in LF_AFTER_HOST_DUST:      # LF sin corregir por host: M es el pico ya enrojecido en la banda de referencia

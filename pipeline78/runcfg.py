@@ -25,6 +25,8 @@ RUNS_CFG["ztf_v78_t9"] = dict(RUNS_CFG["ztf_v78"], edge_pre="fireball", rise_Ia_
 
 RUNS_CFG["ztf_v78_t9_iidust"] = dict(RUNS_CFG["ztf_v78_t9"], ii_dust="sudare")   # variante de sistematico: polvo de SUDARE I en II
 
+RUNS_CFG["ztf_v78_t9_iinnyholm"] = dict(RUNS_CFG["ztf_v78_t9"], iin_lf="nyholm")   # variante de sistematico: LF de IIn de Nyholm+2020
+
 
 def units(cfg, fields):
     n = max(cfg["n_by_class"].values())

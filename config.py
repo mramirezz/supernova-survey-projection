@@ -282,7 +282,11 @@ LUMINOSITY_CONFIG = {
         # magnitud (sesgo Malmquist hacia brillantes). Decision Mauricio 2026-10-02.
         # 2026-10-03: Nyholm+2020 SIN las 3 SLSN-IIn (media -18.72, sigma 1.32). No corrige el polvo
         # del host (solo 3 de 42), asi que el polvo de IIn queda OFF (ver EXTINCTION_CONFIG).
-        "IIn": {"mean": -18.72, "sigma": 1.32},
+        "IIn_nyholm": {"mean": -18.72, "sigma": 1.32},       # variante iin_lf="nyholm"
+        # Li+2011b revisada con Shivvers+2017 (Vincenzi+2019 Tabla 1 = Vincenzi+2021 Tabla 5, 2019MNRAS.489.5802V):
+        # -17.90 +/- 0.95 en R (Landolt), sin correccion de host; distancias LOSS con H0=73 (V19 no declara H0,
+        # se hereda de Li) -> 70: -0.09 mag; decision 2026-10-03
+        "IIn": {"mean": -17.99, "sigma": 0.95},
     },
 
     # Anclaje REST-FRAME por tipo (2026-08-15): para tipos cuya M de literatura
