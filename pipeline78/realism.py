@@ -230,8 +230,8 @@ def wmedian(x, w):
     i = np.argsort(x)
     x, c = np.asarray(x, float)[i], np.cumsum(np.asarray(w, float)[i])
     h = 0.5 * c[-1]
-    j = int(np.searchsorted(c, h))
-    if np.isclose(c[j], h, rtol=1e-9, atol=0.0) and j + 1 < len(x):
+    j = int(np.searchsorted(c, h * (1.0 - 1e-9)))         # tolerancia relativa: el cumsum en float puede quedar bajo h
+    if abs(c[j] - h) <= 1e-9 * h and j + 1 < len(x):
         return float(0.5 * (x[j] + x[j + 1]))
     return float(x[j])
 

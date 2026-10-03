@@ -207,6 +207,17 @@ def test_z_weights_fix_low_z_concentration():
     assert sig == 0.0
 
 
+def test_wmedian_equal_weights_any_value():
+    """Pesos iguales de cualquier valor (no solo 1) dan np.median, con n par e impar."""
+    x = np.array([4.0, 1.0, 3.0, 2.0])
+    assert R.wmedian(x, [0.7] * 4) == 2.5 and R.wmedian(np.arange(6.0), [0.7] * 6) == 2.5
+    rng = np.random.default_rng(7)
+    for n in range(1, 61):
+        for w in (0.1, 0.7, 1 / 3, 2.5, *rng.uniform(1e-3, 50.0, 5)):
+            x = rng.normal(0.0, 1.0, n)
+            assert R.wmedian(x, np.full(n, w)) == np.median(x), (n, w)
+
+
 def test_bin_targets():
     t, notas = R.bin_targets(50, [13 / 50, 11 / 50, 13 / 50, 13 / 50], [197, 111, 43, 49])
     assert t.tolist() == [13, 11, 13, 13] and not notas
