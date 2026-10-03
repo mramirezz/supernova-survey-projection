@@ -91,6 +91,44 @@ def test_grupo_del_descubrimiento_ancla_el_pico():
     assert (out.mjd >= T + 200).all() and len(out) == 5 and s["n_grupos_antes_pico"] == 1 and s["primera_det_tardia"]
 
 
+def test_respaldo_entre_todos_curvas_de_1_y_2_detecciones():
+    """M2: sin grupos de >= 3 detecciones, el pico sale de todos los grupos (sin reventar con 1 o 2 detecciones)."""
+    out, s = clean_lc(_lc([(T + 5, "r", 19.0, "F")]), T)
+    assert len(out) == 1 and s["n_grupos_eliminados"] == 0
+    out, s = clean_lc(_lc([(T, "r", 19.0, "F"), (T + 100, "r", 20.0, "F")]), T)          # el mas brillante es el primero
+    assert list(out.mjd) == [T] and s["n_grupos_chicos"] == 1
+    out, s = clean_lc(_lc([(T, "r", 20.0, "F"), (T + 100, "r", 19.0, "F")]), T)          # el mas brillante es el segundo
+    assert list(out.mjd) == [T + 100] and s["n_grupos_antes_pico"] == 1 and s["primera_det_tardia"]
+    out, s = clean_lc(_lc([(T, "g", 19.0, "F"), (T + 1, "g", 18.5, "F")]), T)            # un grupo de 2, solo g
+    assert len(out) == 2 and s["n_grupos_eliminados"] == 0
+
+
+def test_banda_i_no_agrupa_ni_ancla():
+    """M3: se agrupa y se busca el pico solo con g y r (las reales no tienen i). Las filas en i solo pasan por la ventana."""
+    i = [(T + d, "i", 19.0, "F") for d in range(110, 200, 20)] + [(T - 45, "i", 15.0, "F"), (T + 450, "i", 19.0, "F")]
+    df = _lc(_sn() + i + [(T + 250, "r", 19.8, "F")])
+    out, s = clean_lc(df, T)
+    assert s["n_grupos_chicos"] == 1 and not ((out["filter"] == "r") & (out.mjd == T + 250)).any()   # i no puentea
+    oi = out[out["filter"] == "i"]
+    assert len(oi) == 6 and not (oi.mjd == T + 450).any()                   # las i dentro de la ventana se quedan
+    assert s["span_det_despues"] == 100.0 and s["dt_primera_det"] == 0.0   # span y primera det solo en g y r
+    out, s = clean_lc(_lc([(T + 5, "i", 19.0, "F"), (T + 500, "i", 19.0, "F")]), T)   # solo i: como sin detecciones
+    assert len(out) == 1 and s["n_grupos_eliminados"] == 0 and np.isnan(s["dt_primera_det"])
+
+
+def test_duplicados_no_cuentan_para_min_group():
+    """M5: ALeRCE repite detecciones (mismo mjd y banda). Un grupo de 2 epocas duplicadas (4 filas) es chico."""
+    dup = [(T + 200, "r", 19.8, "F"), (T + 200, "r", 19.8, "F"), (T + 203, "r", 19.9, "F"), (T + 203, "r", 19.9, "F")]
+    out, s = clean_lc(_lc(_sn() + dup), T)
+    assert len(out) == 42 and s["n_grupos_chicos"] == 1 and s["n_grupos_no_bajan"] == 0
+    # sin duplicar es un grupo de 3 epocas que sigue bajando y se queda
+    out, s = clean_lc(_lc(_sn() + dup[::2] + [(T + 206, "r", 20.0, "F")]), T)
+    assert len(out) == 45 and s["n_grupos_eliminados"] == 0
+    # un descubrimiento de 2 epocas duplicadas no ancla: decide el grupo grande posterior
+    out, s = clean_lc(_lc([(T, "r", 20.5, "F")] * 2 + [(T + 2, "r", 20.4, "F")] * 2 + _sn(100, 201)), T)
+    assert (out.mjd >= T + 100).all() and s["n_grupos_antes_pico"] == 1
+
+
 def test_primera_det_tardia():
     _, s = clean_lc(_lc(_sn(40, 141)), T)
     assert s["dt_primera_det"] == 40.0 and s["primera_det_tardia"]

@@ -184,21 +184,49 @@ def test_bad_edge_raises():
 LOG = dict(CFG, det_model="logistic", det_m0=0.5, det_w=0.2)
 
 
+def _flat(mm, cfg, ml=20.0, n=4000, seed=1):
+    """Plantilla plana en g, n epocas diarias con limite ml constante."""
+    mjd = np.arange(59000.0, 59000.0 + n, 1.0)
+    return project_one(np.array([0.0, float(n)]), {"g": np.full(2, mm)}, {"g": (mjd, np.full(n, ml))}, 59000.0,
+                       np.random.default_rng(seed), dict(cfg, bands=["g"]))
+
+
 def test_e_logistic_limit_is_hard():
-    """m0 = 0 y w -> 0: el corte duro. El ruido no cambia (los uniformes van despues)."""
+    """m0 = 0 y w -> 0: corte duro sobre la magnitud MEDIDA. En estas curvas ninguna fila queda a menos de ~3 sigma del
+    limite, asi que sale identico al corte duro de siempre. El ruido no cambia (los uniformes van despues)."""
     pd.testing.assert_frame_equal(_run(dict(CFG, det_model="logistic", det_m0=0.0, det_w=1e-9)), _run(CFG))
     t_rel = _inputs()[0]
     for cfg, kw in ((TAIL, dict(z=Z)), (dict(TAIL, edge_pre="fireball"), dict(z=Z, t_exp_rel=t_rel[0] - 8.0))):
-        pd.testing.assert_frame_equal(_run(dict(cfg, det_model="logistic", det_m0=0.0, det_w=1e-9), **kw), _run(cfg, **kw))
+        x, h = _run(dict(cfg, det_model="logistic", det_m0=0.0, det_w=1e-9), **kw), _run(cfg, **kw)   # la cola cruza el limite
+        assert (x.mjd.to_numpy() == h.mjd.to_numpy()).all()
+        both = (x.upperlimit == "F") & (h.upperlimit == "F")
+        assert both.sum() > 20 and (x.loc[both, "magnitud_proyectada"] == h.loc[both, "magnitud_proyectada"]).all()
+        xd = x[x.upperlimit == "F"]
+        assert (xd.magnitud_proyectada <= xd.maglimit).all()
     with pytest.raises(ValueError):
         _run(dict(CFG, det_model="searcheff"))
+
+
+def test_e_logistic_measured_magnitude():
+    """La deteccion usa la magnitud medida (S/N medida): con w -> 0 ninguna deteccion queda mas debil que el limite 5 sigma,
+    que el corte duro sobre el modelo si deja. Las filas sin flujo (99) no se detectan ni con un umbral muy permisivo."""
+    h = _flat(19.9, CFG)
+    x = _flat(19.9, dict(CFG, det_model="logistic", det_m0=0.0, det_w=1e-9))
+    hd, xd = h[h.upperlimit == "F"], x[x.upperlimit == "F"]
+    assert len(hd) == 4000 and (hd.magnitud_proyectada > hd.maglimit).mean() > 0.25
+    assert 0.6 < len(xd) / 4000 < 0.75 and (xd.magnitud_proyectada <= xd.maglimit).all()
+    assert (x.loc[xd.index, "magnitud_proyectada"] == h.loc[xd.index, "magnitud_proyectada"]).all()   # mismo ruido
+    t_rel = _inputs()[0]
+    loose = dict(TAIL, edge_pre="fireball", det_model="logistic", det_m0=-3.0, det_w=0.2)
+    y = _run(loose, z=Z, t_exp_rel=t_rel[0] - 8.0)
+    assert (y.magnitud_modelo > 50).sum() > 10 and (y[y.magnitud_modelo > 50].upperlimit == "T").all()
 
 
 def test_e_logistic_half_at_m0():
     """Fraccion detectada en mm = maglim - m0: ~0.5. Mas brillante detecta casi siempre, mas debil casi nunca."""
     mjd = np.arange(59000.0, 63000.0, 1.0)
     t_rel = np.array([0.0, 4000.0])
-    for dm, lo, hi in ((0.0, 0.47, 0.53), (-0.6, 0.94, 1.0), (0.6, 0.0, 0.06)):
+    for dm, lo, hi in ((0.0, 0.45, 0.53), (-1.0, 0.98, 1.0), (1.0, 0.0, 0.03)):   # el ruido ensancha la curva
         epochs = {"g": (mjd, np.full(mjd.size, 20.0))}
         x = project_one(t_rel, {"g": np.full(2, 19.5 + dm)}, epochs, 59000.0, np.random.default_rng(1), dict(LOG, bands=["g"]))
         x = x[x.magnitud_modelo < 50]
@@ -240,8 +268,22 @@ def test_f_no_ul_after_last_and_clean():
     last = a.loc[a.upperlimit == "F", "mjd"].max()
     assert (a.mjd > last).any() and not (b.mjd > last).any()
     pd.testing.assert_frame_equal(b, a[a.mjd <= last].reset_index(drop=True))
+    # I1: con las dos llaves, el recorte de UL va despues de limpiar. Un punto suelto a +158 d sale por la limpieza y no
+    # deja UL despues de la ultima deteccion que queda.
+    tt = np.arange(-15.0, 161.0, 0.25)
+    m = np.where(tt < 40, 18.0 + 0.02 * np.abs(tt), 25.0)
+    m[(tt >= 150.0) & (tt <= 152.0)] = 18.0
+    mj = np.arange(58950.0, 59200.0, 1.5)
+    ep = {"g": (mj, np.full(mj.size, 20.3))}
+    one = lambda **k: project_one(tt * (1 + Z), {"g": m}, ep, T_ANCHOR, np.random.default_rng(3), dict(CFG, bands=["g"], **k))
+    a2, c2 = one(), one(ul_after_last=False, lc_clean=True)
+    lim = clean_lc(a2, a2.loc[a2.upperlimit == "F", "mjd"].min())[0]
+    assert (a2[a2.upperlimit == "F"].mjd > T_ANCHOR + 150).any() and not (lim[lim.upperlimit == "F"].mjd > T_ANCHOR + 100).any()
+    last = c2.loc[c2.upperlimit == "F", "mjd"].max()
+    assert last < T_ANCHOR + 100 and not (c2.mjd > last).any() and (lim.mjd > last).any()
+    pd.testing.assert_frame_equal(c2, lim[lim.mjd <= last].reset_index(drop=True))
     c = _run(dict(cfg, ul_after_last=False, lc_clean=True), z=Z)
-    pd.testing.assert_frame_equal(c, clean_lc(b, b.loc[b.upperlimit == "F", "mjd"].min())[0])
+    assert not (c.mjd > c.loc[c.upperlimit == "F", "mjd"].max()).any()
     mjd = np.arange(58000.0, 59300.0, 1.0)              # epocas 900 d antes: la ventana desde la primera det las saca
     t_rel, mags, _ = _inputs()
     e = {k: (mjd, np.full(mjd.size, 20.5)) for k in ("g", "r")}

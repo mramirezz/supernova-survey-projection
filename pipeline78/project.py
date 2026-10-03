@@ -29,12 +29,20 @@ def _noise(mm, ml, rng, cfg):
     return mm + rng.normal(0.0, sig), sig
 
 
-def _det(mm, ml, u, cfg):
-    """Sin uniforme (det_model hard, o UL de flujo nulo antes de t_exp): corte duro mm < ml. logistic:
-    P = 1/(1 + exp((mm - (ml - det_m0))/det_w)) y det = u < P (eficiencia segun S/N, como SEARCHEFF de SNANA)."""
+def _det(mm, ml, mobs, u, cfg):
+    """Sin uniforme (det_model hard, o UL de flujo nulo antes de t_exp): corte duro mm < ml.
+    logistic: P = 1/(1 + exp((m_obs - (ml - det_m0))/det_w)) y det = u < P, sobre la magnitud MEDIDA (S/N medida, como
+    SEARCHEFF de SNANA). m_obs sale del mismo sorteo normal del ruido, pero en flujo: con z = (mobs - mm)/sig y
+    S/N = 1.0857/sig, el flujo medido es f (1 - z/S/N) = f (1 - (mobs - mm)/1.0857) y m_obs = mm - 2.5 log10 de eso.
+    mobs en magnitud diverge para fuentes debiles (sig ~1e6 mag en las filas sin flujo) y detectaria la mitad de ellas.
+    m_obs = mobs a primer orden en las detecciones, mobs <= m_obs siempre, y una fila sin flujo (99) queda en
+    m_obs ~ 84: nunca se detecta."""
     if u is None:
         return mm < ml
-    return u < expit((ml - cfg["det_m0"] - mm) / cfg["det_w"])
+    f = 1.0 - (mobs - mm) / 1.0857                           # flujo medido / flujo del modelo
+    with np.errstate(divide="ignore"):
+        m_obs = np.where(f > 0, mm - 2.5 * np.log10(np.maximum(f, 1e-300)), np.inf)
+    return u < expit((ml - cfg["det_m0"] - m_obs) / cfg["det_w"])
 
 
 def _frame(b, mj, ml, mm, mobs, sig, det):
@@ -58,8 +66,9 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
     El ruido de [t0 - pre_ul_days, t1] se sortea igual en todas las variantes, el de la cola despues y el de la bola de
     fuego al final: las filas comunes no cambian entre variantes.
     det_model "hard" (default) o "logistic" (_det): los uniformes van despues de todo el ruido, en el mismo orden, asi
-    las filas comunes conservan ruido y uniforme. ul_after_last False: fuera los UL despues de la ultima deteccion
-    (alertas). lc_clean True: clean_lc con t_ref = primera deteccion (equivale al descubrimiento)."""
+    las filas comunes conservan ruido y uniforme. lc_clean True: clean_lc con t_ref = primera deteccion en g o r
+    (equivale al descubrimiento). ul_after_last False: fuera los UL despues de la ultima deteccion de cualquier banda
+    (alertas), aplicado despues de limpiar."""
     t = t_anchor + t_rel
     t0, t1 = float(t[0]), float(t[-1])
     pre, edge_pre, edge_post = cfg["pre_ul_days"], cfg.get("edge_pre", "window"), cfg.get("edge_post", "none")
@@ -112,7 +121,7 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
     frames = []
     for blk in (x for fr in parts.values() for x in fr):
         b, mj, ml, mm, mobs, sig, u, k = blk
-        det = _det(mm, ml, u, cfg)
+        det = _det(mm, ml, mobs, u, cfg)
         if k is not None:
             mj, ml, mm, mobs, sig, det = mj[k], ml[k], mm[k], mobs[k], sig[k], det[k]
         if len(mj):
@@ -120,9 +129,10 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
     if not frames:
         return None
     df = pd.concat(frames, ignore_index=True)
+    gr = (df["upperlimit"] == "F") & df["filter"].isin(["g", "r"])
+    if cfg.get("lc_clean", False) and gr.any():            # t_ref = primera det en g o r (las reales no tienen i)
+        df = clean_lc(df, float(df.loc[gr, "mjd"].min()))[0]
     det = df["upperlimit"] == "F"
-    if not cfg.get("ul_after_last", True) and det.any():   # alertas: sin UL despues de la ultima deteccion (cualquier banda)
+    if not cfg.get("ul_after_last", True) and det.any():   # despues de limpiar: sin UL tras la ultima det que queda
         df = df[det | (df["mjd"] <= df.loc[det, "mjd"].max())].reset_index(drop=True)
-    if cfg.get("lc_clean", False) and det.any():           # sin detecciones no hay descubrimiento: no se toca
-        df = clean_lc(df, float(df.loc[df["upperlimit"] == "F", "mjd"].min()))[0]
     return df

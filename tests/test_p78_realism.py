@@ -64,6 +64,18 @@ def _fake(td):
     return runs, rd, sims, pd.DataFrame(meta)
 
 
+def test_prepare_drops_excluir(tmp_path):
+    """Fix G: las reales con excluir=True en meta (curva sin la fase principal) no entran a la seleccion."""
+    runs, rd, sims, meta = _fake(tmp_path)
+    hv = meta[(meta.origen == "holdout") & (meta.split == "val")].oid
+    fuera = set(hv.iloc[::2])
+    meta.assign(excluir=meta.oid.isin(fuera)).to_csv(rd / "meta_real_ztf.csv", index=False)
+    _, real = R.prepare({"base": str(runs["base"])}, tmp_path / "out", n=50, seed=1, real_dir=rd)
+    assert len(real) and not (set(real.oid) & fuera) and set(real.oid) <= set(hv) - fuera
+    ph = pd.concat([pd.read_parquet(p) for p in (tmp_path / "out/real/parquet").glob("*.parquet")])
+    assert not (set(ph.oid) & fuera)
+
+
 def _features(out, v, s, rng, drop=0):
     rows = []
     for o, k, c, z in s[["oid", "part_index", "sn_type", "z"]].itertuples(index=False):
