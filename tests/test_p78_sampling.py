@@ -73,7 +73,10 @@ def test_volume_weight_cache_equals_direct():
 def test_ebv_subtype_ic_mean_av():
     rng = np.random.default_rng(5)
     av = np.array([(lambda e, r: e * r)(*sample_ebv_host(rng, "Ibc", "Ic")) for _ in range(20000)])
-    assert abs(av.mean() - (1 - 0.27) * 0.86) < 0.02, av.mean()
+    # El objetivo NO es el 0.628 sin tope: Av_max trunca la exponencial. E[min(Exp(tau),Amax)] = tau*(1-exp(-Amax/tau))
+    p = EXTINCTION_CONFIG["SNIc"]
+    expected = (1 - p["frac_zero"]) * p["tau"] * (1 - math.exp(-p["Av_max"] / p["tau"]))
+    assert abs(av.mean() - expected) < 0.015, (av.mean(), expected)
     rng = np.random.default_rng(5)
     assert all(sample_ebv_host(rng, "Ibc", "Ic")[1] == 4.3 for _ in range(50))
 
@@ -94,6 +97,11 @@ def test_fixb_config_values():
     assert mp["IIn"] == {"mean": -18.72, "sigma": 1.32}
     f = SUBTYPE_FRACTIONS["Ibc"]
     assert f == {"Ib": 0.556, "Ic": 0.386, "Ic-BL": 0.058} and abs(sum(f.values()) - 1) < 1e-9
+    from config import EXTINCTION_CONFIG as E
+    assert E["SNIb"] == {"frac_zero": 0.375, "tau": 0.68, "sigma_zero": 0.01, "Av_max": 3.0, "Rv": 2.6}
+    assert E["SNIc"] == {"frac_zero": 0.27, "tau": 0.86, "sigma_zero": 0.01, "Av_max": 3.0, "Rv": 4.3}
+    assert E["SNIcBL"] == {"frac_zero": 0.74, "tau": 0.58, "sigma_zero": 0.01, "Av_max": 3.0, "Rv": 3.1}
+    assert E["SNIIn"]["frac_zero"] == 1.0 and E["SNIIn"]["sigma_zero"] == 0.0
 
 if __name__ == "__main__":
     for n, f in list(globals().items()):
