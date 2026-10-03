@@ -19,22 +19,27 @@ RUNS_CFG["ztf_v78_tail"] = dict(RUNS_CFG["ztf_v78"], edge_post="tail", tail_days
                                 tail_min_slope=0.005)    # cola lineal en magnitud declarada, supuesto, no medicion
 RUNS_CFG["ztf_v78_fireball"] = dict(RUNS_CFG["ztf_v78"], edge_pre="fireball",
                                     rise_Ia_days=18.9)   # Miller+2020: alfa_r=2.01, rise 18.9 d; mismo supuesto (t-texpl)^2 que cap 3 para las otras clases
-RUNS_CFG["ztf_v78_t9"] = dict(RUNS_CFG["ztf_v78"], edge_pre="fireball", rise_Ia_days=18.9, edge_post="tail",
-                              tail_days=150, tail_fit_days=20,
-                              tail_min_slope=0.005)      # configuracion de la Tarea 9: cola + borde fireball en Ia, elegidos en la puerta de realismo 2026-10-03 (t_rise Ia: base -1.5 sigma, texp +2.6, fireball +0.9; cola acerca t_fall en 4/5 clases)
+# Bordes de la Tarea 9: cola + borde fireball en Ia, elegidos en la puerta de realismo 2026-10-03
+# (t_rise Ia: base -1.5 sigma, texp +2.6, fireball +0.9; cola acerca t_fall en 4/5 clases)
+RUNS_CFG["ztf_v78_t9_bordes"] = dict(RUNS_CFG["ztf_v78"], edge_pre="fireball", rise_Ia_days=18.9, edge_post="tail",
+                                     tail_days=150, tail_fit_days=20, tail_min_slope=0.005)
+
+# Calibracion de la eficiencia de deteccion (Fix G, 2026-10-03): logistica sobre el S/N medido, sin UL tras la ultima
+# deteccion y la misma limpieza que las reales.
+for m0 in (0.0, 0.25, 0.5, 0.75, 0.9, 1.0, 1.25, 1.5, 2.0):
+    RUNS_CFG[f"ztf_v78_t9_det{m0}"] = dict(RUNS_CFG["ztf_v78_t9_bordes"], det_model="logistic", det_m0=m0, det_w=0.2,
+                                          ul_after_last=False, lc_clean=True)
+    # w angosto: casi un corte en S/N medido, corrido m0 mag
+    RUNS_CFG[f"ztf_v78_t9_det{m0}_w05"] = dict(RUNS_CFG[f"ztf_v78_t9_det{m0}"], det_w=0.05)
+
+# Configuracion de la Tarea 9 (Mauricio 2026-10-03): bordes de arriba + eficiencia con la forma medida por DES
+# (Kessler+2015: 50% a S/N 5, ~100% a S/N 10 -> w=0.2 mag) desplazada m0=0.9 mag, calibrado con la duracion de las
+# curvas de Ia e Ibc del holdout ZTF val limpio (Ia 41.9 vs 42.0 d, Ibc 47.8 vs 47.4 d), procedimiento de Kessler+2019.
+RUNS_CFG["ztf_v78_t9"] = dict(RUNS_CFG["ztf_v78_t9_det0.9"])
 
 RUNS_CFG["ztf_v78_t9_iidust"] = dict(RUNS_CFG["ztf_v78_t9"], ii_dust="sudare")   # variante de sistematico: polvo de SUDARE I en II
 
 RUNS_CFG["ztf_v78_t9_iinnyholm"] = dict(RUNS_CFG["ztf_v78_t9"], iin_lf="nyholm")   # variante de sistematico: LF de IIn de Nyholm+2020
-
-# Calibracion de la eficiencia de deteccion (Fix G, 2026-10-03): logistica en S/N, sin UL tras la ultima deteccion y
-# la misma limpieza que las reales. El controlador elige m0 y fija la config T9.
-for m0 in (0.0, 0.25, 0.5, 0.75, 0.9, 1.0, 1.25, 1.5, 2.0):
-    RUNS_CFG[f"ztf_v78_t9_det{m0}"] = dict(RUNS_CFG["ztf_v78_t9"], det_model="logistic", det_m0=m0, det_w=0.2,
-                                          ul_after_last=False, lc_clean=True)
-    # w angosto: casi un corte en S/N medido (las alertas de ZTF exigen S/N >= 5), corrido m0 mag
-    RUNS_CFG[f"ztf_v78_t9_det{m0}_w05"] = dict(RUNS_CFG[f"ztf_v78_t9_det{m0}"], det_w=0.05)
-
 
 def units(cfg, fields):
     n = max(cfg["n_by_class"].values())
