@@ -23,6 +23,8 @@ RUNS_CFG["ztf_v78_t9"] = dict(RUNS_CFG["ztf_v78"], edge_pre="fireball", rise_Ia_
                               tail_days=150, tail_fit_days=20,
                               tail_min_slope=0.005)      # configuracion de la Tarea 9: cola + borde fireball en Ia, elegidos en la puerta de realismo 2026-10-03 (t_rise Ia: base -1.5 sigma, texp +2.6, fireball +0.9; cola acerca t_fall en 4/5 clases)
 
+RUNS_CFG["ztf_v78_t9_iidust"] = dict(RUNS_CFG["ztf_v78_t9"], ii_dust="sudare")   # variante de sistematico: polvo de SUDARE I en II
+
 
 def units(cfg, fields):
     n = max(cfg["n_by_class"].values())

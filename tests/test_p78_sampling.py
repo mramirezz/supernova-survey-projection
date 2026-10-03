@@ -8,12 +8,12 @@ from config import EXTINCTION_CONFIG, PHILLIPS_CONFIG
 
 def test_ebv_cdf_matches_mixture():
     # P(E<t) analitica de la mezcla: f0*erf(t/(s0*sqrt2)) + (1-f0)*(1-exp(-t*Rv/tau)), t=0.05
-    p = EXTINCTION_CONFIG["SNII_v78"]
+    p = EXTINCTION_CONFIG["SNII_sudare"]
     t = 0.05
     expected = (p["frac_zero"] * math.erf(t / (p["sigma_zero"] * math.sqrt(2)))
                 + (1 - p["frac_zero"]) * (1 - math.exp(-t * p["Rv"] / p["tau"])))
     rng = np.random.default_rng(1)
-    e = np.array([sample_ebv_host(rng, "II")[0] for _ in range(20000)])
+    e = np.array([sample_ebv_host(rng, "II", None, "sudare")[0] for _ in range(20000)])
     assert abs((e < t).mean() - expected) < 0.02
 
 def test_phillips_mean():
@@ -89,7 +89,7 @@ def test_ebv_ii_iin_halfnormal_fixc():
     # Fix C: half-normal sigma 0.2 en E(B-V), nunca negativa, R_V 3.1
     for cls, st in (("II", "IIP"), ("II", "IIL"), ("IIn", "IIn")):
         rng = np.random.default_rng(11)
-        d = [sample_ebv_host(rng, cls, st) for _ in range(20000)]
+        d = [sample_ebv_host(rng, cls, st, "sudare") for _ in range(20000)]
         e = np.array([x[0] for x in d])
         assert abs(e.mean() - 0.2 * math.sqrt(2 / math.pi)) < 0.004, (cls, e.mean())
         assert (e >= 0).all() and all(x[1] == 3.1 for x in d)
@@ -111,14 +111,15 @@ def test_fixb_config_values():
 def test_fixc_config_values():
     from config import LUMINOSITY_CONFIG, SUBTYPE_FRACTIONS, LF_AFTER_HOST_DUST, EXTINCTION_CONFIG as E
     mp = LUMINOSITY_CONFIG["M_peak"]
-    assert mp["IIP_obs"] == {"mean": -15.75, "sigma": 1.23} and mp["IIL_obs"] == {"mean": -17.53, "sigma": 0.64}
+    assert mp["IIP"] == {"mean": -15.75, "sigma": 1.23} and mp["IIL"] == {"mean": -17.53, "sigma": 0.64}
     assert SUBTYPE_FRACTIONS["II"] == {"IIP": 0.875, "IIL": 0.125}
     assert LF_AFTER_HOST_DUST == {"IIn"}
     v = {"frac_zero": 1.0, "sigma_zero": 0.2, "tau": 0.25, "Av_max": 3.0, "Rv": 3.1}
-    assert E["SNII_v78"] == v and E["SNIIn_v78"] == v
+    assert E["SNII_sudare"] == v and E["SNIIn_v78"] == v
+    assert E["SNII_v78"] == dict(v, sigma_zero=0.0)
     rng = np.random.default_rng(4)
     m = np.array([sample_mpeak(rng, "II", subtype="IIL") for _ in range(20000)])
-    assert abs(m.mean() + 17.93) < 0.03
+    assert abs(m.mean() + 17.53) < 0.03
 
 def test_fixd_ii_lf_desenrojecida_recalculo():
     # mu_int = mu_obs - <A_R>, sigma_int = sqrt(sigma_obs^2 - sigma_A^2), A_R = (A_R/E) E, E ~ |N(0, 0.2)|
@@ -134,9 +135,30 @@ def test_fixd_ii_lf_desenrojecida_recalculo():
     sA = ar_e * 0.2 * math.sqrt(1 - 2 / math.pi)
     mp = LUMINOSITY_CONFIG["M_peak"]
     for k in ("IIP", "IIL"):
-        o = mp[k + "_obs"]
-        assert abs(mp[k]["mean"] - (o["mean"] - mA)) < 0.01, k
-        assert abs(mp[k]["sigma"] - math.sqrt(o["sigma"] ** 2 - sA ** 2)) < 0.01, k
+        o = mp[k]
+        assert abs(mp[k + "_dered"]["mean"] - (o["mean"] - mA)) < 0.01, k
+        assert abs(mp[k + "_dered"]["sigma"] - math.sqrt(o["sigma"] ** 2 - sA ** 2)) < 0.01, k
+
+def test_fixe_ii_main_sin_polvo_y_variante_sudare():
+    for st in ("IIP", "IIL"):
+        rng = np.random.default_rng(12)
+        assert all(sample_ebv_host(rng, "II", st)[0] == 0.0 for _ in range(500))
+        assert all(sample_ebv_host(rng, "II", st, "none")[0] == 0.0 for _ in range(500))
+        rng = np.random.default_rng(12)
+        e = np.array([sample_ebv_host(rng, "II", st, "sudare")[0] for _ in range(20000)])
+        assert abs(e.mean() - 0.2 * math.sqrt(2 / math.pi)) < 0.004 and (e >= 0).all()
+    from config import LUMINOSITY_CONFIG as L
+    rng = np.random.default_rng(13)
+    m = np.array([sample_mpeak(rng, "II", subtype="IIL", ii_dust="sudare") for _ in range(20000)])
+    assert abs(m.mean() - L["M_peak"]["IIL_dered"]["mean"]) < 0.03
+    rng = np.random.default_rng(13)
+    m0 = np.array([sample_mpeak(rng, "II", subtype="IIL") for _ in range(20000)])
+    assert abs(m0.mean() - L["M_peak"]["IIL"]["mean"]) < 0.03
+    # otras clases ignoran ii_dust
+    a = [sample_ebv_host(np.random.default_rng(i), "IIb", None, "sudare") for i in range(20)]
+    assert a == [sample_ebv_host(np.random.default_rng(i), "IIb") for i in range(20)]
+    from pipeline78.runcfg import RUNS_CFG
+    assert RUNS_CFG["ztf_v78_t9_iidust"]["ii_dust"] == "sudare" and "ii_dust" not in RUNS_CFG["ztf_v78_t9"]
 
 def test_fixd_iib_v78_rv31():
     from config import EXTINCTION_CONFIG as E

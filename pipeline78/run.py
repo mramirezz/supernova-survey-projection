@@ -73,9 +73,9 @@ def simulate(field, cls, k, epochs, mw):
         w_z = float(sampling.z_volume_weight(z, cfg["zmin"], zmx)) * (zmx - cfg["zmin"])
     else:
         w_z = 1.0
-    ebv, rv = sampling.sample_ebv_host(rng, cls, tpl.get("subtype"))
+    ebv, rv = sampling.sample_ebv_host(rng, cls, tpl.get("subtype"), cfg.get("ii_dust"))
     dm15 = tpl.get("dm15_B")
-    M = sampling.sample_mpeak(rng, cls, dm15, tpl.get("subtype"))
+    M = sampling.sample_mpeak(rng, cls, dm15, tpl.get("subtype"), cfg.get("ii_dust"))
     dmag = M - tpl["M_ref"]
     A_ref = 0.0
     if cls in LF_AFTER_HOST_DUST:      # LF sin corregir por host: M es el pico ya enrojecido en la banda de referencia

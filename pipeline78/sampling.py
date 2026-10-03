@@ -14,15 +14,16 @@ EXT_KEY = {"Ia": "SNIa", "II": "SNII_v78", "IIb": "SNIIb_v78", "IIn": "SNIIn_v78
 EXT_KEY_SUBTYPE = {"Ib": "SNIb", "Ic": "SNIc", "Ic-BL": "SNIcBL"}
 
 
-def sample_ebv_host(rng, cls, subtype=None):
-    p = EXTINCTION_CONFIG[EXT_KEY_SUBTYPE.get(subtype, EXT_KEY[cls])]
+def sample_ebv_host(rng, cls, subtype=None, ii_dust=None):
+    key = "SNII_sudare" if (cls == "II" and ii_dust == "sudare") else EXT_KEY_SUBTYPE.get(subtype, EXT_KEY[cls])
+    p = EXTINCTION_CONFIG[key]
     if rng.random() < p["frac_zero"]:
         return float(abs(rng.normal(0.0, p["sigma_zero"]))), float(p["Rv"])
     av = min(float(rng.exponential(p["tau"])), float(p["Av_max"]))
     return av / float(p["Rv"]), float(p["Rv"])
 
 
-def sample_mpeak(rng, cls, dm15=None, subtype=None):
+def sample_mpeak(rng, cls, dm15=None, subtype=None, ii_dust=None):
     """M intrinseco (libre de polvo) en la banda de referencia del catalogo (D4), salvo las clases en
     LF_AFTER_HOST_DUST, donde M es el pico con el polvo del host adentro. Truncado a clip por re-sorteo."""
     c = dict(LUMINOSITY_CONFIG["clip"])
@@ -35,6 +36,8 @@ def sample_mpeak(rng, cls, dm15=None, subtype=None):
         else:
             mp = LUMINOSITY_CONFIG["M_peak"]
             p = mp[subtype] if subtype in mp and subtype != "Ia" else mp[cls]
+            if cls == "II" and ii_dust == "sudare" and subtype and subtype + "_dered" in mp:     # variante: LF desenrojecida
+                p = mp[subtype + "_dered"]
             if "median" in p:      # split-normal asimetrica (SLSN-I): brillante = M mas negativo
                 n = rng.normal()
                 m = p["median"] + n * (p["sigma_bright"] if n < 0 else p["sigma_faint"])

@@ -257,14 +257,15 @@ LUMINOSITY_CONFIG = {
         "II":  {"mean": -16.9, "sigma": 1.1},#-16.9 para SNII (legado, sin cita; pipeline78 usa IIP/IIL)
         # II por subtipo: Li+2011b (2011MNRAS.412.1441L), Tabla 6, banda R Vega, sin correccion de host,
         # convertido de H0 = 73 a 70 (-0.091 mag). Criterio IIP/IIL de Li §2.2.3. Etiquetas en data/ii_subtypes.csv.
-        # 2026-10-03: LF DESENROJECIDA con el polvo de SUDARE I (half-normal sigma_E 0.2, R_V 3.1).
+        # Modelo principal (2026-10-03): LF de Li observada tal cual, ya contiene el polvo del host.
+        "IIP": {"mean": -15.75, "sigma": 1.23},
+        "IIL": {"mean": -17.53, "sigma": 0.64},
+        # Variante ii_dust="sudare": LF DESENROJECIDA con el polvo de SUDARE I (half-normal sigma_E 0.2, R_V 3.1).
         # A_R/E = 2.5286 (engine.extinction_factor, f_lambda plano, banda R_rest, E -> 0 lineal),
         # <E> = 0.2*sqrt(2/pi) = 0.1596, sigma_E = 0.2*sqrt(1-2/pi) = 0.1206 => <A_R> = 0.4035, sigma_A = 0.3049.
-        # mu_int = mu_obs - <A_R>, sigma_int = sqrt(sigma_obs^2 - sigma_A^2). Observados en IIP_obs/IIL_obs.
-        "IIP": {"mean": -16.15, "sigma": 1.19},
-        "IIL": {"mean": -17.93, "sigma": 0.56},
-        "IIP_obs": {"mean": -15.75, "sigma": 1.23},
-        "IIL_obs": {"mean": -17.53, "sigma": 0.64},
+        # mu_int = mu_obs - <A_R>, sigma_int = sqrt(sigma_obs^2 - sigma_A^2), con mu_obs/sigma_obs = IIP/IIL de arriba.
+        "IIP_dered": {"mean": -16.15, "sigma": 1.19},
+        "IIL_dered": {"mean": -17.93, "sigma": 0.56},
         # IIb: banda r, MW+host corregido; Taddia+2018 (2018A&A...609A.136T,
         # Tabla 5, 10 IIb CSP-I). Cross-check Richardson+2014: M_B=-16.99+/-0.45.
         # 2026-10-03: media -17.45 -> -17.57, convertida de H0 = 73.8 a H0 = 70 (Taddia+2018).
@@ -463,7 +464,11 @@ EXTINCTION_CONFIG = {
     # IIb v78: f0 y tau derivados de Stritzinger+2018; R_V 3.1 en vez de 1.1 (este sale de un solo objeto,
     # SN 2006T, y enrojecia las IIb +0.18 mag en g-r contra ZTF; decision 2026-10-03).
     "SNIIb_v78": {"frac_zero": 0.30, "tau": 0.35, "sigma_zero": 0.01, "Av_max": 3.0, "Rv": 3.1},
-    "SNII_v78":  {"frac_zero": 1.0, "sigma_zero": 0.2, "tau": 0.25, "Av_max": 3.0, "Rv": 3.1},
+    # modelo principal: sin polvo de host en II, LF de Li sin corregir ya lo contiene; color calibrado con ZTF val
+    # (0.20 vs 0.24) y de Jaeger+2018 2018MNRAS.476.4592D; decision 2026-10-03
+    "SNII_v78":  {"frac_zero": 1.0, "sigma_zero": 0.0, "tau": 0.25, "Av_max": 3.0, "Rv": 3.1},
+    # variante ii_dust="sudare": polvo de SUDARE I (half-normal sigma 0.2, R_V 3.1) sobre la LF desenrojecida (*_dered)
+    "SNII_sudare": {"frac_zero": 1.0, "sigma_zero": 0.2, "tau": 0.25, "Av_max": 3.0, "Rv": 3.1},
     "SNIIn_v78": {"frac_zero": 1.0, "sigma_zero": 0.2, "tau": 0.25, "Av_max": 3.0, "Rv": 3.1},
     "random_seed": None,           # None = aleatorio
     "use_reproducible_sampling": False,
