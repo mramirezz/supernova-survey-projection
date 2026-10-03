@@ -1,7 +1,8 @@
-"""Puerta de realismo de features: bordes de plantilla (base, texp, tail) contra la validacion real ZTF (holdout
+"""Puerta de realismo de features: bordes de plantilla (base, texp, fireball, tail, ...) contra la validacion real ZTF (holdout
 nuevo, mitad val), con la seleccion igualada en ambos lados. Uso:
     $PY -m pipeline78.realism prepare --runs base=DIR,texp=DIR,tail=DIR --out DIR --n 50 --seed 20261003
     run_parquet.py --parquet_dir DIR/<v>/parquet --output_dir DIR/<v>        (v = base, texp, tail, real)
+    $PY -m pipeline78.realism add-variant --out DIR --name fireball --run RUN_DIR [--classes Ia]   (variante nueva sobre la misma seleccion)
     $PY -m pipeline78.realism report --out DIR
 """
 import argparse, json
@@ -16,7 +17,7 @@ from pipeline78.paths import PHD, RUNS
 from pipeline78 import pilot_report as P
 
 CLASES = ("Ia", "II", "IIb", "IIn", "Ibc")
-VARIANTES = ("base", "texp", "tail")
+VARIANTES = ("base", "texp", "fireball", "tail")      # orden fijo de las conocidas, despues cualquier otra
 M_CUT = 18.5
 G_WIN = 2.0                                    # d: ventana de g alrededor del pico de r para el color
 W_RATIO = 1.5                                  # max/min de w por encima del cual la z no queda igualada (KS sin ponderar)
@@ -25,7 +26,7 @@ FIT = ["f", "t_rise", "t_fall", "gamma"]
 PARS = ("t_rise_rest", "t_fall_rest", "gamma_rest", "f", "M_r", "g_r")
 SEL_COLS = ["sim_id", "oid", "part_index", "sn_type", "z", "m_peak_r", "peso", "variante", "bin_z"]
 PAGE = PHD / "paper2_ZTF/figures_templates/pipeline78_realismo"
-COLOR = {"base": "C0", "texp": "C1", "tail": "C2"}
+COLOR = {"base": "C0", "texp": "C1", "tail": "C2", "fireball": "C3"}
 
 
 def _det(d, b):
@@ -93,10 +94,10 @@ def sim_peaks(run_dir):
 
 
 def _clases_variante(cfg):
-    """Clases que pueden cambiar respecto de base: la cola toca todas, texp solo las Ia."""
+    """Clases que pueden cambiar respecto de base: la cola toca todas, texp y fireball solo las Ia."""
     if cfg.get("edge_post", "none") != "none":
         return list(CLASES)
-    return ["Ia"] if cfg.get("edge_pre", "window") == "texp" else []
+    return ["Ia"] if cfg.get("edge_pre", "window") in ("texp", "fireball") else []
 
 
 def _read_sims(run_dir, sel):
@@ -215,6 +216,39 @@ def prepare(runs, out, n=50, seed=20261003, real_dir=RUNS / "real_ztf"):
     return selc, real
 
 
+def add_variant(out, name, run, classes=("Ia",)):
+    """Agrega la variante name a una seleccion hecha por prepare: mismas sim_id (solo las clases pedidas) leidas del
+    run nuevo. Valida todo antes de escribir y se niega si la variante ya existe."""
+    out, run = Path(out).expanduser(), Path(run).expanduser()
+    if (out / name).exists() or name in ("real", "base"):
+        raise ValueError(f"{out / name} ya existe: no se sobreescribe")
+    sel = pd.read_csv(out / "selection.csv")
+    if name in set(sel.variante):
+        raise ValueError(f"selection.csv ya tiene la variante {name}")
+    prep = json.loads((out / "prepare.json").read_text())
+    s = sel[(sel.variante == "base") & sel.sn_type.isin(classes)]
+    if not len(s):
+        raise ValueError(f"la seleccion base no tiene clases {list(classes)}")
+    vs = pd.read_parquet(run / "_sims_all.parquet").set_index("sim_id")
+    ok = (vs.status.reindex(s.sim_id) == "ok").to_numpy()
+    if (~ok).any():
+        print(f"WARNING: {name}: {(~ok).sum()} sim_id no ok en la variante, se omiten: {s.sim_id[~ok].tolist()}")
+    s = s[ok]
+    if not len(s):
+        raise ValueError(f"{name}: ninguna sim_id de la seleccion esta ok en {run}")
+    fis = ["template", "z", "m_peak_abs", "ebmv_host", "t_anchor"]
+    b = pd.read_parquet(Path(prep["runs"]["base"]) / "_sims_all.parquet").set_index("sim_id")
+    if (vs.loc[s.sim_id, fis].to_numpy() != b.loc[s.sim_id, fis].to_numpy()).any():
+        raise ValueError(f"{name}: las mismas sim_id tienen otra fisica que base (otra semilla, campos o commit)")
+    ph = _read_sims(run, s)
+    _write_classes(ph, out / name / "parquet")
+    pd.concat([sel, s.assign(variante=name)[SEL_COLS]], ignore_index=True).to_csv(out / "selection.csv", index=False)
+    prep["runs"][name] = str(run)
+    (out / "prepare.json").write_text(json.dumps(prep, indent=1))
+    print(f"{name}: {s.groupby('sn_type').size().to_dict()} sims en {out / name / 'parquet'}")
+    return s
+
+
 def z_match_weights(z_sim, z_real):
     """w = fraccion real del bin de z / fraccion sim del bin, con los 4 bins de prepare (cuartiles de la z real,
     bordes 0 y 9). Es el peso que deja a las sims con la distribucion de z de las reales (= peso de selection.csv)."""
@@ -274,12 +308,16 @@ def report(out, page=PAGE, seed=20261003, n_boot=1000):
     out, page = Path(out).expanduser(), Path(page)
     sel = pd.read_csv(out / "selection.csv")
     real = pd.read_csv(out / "real_selection.csv").assign(part_index=0)
-    data = {v: load_variant(out, v, sel[sel.variante == v]) for v in VARIANTES if (sel.variante == v).any()}
+    hay = [v for v in dict.fromkeys(sel.variante) if (out / v / "features/features.csv").exists()]
+    for v in set(sel.variante) - set(hay):
+        print(f"WARNING: {v}: no existe {out / v / 'features/features.csv'}, la variante queda fuera")
+    variantes = [v for v in VARIANTES if v in hay] + sorted(set(hay) - set(VARIANTES))
+    data = {v: load_variant(out, v, sel[sel.variante == v]) for v in variantes}
     data["real"] = load_variant(out, "real", real)
     rng = np.random.default_rng(seed)
     fin = lambda s: s.to_numpy(float)[np.isfinite(s.to_numpy(float))]
     # peso por sim seleccionada: iguala la z de cada (variante, clase) a la de sus reales (mediana, bootstrap e histograma)
-    for v in VARIANTES:
+    for v in variantes:
         if v in data:
             data[v]["w"] = np.nan
             for c in set(data[v].sn_type) & set(data["real"].sn_type):
@@ -288,7 +326,7 @@ def report(out, page=PAGE, seed=20261003, n_boot=1000):
     rows = []
     for c in CLASES:
         y0 = data["real"][data["real"].sn_type == c]
-        for v in VARIANTES:
+        for v in variantes:
             x0 = data[v][data[v].sn_type == c] if v in data else []
             if not len(x0) or not len(y0):
                 continue
@@ -315,10 +353,10 @@ def report(out, page=PAGE, seed=20261003, n_boot=1000):
             bins = np.linspace(*np.percentile(allv, [1, 99]) + np.array([-1e-6, 1e-6]), 21)
             if len(vals["real"]):
                 ax.hist(vals["real"], bins=bins, density=True, color="0.6", alpha=0.5, label="real")
-            for v in VARIANTES:
+            for v in variantes:
                 if v in vals and len(vals[v]):
                     d = data[v][data[v].sn_type == c]
-                    ax.hist(vals[v], bins=bins, density=True, histtype="step", color=COLOR[v], lw=1.3, label=v,
+                    ax.hist(vals[v], bins=bins, density=True, histtype="step", color=COLOR.get(v, f"C{4 + variantes.index(v)}"), lw=1.3, label=v,
                             weights=d.w.to_numpy(float)[np.isfinite(d[p].to_numpy(float))])
             ax.set_title(f"{c}  {p}", fontsize=8); ax.tick_params(labelsize=7)
         axs[0, 0].legend(fontsize=7)
@@ -330,8 +368,8 @@ def report(out, page=PAGE, seed=20261003, n_boot=1000):
              f"(semilla {prep.get('seed', '?')}). Las sims se sortean sin reemplazo, estratificadas en los 4 bins de z de las "
              f"reales seleccionadas (cuartiles, bordes 0 y 9, como g1_selcut.py): cuota por bin = n &times; fracci&oacute;n real "
              f"(restos mayores). Un bin con menos sims que su cuota da todas y el faltante pasa al bin vecino con sims libres "
-             f"(tabla de bins abajo). texp y tail usan las mismas sim_id "
-             f"(texp solo cambia las Ia). Features de run_parquet.py en r; t_rise, t_fall y gamma en reposo (/(1+z)). "
+             f"(tabla de bins abajo). Las variantes usan las mismas sim_id "
+             f"(texp y fireball solo cambian las Ia). Features de run_parquet.py en r; t_rise, t_fall y gamma en reposo (/(1+z)). "
              f"M_r = m_peak_r - &mu;(z). g - r: mediana de g agrupada en 8 h a &plusmn;{G_WIN:g} d del pico r, menos m_peak_r. "
              f"Cada sim lleva un peso w = fracci&oacute;n real de su bin de z / fracci&oacute;n sim del bin (los mismos 4 bins): "
              f"la mediana sim es la mediana ponderada por w y el bootstrap ({n_boot} remuestreos) toma las sims con "
@@ -347,7 +385,7 @@ def report(out, page=PAGE, seed=20261003, n_boot=1000):
         "<body style='font-family:sans-serif;max-width:1500px;margin:auto'>"
         "<h1>Puerta de realismo: bordes de plantilla contra la validaci&oacute;n real ZTF</h1>"
         f"<p>Salida: {out}. Runs: {prep.get('runs', {})}</p><p>{regla}</p>"
-        f"{nota_z}<p>Real relleno (gris); base, texp y tail como contornos.</p><img src='realismo.png' width='100%'>"
+        f"{nota_z}<p>Real relleno (gris); {', '.join(variantes)} como contornos.</p><img src='realismo.png' width='100%'>"
         f"<h2>Bins de z por clase (pool de sims, reales, cuota y sims seleccionadas)</h2>"
         f"{pd.DataFrame(prep.get('bins_z', [])).to_html(index=False)}"
         f"<h2>Tabla</h2>{tab.round(3).to_html(index=False) if len(tab) else '<p>sin filas</p>'}</body></html>")
@@ -363,6 +401,11 @@ def main(argv=None):
     a.add_argument("--n", type=int, default=50)
     a.add_argument("--seed", type=int, default=20261003)
     a.add_argument("--real", default=str(RUNS / "real_ztf"))
+    c = sp.add_parser("add-variant")
+    c.add_argument("--out", required=True)
+    c.add_argument("--name", required=True)
+    c.add_argument("--run", required=True)
+    c.add_argument("--classes", default="Ia", help="clases separadas por coma")
     b = sp.add_parser("report")
     b.add_argument("--out", required=True)
     b.add_argument("--page", default=str(PAGE))
@@ -370,6 +413,8 @@ def main(argv=None):
     if args.cmd == "prepare":
         runs = dict(kv.split("=", 1) for kv in args.runs.split(","))
         prepare(runs, args.out, args.n, args.seed, args.real)
+    elif args.cmd == "add-variant":
+        add_variant(args.out, args.name, args.run, tuple(args.classes.split(",")))
     else:
         tab = report(args.out, args.page)
         print(tab.round(3).to_string(index=False))

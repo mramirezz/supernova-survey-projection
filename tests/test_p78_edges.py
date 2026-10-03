@@ -94,6 +94,42 @@ def test_b_texp():
     pd.testing.assert_frame_equal(_run(cfg, t_exp_rel=t_rel[0] + 1.0), w)   # t_exp >= t0: como window
 
 
+def test_b_fireball():
+    t0, t1 = _t0_t1()
+    t_rel, mags, epochs = _inputs()
+    w = _run(CFG)
+    cfg = dict(CFG, edge_pre="fireball")
+    x = _run(cfg, t_exp_rel=t_rel[0] - 8.0)
+    t_exp = t0 - 8.0
+    for b in ("g", "r"):
+        fb = x[(x["filter"] == b) & (x.mjd >= t_exp) & (x.mjd < t0)].sort_values("mjd")
+        assert len(fb) >= 4
+        mm, mj = fb.magnitud_modelo.to_numpy(float), fb.mjd.to_numpy(float)
+        assert (np.diff(mm) < 0).all()                      # sube (la magnitud baja)
+        exp = (mags[b][0] - 5.0 * np.log10((mj - t_exp) / (t0 - t_exp))).astype(np.float32).astype(float)
+        assert np.abs(mm - exp).max() < 1e-6                # magnitud_modelo es float32
+        assert (mm < mags[b][0] + 40).all()
+    pre = x[x.mjd < t_exp]
+    assert len(pre) and (pre.upperlimit == "T").all() and (pre.magnitud_modelo == 99.0).all()
+    assert (pre.mjd >= t_exp - CFG["pre_ul_days"]).all()
+    fb = x[(x.mjd >= t_exp) & (x.mjd < t0)]
+    det = fb.magnitud_modelo < fb.maglimit                   # regla de siempre: deteccion o UL segun el limite
+    assert (fb.upperlimit == np.where(det, "F", "T")).all() and det.any()
+    pd.testing.assert_frame_equal(x[x.mjd >= t0].reset_index(drop=True), w[w.mjd >= t0].reset_index(drop=True))
+    # con cola: las filas de la variante tail (<= t1 y cola) salen identicas, el ruido de la bola de fuego va al final
+    xt = _run(dict(TAIL, edge_pre="fireball"), t_exp_rel=t_rel[0] - 8.0, z=Z)
+    tl = _run(TAIL, z=Z)
+    pd.testing.assert_frame_equal(xt[xt.mjd >= t0].reset_index(drop=True), tl[tl.mjd >= t0].reset_index(drop=True))
+
+
+def test_b_fireball_without_texp_is_window():
+    t_rel = _inputs()[0]
+    w = _run(CFG)
+    cfg = dict(CFG, edge_pre="fireball")
+    pd.testing.assert_frame_equal(_run(cfg, t_exp_rel=None), w)
+    pd.testing.assert_frame_equal(_run(cfg, t_exp_rel=t_rel[0] + 1.0), w)   # t_exp >= t0
+
+
 def test_c_tail():
     t0, t1 = _t0_t1()
     n = _run(CFG)

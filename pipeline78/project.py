@@ -42,21 +42,23 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
     edge_pre "window" (default): UL de flujo nulo en [t0 - pre_ul_days, t0).
     edge_pre "texp": sin epocas en [t_exp, t0) y UL de flujo nulo en [t_exp - pre_ul_days, t_exp); sin t_exp o con
     t_exp >= t0 es "window". t_exp_rel es relativo al ancla, como t_rel.
+    edge_pre "fireball": como texp, pero en [t_exp, t0) hay bola de fuego: flujo ~ (t - t_exp)^2 hasta el primer punto
+    de la plantilla, con su color (mm = mags[0] - 5 log10((t - t_exp)/(t0 - t_exp))), con ruido, deteccion y UL de siempre.
     edge_post "none" (default): nada despues de t1. "tail": recta en magnitud hasta t1 + tail_days (1+z), con la
     pendiente de los ultimos tail_fit_days (1+z) de la plantilla y nunca menor que tail_min_slope (no sube).
-    El ruido de [t0 - pre_ul_days, t1] se sortea igual en todas las variantes y el de la cola al final: las filas
-    comunes no cambian entre variantes."""
+    El ruido de [t0 - pre_ul_days, t1] se sortea igual en todas las variantes, el de la cola despues y el de la bola de
+    fuego al final: las filas comunes no cambian entre variantes."""
     t = t_anchor + t_rel
     t0, t1 = float(t[0]), float(t[-1])
     pre, edge_pre, edge_post = cfg["pre_ul_days"], cfg.get("edge_pre", "window"), cfg.get("edge_post", "none")
-    if edge_pre not in ("window", "texp") or edge_post not in ("none", "tail"):
+    if edge_pre not in ("window", "texp", "fireball") or edge_post not in ("none", "tail"):
         raise ValueError(f"edge_pre={edge_pre!r} edge_post={edge_post!r}")
     if edge_post == "tail" and z is None:
         raise ValueError("edge_post='tail' necesita z")
-    t_exp = t_anchor + t_exp_rel if edge_pre == "texp" and t_exp_rel is not None else None
+    t_exp = t_anchor + t_exp_rel if edge_pre in ("texp", "fireball") and t_exp_rel is not None else None
     if t_exp is not None and t_exp >= t0:
         t_exp = None
-    parts, cola = {}, []
+    parts, cola, fb = {}, [], []
     for b in cfg["bands"]:
         if b not in mags or b not in epochs:
             continue
@@ -72,10 +74,15 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
             mm = np.interp(mj, t, mags[b])
             mm[mj < t0] = 99.0                           # antes de la explosion: no hay flujo
             mobs, sig = _noise(mm, ml, rng, cfg)
-            if t_exp is not None:                        # texp: [t_exp, t0) sin informacion, no se finge una no deteccion
+            if t_exp is not None:                        # texp/fireball: [t_exp, t0) no queda como no deteccion falsa
                 k = mj >= t0
                 mj, ml, mm, mobs, sig = mj[k], ml[k], mm[k], mobs[k], sig[k]
             parts[b].append(_frame(b, mj, ml, mm, mobs, sig))
+        if edge_pre == "fireball" and t_exp is not None:
+            e = (mjd >= t_exp) & (mjd < t0)
+            if e.any():
+                dt = np.maximum((mjd[e] - t_exp) / (t0 - t_exp), 1e-12)
+                fb.append((b, mjd[e], mlim[e], mags[b][0] - 5.0 * np.log10(dt)))
         if edge_post == "tail":
             tl = (mjd > t1) & (mjd <= t1 + cfg["tail_days"] * (1.0 + z))
             if tl.any():
@@ -84,6 +91,8 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
                 s = s if s >= cfg["tail_min_slope"] else cfg["tail_min_slope"]     # nan -> pendiente minima
                 cola.append((b, mjd[tl], mlim[tl], mags[b][-1] + s * (mjd[tl] - t1)))
     for b, mj, ml, mm in cola:                           # ruido de la cola al final: no mueve el de las filas <= t1
+        parts[b].append(_frame(b, mj, ml, mm, *_noise(mm, ml, rng, cfg)))
+    for b, mj, ml, mm in fb:                             # ruido de la bola de fuego al final (despues de la cola)
         parts[b].append(_frame(b, mj, ml, mm, *_noise(mm, ml, rng, cfg)))
     frames = [f for fr in parts.values() for f in fr if len(f)]
     return pd.concat(frames, ignore_index=True) if frames else None

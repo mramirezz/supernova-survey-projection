@@ -177,6 +177,60 @@ def test_prepare_refuses_other_physics_and_writes_nothing(tmp_path, campo, delta
     assert not out.exists()                                  # m2: se valida antes de escribir
 
 
+def _prepared(tmp_path):
+    runs, rd, sims, meta = _fake(tmp_path)
+    out = tmp_path / "out"
+    selc, real = R.prepare({k: str(v) for k, v in runs.items()}, out, n=10, seed=1, real_dir=rd)
+    d = tmp_path / "fireball"                                # run nuevo: mismas sims, solo Ia cambian
+    d.mkdir()
+    sims.to_parquet(d / "_sims_all.parquet", index=False)
+    for f in set(sims.field):
+        pd.read_parquet(runs["base"] / f"{f}__00000.parquet").to_parquet(d / f"{f}__00000.parquet", index=False)
+    return runs, rd, out, selc, real, d
+
+
+def test_add_variant(tmp_path):
+    runs, rd, out, selc, real, d = _prepared(tmp_path)
+    s = R.add_variant(out, "fireball", d, ("Ia",))
+    base = selc[(selc.variante == "base") & (selc.sn_type == "Ia")]
+    assert set(s.sim_id) == set(base.sim_id)                 # mismas sim_id, solo Ia
+    assert [p.name for p in (out / "fireball/parquet").glob("*.parquet")] == ["Ia.parquet"]
+    ph = pd.read_parquet(out / "fireball/parquet/Ia.parquet")
+    assert set(zip(ph.oid, ph.part_index)) == set(zip(base.oid, base.part_index))
+    sel = pd.read_csv(out / "selection.csv")
+    assert set(sel[sel.variante == "fireball"].sim_id) == set(base.sim_id)
+    assert len(sel) == len(selc) + len(base)
+    with pytest.raises(ValueError, match="ya existe"):
+        R.add_variant(out, "fireball", d, ("Ia",))
+    assert len(pd.read_csv(out / "selection.csv")) == len(sel)
+
+
+def test_add_variant_other_physics_writes_nothing(tmp_path):
+    runs, rd, out, selc, real, d = _prepared(tmp_path)
+    s = pd.read_parquet(d / "_sims_all.parquet")
+    s["z"] = s.z + 0.001
+    s.to_parquet(d / "_sims_all.parquet", index=False)
+    before = (out / "selection.csv").read_text()
+    with pytest.raises(ValueError, match="otra fisica"):
+        R.add_variant(out, "fireball", d, ("Ia",))
+    assert not (out / "fireball").exists() and (out / "selection.csv").read_text() == before
+
+
+def test_report_takes_all_variants(tmp_path):
+    runs, rd, out, selc, real, d = _prepared(tmp_path)
+    R.add_variant(out, "fireball", d, ("Ia",))
+    R.add_variant(out, "otra", d, ("Ia",))
+    sel = pd.read_csv(out / "selection.csv")
+    frng = np.random.default_rng(2)
+    for v in ("base", "texp", "fireball", "tail", "otra"):
+        _features(out, v, sel[sel.variante == v], frng)
+    _features(out, "real", real.assign(part_index=0), frng)
+    tab = R.report(out, page=tmp_path / "page", n_boot=50)
+    assert set(tab[tab.clase == "Ia"].variante) == {"base", "texp", "fireball", "tail", "otra"}
+    html = (tmp_path / "page/index.html").read_text()
+    assert "base, texp, fireball, tail, otra" in html
+
+
 def test_photo_color_window():
     """g - r: solo las g a +-2 d del pico r (dos noches) entran en la mediana; las de 3 y 5 d quedan fuera."""
     t = 59000.0 + 2.0 * np.arange(10)                       # pico r en 59010
