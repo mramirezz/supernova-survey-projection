@@ -8,7 +8,7 @@ from config import EXTINCTION_CONFIG, LUMINOSITY_CONFIG, PHILLIPS_CONFIG
 from pipeline78.paths import DATA, STORE
 
 COSMO = FlatLambdaCDM(H0=70.0, Om0=0.3)          # la misma que core.utils.DL_calculator
-EXT_KEY = {"Ia": "SNIa", "II": "SNII_v78", "IIb": "SNIIb", "IIn": "SNIIn_v78", "Ibc": "SNIbc"}
+EXT_KEY = {"Ia": "SNIa", "II": "SNII_v78", "IIb": "SNIIb_v78", "IIn": "SNIIn_v78", "Ibc": "SNIbc"}
 
 
 EXT_KEY_SUBTYPE = {"Ib": "SNIb", "Ic": "SNIc", "Ic-BL": "SNIcBL"}
@@ -25,7 +25,8 @@ def sample_ebv_host(rng, cls, subtype=None):
 def sample_mpeak(rng, cls, dm15=None, subtype=None):
     """M intrinseco (libre de polvo) en la banda de referencia del catalogo (D4), salvo las clases en
     LF_AFTER_HOST_DUST, donde M es el pico con el polvo del host adentro. Truncado a clip por re-sorteo."""
-    c = LUMINOSITY_CONFIG["clip"]
+    c = dict(LUMINOSITY_CONFIG["clip"])
+    c.update(LUMINOSITY_CONFIG.get("clip_by_class", {}).get(cls, {}))     # corte por clase encima del global
     for _ in range(1000):
         if cls == "Ia" and PHILLIPS_CONFIG.get("enabled", False):
             d = dm15 if dm15 is not None and np.isfinite(dm15) else PHILLIPS_CONFIG["dm15_default"]

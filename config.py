@@ -257,8 +257,14 @@ LUMINOSITY_CONFIG = {
         "II":  {"mean": -16.9, "sigma": 1.1},#-16.9 para SNII (legado, sin cita; pipeline78 usa IIP/IIL)
         # II por subtipo: Li+2011b (2011MNRAS.412.1441L), Tabla 6, banda R Vega, sin correccion de host,
         # convertido de H0 = 73 a 70 (-0.091 mag). Criterio IIP/IIL de Li §2.2.3. Etiquetas en data/ii_subtypes.csv.
-        "IIP": {"mean": -15.75, "sigma": 1.23},
-        "IIL": {"mean": -17.53, "sigma": 0.64},
+        # 2026-10-03: LF DESENROJECIDA con el polvo de SUDARE I (half-normal sigma_E 0.2, R_V 3.1).
+        # A_R/E = 2.5286 (engine.extinction_factor, f_lambda plano, banda R_rest, E -> 0 lineal),
+        # <E> = 0.2*sqrt(2/pi) = 0.1596, sigma_E = 0.2*sqrt(1-2/pi) = 0.1206 => <A_R> = 0.4035, sigma_A = 0.3049.
+        # mu_int = mu_obs - <A_R>, sigma_int = sqrt(sigma_obs^2 - sigma_A^2). Observados en IIP_obs/IIL_obs.
+        "IIP": {"mean": -16.15, "sigma": 1.19},
+        "IIL": {"mean": -17.93, "sigma": 0.56},
+        "IIP_obs": {"mean": -15.75, "sigma": 1.23},
+        "IIL_obs": {"mean": -17.53, "sigma": 0.64},
         # IIb: banda r, MW+host corregido; Taddia+2018 (2018A&A...609A.136T,
         # Tabla 5, 10 IIb CSP-I). Cross-check Richardson+2014: M_B=-16.99+/-0.45.
         # 2026-10-03: media -17.45 -> -17.57, convertida de H0 = 73.8 a H0 = 70 (Taddia+2018).
@@ -304,6 +310,9 @@ LUMINOSITY_CONFIG = {
     # (min ampliado -21.5 -> -23.5 el 2026-08-15: las SLSN-I llegan a -22.8
     # observado en ZTF-I, Chen+2023; el clip viejo las cortaba)
     "clip": {"min": -23.5, "max": -13.0},
+    # Nyholm+2020 §6: corte M > -21 para excluir SLSN-IIn; TNS clasifica SLSN-II aparte.
+    # "min" es el lado brillante, igual que en "clip".
+    "clip_by_class": {"IIn": {"min": -21.0}},
 
     # Reproducibilidad opcional del muestreo de M_peak
     "random_seed": None,                 # None = aleatorio
@@ -451,6 +460,9 @@ EXTINCTION_CONFIG = {
     # SUDARE I (Cappellaro+2015, 2015A&A...584A..62C, §7.1) siguiendo a Neill+2006 (2006AJ....132.1126N):
     # half-normal sigma_E(B-V)=0.2, R_V=3.1. LF no corregida por host: el polvo solo da color y extincion
     # relativa a la banda de referencia (LF_AFTER_HOST_DUST). frac_zero = 1 deja una half-normal en E(B-V).
+    # IIb v78: f0 y tau derivados de Stritzinger+2018; R_V 3.1 en vez de 1.1 (este sale de un solo objeto,
+    # SN 2006T, y enrojecia las IIb +0.18 mag en g-r contra ZTF; decision 2026-10-03).
+    "SNIIb_v78": {"frac_zero": 0.30, "tau": 0.35, "sigma_zero": 0.01, "Av_max": 3.0, "Rv": 3.1},
     "SNII_v78":  {"frac_zero": 1.0, "sigma_zero": 0.2, "tau": 0.25, "Av_max": 3.0, "Rv": 3.1},
     "SNIIn_v78": {"frac_zero": 1.0, "sigma_zero": 0.2, "tau": 0.25, "Av_max": 3.0, "Rv": 3.1},
     "random_seed": None,           # None = aleatorio
@@ -544,4 +556,5 @@ SUBTYPE_FRACTIONS = {"Ibc": {"Ib": 0.556, "Ic": 0.386, "Ic-BL": 0.058}, "II": {"
 # Para no contarlo dos veces: se sortea el polvo, se aplica a la plantilla desenrojecida y la escala de brillo se
 # elige para que la magnitud del pico YA enrojecida, en la banda de referencia de reposo, sea igual al M sorteado
 # (variante de Vincenzi+2021 §6.2). Ia, IIb e Ibc (LF corregida) imponen el M antes del polvo (D4).
-LF_AFTER_HOST_DUST = {"II", "IIn"}
+# II: LF de Li desenrojecida con el polvo de SUDARE I (decision 2026-10-03); IIn sigue con la LF impuesta despues del polvo.
+LF_AFTER_HOST_DUST = {"IIn"}

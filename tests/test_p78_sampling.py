@@ -111,14 +111,52 @@ def test_fixb_config_values():
 def test_fixc_config_values():
     from config import LUMINOSITY_CONFIG, SUBTYPE_FRACTIONS, LF_AFTER_HOST_DUST, EXTINCTION_CONFIG as E
     mp = LUMINOSITY_CONFIG["M_peak"]
-    assert mp["IIP"] == {"mean": -15.75, "sigma": 1.23} and mp["IIL"] == {"mean": -17.53, "sigma": 0.64}
+    assert mp["IIP_obs"] == {"mean": -15.75, "sigma": 1.23} and mp["IIL_obs"] == {"mean": -17.53, "sigma": 0.64}
     assert SUBTYPE_FRACTIONS["II"] == {"IIP": 0.875, "IIL": 0.125}
-    assert LF_AFTER_HOST_DUST == {"II", "IIn"}
+    assert LF_AFTER_HOST_DUST == {"IIn"}
     v = {"frac_zero": 1.0, "sigma_zero": 0.2, "tau": 0.25, "Av_max": 3.0, "Rv": 3.1}
     assert E["SNII_v78"] == v and E["SNIIn_v78"] == v
     rng = np.random.default_rng(4)
     m = np.array([sample_mpeak(rng, "II", subtype="IIL") for _ in range(20000)])
-    assert abs(m.mean() + 17.53) < 0.03
+    assert abs(m.mean() + 17.93) < 0.03
+
+def test_fixd_ii_lf_desenrojecida_recalculo():
+    # mu_int = mu_obs - <A_R>, sigma_int = sqrt(sigma_obs^2 - sigma_A^2), A_R = (A_R/E) E, E ~ |N(0, 0.2)|
+    from config import LUMINOSITY_CONFIG
+    from pipeline78 import bands as B, engine
+    R = B.rest_bands()["R_rest"]
+    w = np.linspace(R.wave.min() - 500, R.wave.max() + 500, 6000)
+    f = np.ones((1, len(w)))
+    F0, _ = B.synphot(w, f, R)
+    F1, _ = B.synphot(w, f * engine.extinction_factor(w, 3.1, 0.01)[None, :], R)
+    ar_e = -2.5 * np.log10(F1[0] / F0[0]) / 0.01
+    mA = ar_e * 0.2 * math.sqrt(2 / math.pi)
+    sA = ar_e * 0.2 * math.sqrt(1 - 2 / math.pi)
+    mp = LUMINOSITY_CONFIG["M_peak"]
+    for k in ("IIP", "IIL"):
+        o = mp[k + "_obs"]
+        assert abs(mp[k]["mean"] - (o["mean"] - mA)) < 0.01, k
+        assert abs(mp[k]["sigma"] - math.sqrt(o["sigma"] ** 2 - sA ** 2)) < 0.01, k
+
+def test_fixd_iib_v78_rv31():
+    from config import EXTINCTION_CONFIG as E
+    assert E["SNIIb_v78"] == {"frac_zero": 0.30, "tau": 0.35, "sigma_zero": 0.01, "Av_max": 3.0, "Rv": 3.1}
+    assert E["SNIIb"]["Rv"] == 1.1                      # runner viejo, sin tocar
+    rng = np.random.default_rng(8)
+    d = [sample_ebv_host(rng, "IIb") for _ in range(20000)]
+    assert all(x[1] == 3.1 for x in d)
+    av = np.array([e * r for e, r in d])
+    p = E["SNIIb_v78"]
+    expected = (1 - p["frac_zero"]) * p["tau"] * (1 - math.exp(-p["Av_max"] / p["tau"]))
+    assert abs(av.mean() - expected) < 0.015, (av.mean(), expected)
+
+def test_fixd_iin_truncada_en_menos21():
+    from config import LUMINOSITY_CONFIG
+    assert LUMINOSITY_CONFIG["clip_by_class"] == {"IIn": {"min": -21.0}}
+    rng = np.random.default_rng(9)
+    m = np.array([sample_mpeak(rng, "IIn", subtype="IIn") for _ in range(20000)])
+    assert m.min() >= -21.0
+    assert abs(np.median(m) + 18.72) < 0.15, np.median(m)
 
 def test_mpeak_truncated_by_resampling():
     from config import LUMINOSITY_CONFIG

@@ -202,21 +202,20 @@ def _spy_simulate(monkeypatch, cls, n=30):
     return out, got
 
 def test_fixc_simulate_dmag_rule(monkeypatch):
-    # LF despues del polvo (II, IIn) a traves de run.simulate: dmag = M - M_ref - A_ref y A_ref = host_ext_ref
+    # IIn (unica clase en LF_AFTER_HOST_DUST) a traves de run.simulate: dmag = M - M_ref - A_ref y A_ref = host_ext_ref
     from pipeline78 import engine
-    rb = None
-    for cls in ("II", "IIn"):
-        out, got = _spy_simulate(monkeypatch, cls)
-        from pipeline78 import bands as B
-        rb = B.rest_bands()
-        assert any(s["ebmv_host"] > 0 for s, _ in out)
-        for (s, tpl), dmag in zip(out, got):
-            A = engine.host_ext_ref(tpl, s["ebmv_host"], s["rv_host"], rb[tpl["ref_band"]])
-            assert s["A_ref_host"] == A and (A > 0 if s["ebmv_host"] > 0 else A == 0.0)
-            assert dmag == s["m_peak_abs"] - tpl["M_ref"] - s["A_ref_host"], (cls, s["template"])
+    out, got = _spy_simulate(monkeypatch, "IIn")
+    from pipeline78 import bands as B
+    rb = B.rest_bands()
+    assert any(s["ebmv_host"] > 0 for s, _ in out)
+    for (s, tpl), dmag in zip(out, got):
+        A = engine.host_ext_ref(tpl, s["ebmv_host"], s["rv_host"], rb[tpl["ref_band"]])
+        assert s["A_ref_host"] == A and (A > 0 if s["ebmv_host"] > 0 else A == 0.0)
+        assert dmag == s["m_peak_abs"] - tpl["M_ref"] - s["A_ref_host"], ("IIn", s["template"])
 
 def test_fixc_simulate_dmag_unchanged_other_classes(monkeypatch):
-    for cls in ("Ia", "IIb", "Ibc"):
+    # Fix D: las II (LF desenrojecida) tambien quedan con dmag = M - M_ref y A_ref_host = 0
+    for cls in ("Ia", "II", "IIb", "Ibc"):
         out, got = _spy_simulate(monkeypatch, cls)
         assert len(got) == 30
         for (s, tpl), dmag in zip(out, got):
