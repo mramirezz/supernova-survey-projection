@@ -184,8 +184,10 @@ def _prepared(tmp_path):
     d = tmp_path / "fireball"                                # run nuevo: mismas sims, solo Ia cambian
     d.mkdir()
     sims.to_parquet(d / "_sims_all.parquet", index=False)
-    for f in set(sims.field):
-        pd.read_parquet(runs["base"] / f"{f}__00000.parquet").to_parquet(d / f"{f}__00000.parquet", index=False)
+    for f in set(sims.field):                                # fotometria distinta de base: se ve de que run sale
+        x = pd.read_parquet(runs["base"] / f"{f}__00000.parquet")
+        x["magnitud_proyectada"] = x.magnitud_proyectada + 0.5
+        x.to_parquet(d / f"{f}__00000.parquet", index=False)
     return runs, rd, out, selc, real, d
 
 
@@ -197,6 +199,9 @@ def test_add_variant(tmp_path):
     assert [p.name for p in (out / "fireball/parquet").glob("*.parquet")] == ["Ia.parquet"]
     ph = pd.read_parquet(out / "fireball/parquet/Ia.parquet")
     assert set(zip(ph.oid, ph.part_index)) == set(zip(base.oid, base.part_index))
+    bph = pd.read_parquet(out / "base/parquet/Ia.parquet")
+    m = ph.merge(bph, on=["sim_id", "mjd", "filter"], suffixes=("_v", "_b"))
+    assert len(m) == len(ph) and np.allclose(m.magnitud_proyectada_v, m.magnitud_proyectada_b + 0.5)   # sale del --run
     sel = pd.read_csv(out / "selection.csv")
     assert set(sel[sel.variante == "fireball"].sim_id) == set(base.sim_id)
     assert len(sel) == len(selc) + len(base)
@@ -210,6 +215,28 @@ def test_add_variant_other_physics_writes_nothing(tmp_path):
     s = pd.read_parquet(d / "_sims_all.parquet")
     s["z"] = s.z + 0.001
     s.to_parquet(d / "_sims_all.parquet", index=False)
+    _refuse(out, d)
+
+
+def test_add_variant_rv_host_checked(tmp_path):
+    runs, rd, out, selc, real, d = _prepared(tmp_path)
+    s = pd.read_parquet(d / "_sims_all.parquet")
+    s["rv_host"] = s.rv_host + 0.1
+    s.to_parquet(d / "_sims_all.parquet", index=False)
+    _refuse(out, d)
+
+
+def test_add_variant_nan_physics_is_equal(tmp_path):
+    runs, rd, out, selc, real, d = _prepared(tmp_path)
+    for p in (d, runs["base"]):                              # NaN en los dos lados: misma fisica
+        s = pd.read_parquet(p / "_sims_all.parquet")
+        s["ebmv_host"] = s.ebmv_host.astype(float)
+        s.loc[s.sn_type == "Ia", "ebmv_host"] = np.nan
+        s.to_parquet(p / "_sims_all.parquet", index=False)
+    R.add_variant(out, "fireball", d, ("Ia",))
+
+
+def _refuse(out, d):
     before = (out / "selection.csv").read_text()
     with pytest.raises(ValueError, match="otra fisica"):
         R.add_variant(out, "fireball", d, ("Ia",))

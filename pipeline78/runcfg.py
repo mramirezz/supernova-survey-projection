@@ -19,8 +19,9 @@ RUNS_CFG["ztf_v78_tail"] = dict(RUNS_CFG["ztf_v78"], edge_post="tail", tail_days
                                 tail_min_slope=0.005)    # cola lineal en magnitud declarada, supuesto, no medicion
 RUNS_CFG["ztf_v78_fireball"] = dict(RUNS_CFG["ztf_v78"], edge_pre="fireball",
                                     rise_Ia_days=18.9)   # Miller+2020: alfa_r=2.01, rise 18.9 d; mismo supuesto (t-texpl)^2 que cap 3 para las otras clases
-RUNS_CFG["ztf_v78_t9"] = dict(RUNS_CFG["ztf_v78"], edge_post="tail", tail_days=150, tail_fit_days=20,
-                              tail_min_slope=0.005)      # configuracion candidata para la Tarea 9: cola adoptada por Mauricio 2026-10-03; edge_pre se fija tras la prueba fireball
+RUNS_CFG["ztf_v78_t9"] = dict(RUNS_CFG["ztf_v78"], edge_pre="fireball", rise_Ia_days=18.9, edge_post="tail",
+                              tail_days=150, tail_fit_days=20,
+                              tail_min_slope=0.005)      # configuracion de la Tarea 9: cola + borde fireball en Ia, elegidos en la puerta de realismo 2026-10-03 (t_rise Ia: base -1.5 sigma, texp +2.6, fireball +0.9; cola acerca t_fall en 4/5 clases)
 
 
 def units(cfg, fields):

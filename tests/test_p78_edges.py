@@ -99,22 +99,27 @@ def test_b_fireball():
     t_rel, mags, epochs = _inputs()
     w = _run(CFG)
     cfg = dict(CFG, edge_pre="fireball")
-    x = _run(cfg, t_exp_rel=t_rel[0] - 8.0)
     t_exp = t0 - 8.0
+    epochs = {b: (np.sort(np.append(e[0], t_exp)), np.append(e[1], 20.3)[np.argsort(np.append(e[0], t_exp))])
+              for b, e in epochs.items()}                    # una epoca justo en t_exp (log10(0))
+    x = project_one(t_rel, mags, epochs, T_ANCHOR, np.random.default_rng(3), cfg, t_exp_rel=t_rel[0] - 8.0)
     for b in ("g", "r"):
         fb = x[(x["filter"] == b) & (x.mjd >= t_exp) & (x.mjd < t0)].sort_values("mjd")
-        assert len(fb) >= 4
+        assert len(fb) >= 4 and fb.mjd.iloc[0] == t_exp
+        assert fb.magnitud_modelo.iloc[0] > 50 and fb.upperlimit.iloc[0] == "T"   # en t_exp no hay flujo: UL, sin inf/nan
+        fb = fb.iloc[1:]
         mm, mj = fb.magnitud_modelo.to_numpy(float), fb.mjd.to_numpy(float)
         assert (np.diff(mm) < 0).all()                      # sube (la magnitud baja)
         exp = (mags[b][0] - 5.0 * np.log10((mj - t_exp) / (t0 - t_exp))).astype(np.float32).astype(float)
         assert np.abs(mm - exp).max() < 1e-6                # magnitud_modelo es float32
-        assert (mm < mags[b][0] + 40).all()
+        assert (mm > mags[b][0]).all()                      # siempre mas debil que el primer punto de la plantilla
     pre = x[x.mjd < t_exp]
     assert len(pre) and (pre.upperlimit == "T").all() and (pre.magnitud_modelo == 99.0).all()
     assert (pre.mjd >= t_exp - CFG["pre_ul_days"]).all()
     fb = x[(x.mjd >= t_exp) & (x.mjd < t0)]
     det = fb.magnitud_modelo < fb.maglimit                   # regla de siempre: deteccion o UL segun el limite
     assert (fb.upperlimit == np.where(det, "F", "T")).all() and det.any()
+    w = project_one(t_rel, mags, epochs, T_ANCHOR, np.random.default_rng(3), CFG)
     pd.testing.assert_frame_equal(x[x.mjd >= t0].reset_index(drop=True), w[w.mjd >= t0].reset_index(drop=True))
     # con cola: las filas de la variante tail (<= t1 y cola) salen identicas, el ruido de la bola de fuego va al final
     xt = _run(dict(TAIL, edge_pre="fireball"), t_exp_rel=t_rel[0] - 8.0, z=Z)

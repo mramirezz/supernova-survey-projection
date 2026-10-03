@@ -236,9 +236,12 @@ def add_variant(out, name, run, classes=("Ia",)):
     s = s[ok]
     if not len(s):
         raise ValueError(f"{name}: ninguna sim_id de la seleccion esta ok en {run}")
-    fis = ["template", "z", "m_peak_abs", "ebmv_host", "t_anchor"]
+    fis = ["template", "z", "m_peak_abs", "ebmv_host", "rv_host", "t_anchor"]
     b = pd.read_parquet(Path(prep["runs"]["base"]) / "_sims_all.parquet").set_index("sim_id")
-    if (vs.loc[s.sim_id, fis].to_numpy() != b.loc[s.sim_id, fis].to_numpy()).any():
+    x, y = vs.loc[s.sim_id, fis], b.loc[s.sim_id, fis]
+    num = [c for c in fis if c != "template"]
+    if (x.template.to_numpy() != y.template.to_numpy()).any() or \
+            not np.isclose(x[num].to_numpy(float), y[num].to_numpy(float), rtol=0, atol=0, equal_nan=True).all():
         raise ValueError(f"{name}: las mismas sim_id tienen otra fisica que base (otra semilla, campos o commit)")
     ph = _read_sims(run, s)
     _write_classes(ph, out / name / "parquet")
