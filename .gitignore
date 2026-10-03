@@ -60,3 +60,4 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+!data/holdout_ztf_v78.csv
