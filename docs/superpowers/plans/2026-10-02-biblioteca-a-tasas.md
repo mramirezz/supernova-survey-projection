@@ -1858,7 +1858,7 @@ cd "$REPO" && git add pipeline78/compare_features.py && git commit -m "pipeline7
 - Produces:
   - `ztf_real_to_parquet(out_dir) -> DataFrame`, que escribe `<label>.parquet` con el esquema de proyección y además `meta_real_ztf.csv` (oid, part_index, sn_type, z, split)
 
-- [ ] **Step 1: Escribir el test**
+- [x] **Step 1: Escribir el test**
 
 ```python
 # tests/test_p78_real.py
@@ -1878,12 +1878,12 @@ if __name__ == "__main__":
         if n.startswith("test_"): f(); print("ok", n)
 ```
 
-- [ ] **Step 2: Correrlo y ver que falla**
+- [x] **Step 2: Correrlo y ver que falla**
 
 Run: `$PY tests/test_p78_real.py`
 Expected: `ModuleNotFoundError`
 
-- [ ] **Step 3: Implementar**
+- [x] **Step 3: Implementar**
 
 ```python
 # pipeline78/real_to_parquet.py
@@ -1953,7 +1953,7 @@ cd "$Z" && ZLF_MCMC_WALKERS=<G2> ZLF_MCMC_STEPS=<G2> ZLF_MCMC_BURN=<G2> nohup $P
 
 Los valores `<G2>` son los que quedaron anotados en la puerta G2. No es texto a completar a ciegas.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pipeline78/real_to_parquet.py tests/test_p78_real.py
