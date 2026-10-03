@@ -23,20 +23,24 @@ def sample_ebv_host(rng, cls, subtype=None):
 
 
 def sample_mpeak(rng, cls, dm15=None, subtype=None):
-    """M intrinseco (libre de polvo) en la banda de referencia del catalogo (D4)."""
-    if cls == "Ia" and PHILLIPS_CONFIG.get("enabled", False):
-        d = dm15 if dm15 is not None and np.isfinite(dm15) else PHILLIPS_CONFIG["dm15_default"]
-        m = (PHILLIPS_CONFIG["M0"] + PHILLIPS_CONFIG["slope"] * (d - PHILLIPS_CONFIG["dm15_ref"])
-             + rng.normal(0.0, PHILLIPS_CONFIG["sigma_resid"]))
-    else:
-        mp = LUMINOSITY_CONFIG["M_peak"]
-        p = mp[subtype] if subtype in mp and subtype != "Ia" else mp[cls]
-        if "median" in p:      # split-normal asimetrica (SLSN-I): brillante = M mas negativo
-            n = rng.normal()
-            m = p["median"] + n * (p["sigma_bright"] if n < 0 else p["sigma_faint"])
-        else:
-            m = rng.normal(p["mean"], p["sigma"])
+    """M intrinseco (libre de polvo) en la banda de referencia del catalogo (D4), salvo las clases en
+    LF_AFTER_HOST_DUST, donde M es el pico con el polvo del host adentro. Truncado a clip por re-sorteo."""
     c = LUMINOSITY_CONFIG["clip"]
+    for _ in range(1000):
+        if cls == "Ia" and PHILLIPS_CONFIG.get("enabled", False):
+            d = dm15 if dm15 is not None and np.isfinite(dm15) else PHILLIPS_CONFIG["dm15_default"]
+            m = (PHILLIPS_CONFIG["M0"] + PHILLIPS_CONFIG["slope"] * (d - PHILLIPS_CONFIG["dm15_ref"])
+                 + rng.normal(0.0, PHILLIPS_CONFIG["sigma_resid"]))
+        else:
+            mp = LUMINOSITY_CONFIG["M_peak"]
+            p = mp[subtype] if subtype in mp and subtype != "Ia" else mp[cls]
+            if "median" in p:      # split-normal asimetrica (SLSN-I): brillante = M mas negativo
+                n = rng.normal()
+                m = p["median"] + n * (p["sigma_bright"] if n < 0 else p["sigma_faint"])
+            else:
+                m = rng.normal(p["mean"], p["sigma"])
+        if c["min"] <= m <= c["max"]:
+            return float(m)
     return float(np.clip(m, c["min"], c["max"]))
 
 

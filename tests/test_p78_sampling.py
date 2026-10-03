@@ -120,6 +120,16 @@ def test_fixc_config_values():
     m = np.array([sample_mpeak(rng, "II", subtype="IIL") for _ in range(20000)])
     assert abs(m.mean() + 17.53) < 0.03
 
+def test_mpeak_truncated_by_resampling():
+    from config import LUMINOSITY_CONFIG
+    c = LUMINOSITY_CONFIG["clip"]
+    rng = np.random.default_rng(6)
+    m = np.array([sample_mpeak(rng, "II", subtype="IIP") for _ in range(20000)])
+    assert m.min() >= c["min"] and m.max() <= c["max"]
+    assert (m == c["max"]).sum() == 0          # sin acumulacion en el borde
+    # cortar la cola debil baja (mas negativa) la media respecto de la normal sin truncar
+    assert m.mean() < -15.75
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"): f(); print("ok", n)

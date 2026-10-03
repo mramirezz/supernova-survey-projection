@@ -93,6 +93,50 @@ def test_ii_missing_subtype_raises_and_ref_band_R():
         r = pipeline78.catalog.build_catalog(pathlib.Path(td), ii_csv=csv).iloc[0]
         assert r.subtype == "IIL" and r.ref_band == "R_rest" and r.clf_class == "II"
 
+def test_subtype_values_validated_and_duplicates_raise():
+    with tempfile.TemporaryDirectory() as td:
+        os.environ["P78_STORE"] = td
+        import importlib, pipeline78.paths, pipeline78.store, pipeline78.catalog
+        for m in (pipeline78.paths, pipeline78.store, pipeline78.catalog): importlib.reload(m)
+        from tests.p78_fakes import fake_template
+        fake_template(pathlib.Path(td) / "templates/II/FAKEII", sn="FAKEII", clase="II", t_peak=55000.0)
+        fake_template(pathlib.Path(td) / "templates/Ibc/FAKEIBC", sn="FAKEIBC", clase="Ibc", t_peak=55000.0)
+        ii, ibc = pathlib.Path(td) / "ii.csv", pathlib.Path(td) / "ibc.csv"
+        ibc.write_text("sn,subtype\nFAKEIBC,Ic\n")
+        for malo in ("IIp", "Ic"):
+            ii.write_text(f"sn,subtype\nFAKEII,{malo}\n")
+            try:
+                pipeline78.catalog.build_catalog(pathlib.Path(td), subtypes_csv=ibc, ii_csv=ii)
+            except ValueError as e:
+                assert "FAKEII" in str(e)
+            else:
+                raise AssertionError(malo)
+        ii.write_text("sn,subtype\nFAKEII,IIP\n")
+        ibc.write_text("sn,subtype\nFAKEIBC,IIP\n")
+        try:
+            pipeline78.catalog.build_catalog(pathlib.Path(td), subtypes_csv=ibc, ii_csv=ii)
+        except ValueError as e:
+            assert "FAKEIBC" in str(e)
+        else:
+            raise AssertionError("Ibc con subtipo II")
+        ibc.write_text("sn,subtype\nFAKEII,Ic\nFAKEIBC,Ic\n")
+        try:
+            pipeline78.catalog.build_catalog(pathlib.Path(td), subtypes_csv=ibc, ii_csv=ii)
+        except ValueError as e:
+            assert "dos csv" in str(e)
+        else:
+            raise AssertionError("duplicado")
+
+def test_t_peak_ref_in_catalog():
+    with tempfile.TemporaryDirectory() as td:
+        os.environ["P78_STORE"] = td
+        import importlib, pipeline78.paths, pipeline78.store, pipeline78.catalog
+        for m in (pipeline78.paths, pipeline78.store, pipeline78.catalog): importlib.reload(m)
+        from tests.p78_fakes import fake_template
+        fake_template(pathlib.Path(td) / "templates/Ia/FAKE1", t_peak=55000.0)
+        r = pipeline78.catalog.build_catalog(pathlib.Path(td)).iloc[0]
+        assert abs(r.t_peak_ref - 55000.0) <= 1.0
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"): f(); print("ok", n)

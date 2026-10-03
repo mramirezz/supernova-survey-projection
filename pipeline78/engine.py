@@ -18,11 +18,11 @@ def extinction_factor(wave, rv, ebv):
 
 
 def host_ext_ref(tpl, ebv, rv, band):
-    """Extincion del host (mag) en la banda de referencia de reposo, en la epoca mas cercana a t_peak."""
+    """Extincion del host (mag) en la banda de referencia de reposo, en la epoca mas cercana al pico de esa banda (t_peak_ref)."""
     if ebv <= 0:
         return 0.0
     w = np.asarray(tpl["wave"], dtype=float)
-    i = int(np.argmin(np.abs(np.asarray(tpl["time"], dtype=float) - float(tpl["t_peak"]))))
+    i = int(np.argmin(np.abs(np.asarray(tpl["time"], dtype=float) - float(tpl["t_peak_ref"]))))
     f = np.asarray(tpl["flux"], dtype=np.float64)[i:i + 1]
     F0, _ = synphot(w, f, band)
     F1, _ = synphot(w, f * extinction_factor(w, rv, ebv)[None, :], band)

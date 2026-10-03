@@ -155,18 +155,20 @@ def test_untracked_source_is_dirty():
     finally:
         f.unlink()
 
-if __name__ == "__main__":
-    for n, f in list(globals().items()):
-        if n.startswith("test_"): f(); print("ok", n)
+def _real_tpls(cls):
+    import pytest, pandas as pd
+    from pipeline78.paths import STORE
+    from pipeline78.store import load_template
+    if not (STORE / "catalog.csv").exists():
+        pytest.skip("no hay catalog.csv en el store")
+    c = pd.read_csv(STORE / "catalog.csv")
+    return [load_template(p) for p in c[c.clase == cls].sort_values("sn").store_path]
 
 def _real_ii():
-    import pandas as pd
-    from pipeline78.store import load_template
-    c = pd.read_csv(pathlib.Path.home() / "thesis_store" / "catalog.csv")     # el real, aunque otros tests cambien P78_STORE
-    return [load_template(p) for p in c[c.clase == "II"].sort_values("sn").store_path]
+    return _real_tpls("II")
 
 def test_fixc_peak_mag_equals_M_after_dust():
-    # con la regla nueva, el pico enrojecido en la banda de referencia de reposo es M
+    # con la regla nueva, el pico enrojecido en la banda de referencia de reposo es M (a 1e-6 con t_peak_ref)
     from pipeline78 import bands as B, engine
     from pipeline78.engine import extinction_factor
     rb = B.rest_bands()
@@ -176,16 +178,51 @@ def test_fixc_peak_mag_equals_M_after_dust():
         A = engine.host_ext_ref(tpl, ebv, rv, band)
         assert A > 0.3
         dmag = M - tpl["M_ref"] - A
-        i = int(np.argmin(np.abs(tpl["time"] - tpl["t_peak"])))
+        i = int(np.argmin(np.abs(tpl["time"] - tpl["t_peak_ref"])))
         f = tpl["flux"][i:i + 1] * 10 ** (-0.4 * dmag) * extinction_factor(tpl["wave"], rv, ebv)[None, :]
         F, _ = B.synphot(tpl["wave"], f, band)
         m = float(-2.5 * np.log10(F[0] / band.f0))
-        assert abs(m - M) < 0.005, (tpl["sn"], m, M)
+        assert abs(m - M) < 1e-6, (tpl["sn"], m, M)
 
-def test_fixc_dmag_unchanged_other_classes_and_A_ref_zero():
+def _spy_simulate(monkeypatch, cls, n=30):
+    """Corre run.simulate con las plantillas reales de la clase y captura el dmag que recibe el motor."""
     import pipeline78.run as r
-    from config import LF_AFTER_HOST_DUST
-    assert not ({"Ia", "IIb", "Ibc"} & LF_AFTER_HOST_DUST)
+    from pipeline78 import bands as B, engine, sampling
+    tpls = _real_tpls(cls)
+    cfg = dict(z_mode="fixed", z_fixed=0.03, bands=["g", "r", "i"], n_by_class={cls: n})
+    monkeypatch.setitem(r._W, "cfg", cfg); monkeypatch.setitem(r._W, "seed", 3)
+    monkeypatch.setitem(r._W, "bands", B.survey_bands("ZTF")); monkeypatch.setitem(r._W, "rest", B.rest_bands())
+    monkeypatch.setitem(r._W, "z", sampling.z_sampler(cfg)); monkeypatch.setitem(r._W, "tpl", {cls: tpls})
+    got = []
+    monkeypatch.setattr(engine, "observed_lightcurves", lambda tpl, z, e, rv, mw, b, dmag=0.0: got.append(dmag) or (None, {}))
+    out = []
+    for k in range(n):
+        sim, _ = r.simulate("F1", cls, k, [], 0.02)
+        out.append((sim, next(t for t in tpls if t["sn"] == sim["template"])))
+    return out, got
+
+def test_fixc_simulate_dmag_rule(monkeypatch):
+    # LF despues del polvo (II, IIn) a traves de run.simulate: dmag = M - M_ref - A_ref y A_ref = host_ext_ref
+    from pipeline78 import engine
+    rb = None
+    for cls in ("II", "IIn"):
+        out, got = _spy_simulate(monkeypatch, cls)
+        from pipeline78 import bands as B
+        rb = B.rest_bands()
+        assert any(s["ebmv_host"] > 0 for s, _ in out)
+        for (s, tpl), dmag in zip(out, got):
+            A = engine.host_ext_ref(tpl, s["ebmv_host"], s["rv_host"], rb[tpl["ref_band"]])
+            assert s["A_ref_host"] == A and (A > 0 if s["ebmv_host"] > 0 else A == 0.0)
+            assert dmag == s["m_peak_abs"] - tpl["M_ref"] - s["A_ref_host"], (cls, s["template"])
+
+def test_fixc_simulate_dmag_unchanged_other_classes(monkeypatch):
+    for cls in ("Ia", "IIb", "Ibc"):
+        out, got = _spy_simulate(monkeypatch, cls)
+        assert len(got) == 30
+        for (s, tpl), dmag in zip(out, got):
+            assert s["A_ref_host"] == 0.0 and dmag == s["m_peak_abs"] - tpl["M_ref"], (cls, s["template"])
+
+def test_fixc_A_ref_zero_in_end_to_end_run():
     from pipeline78.engine import host_ext_ref
     assert host_ext_ref(dict(), 0.0, 3.1, None) == 0.0
     with tempfile.TemporaryDirectory() as td:
@@ -203,3 +240,7 @@ def test_fixc_ii_subtype_frequencies_real_catalog():
     got = [r.choose_template(1, "F1", "II", k, rng, tpls, fr)["subtype"] for k in range(20000)]
     for st, f in fr.items():
         assert abs(np.mean([g == st for g in got]) - f) < 0.01, st
+
+if __name__ == "__main__":
+    for n, f in list(globals().items()):
+        if n.startswith("test_"): f(); print("ok", n)

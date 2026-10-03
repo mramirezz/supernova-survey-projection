@@ -11,6 +11,7 @@ from config import EXTINCTION_CONFIG, LUMINOSITY_CONFIG, PHILLIPS_CONFIG, SUBTYP
 from pipeline78.paths import REPO, STORE, FILTERS, DATA
 from pipeline78 import bands as B, engine, sampling, project, runcfg, survey
 from pipeline78.store import load_template, md5_file
+from pipeline78.catalog import REF_BAND
 
 _W = {}
 
@@ -150,6 +151,9 @@ def config_hash(cfg):
         inputs[f] = md5_file(DATA / f)
     if cfg.get("mw_mode") == "ztf_sfd":
         inputs["sfd98_cache.parquet"] = md5_file(DATA / "sfd98_cache.parquet")
+    rb = B.rest_bands()           # A_ref depende de las curvas de reposo de la banda de referencia en corrida
+    inputs["rest_ref_bands"] = {n: hashlib.md5(np.concatenate([rb[n].wave, rb[n].resp, [rb[n].f0]]).tobytes()).hexdigest()
+                                for n in sorted({REF_BAND[c] for c in LF_AFTER_HOST_DUST})}
     blob = json.dumps(dict(cfg=cfg, catalog=md5_file(STORE / "catalog.csv"), filters=filt, inputs=inputs,
                            lf=LUMINOSITY_CONFIG, ext=EXTINCTION_CONFIG, phillips=PHILLIPS_CONFIG,
                            subtype_fractions=SUBTYPE_FRACTIONS, lf_after_host_dust=sorted(LF_AFTER_HOST_DUST)),

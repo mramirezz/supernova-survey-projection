@@ -9,6 +9,7 @@ from pipeline78.bands import rest_bands, synphot, COVERAGE_MIN
 
 CLF_CLASS = {"Ia": "Ia", "II": "II", "IIb": "II", "IIn": "II", "Ibc": "Ibc"}           # D1
 REF_BAND = {"Ia": "R_rest", "II": "R_rest", "IIb": "r_rest", "IIn": "r_rest", "Ibc": "r_rest"}
+SUBTYPES_OK = {"II": {"IIP", "IIL"}, "Ibc": {"Ib", "Ic", "Ic-BL"}}
 # Ia: Prieto+2006 calibra en R (Bessell). IIb: Taddia+2018 en r. Ibc: Taddia (2018, 2019) mide en r (antes R por Drout+2011). II: Li+2011b mide en R (Vega).
 
 # Decision 2026-10-02: el pico de enfriamiento por shock se excluye del ancla (se usa el pico principal de Ni).
@@ -47,29 +48,34 @@ def peak_and_dm15(t, m):
 
 def build_catalog(store_dir=STORE, subtypes_csv=DATA / "ibc_subtypes.csv", ii_csv=DATA / "ii_subtypes.csv"):
     rb = rest_bands()
-    sub = {}
-    for c in (subtypes_csv, ii_csv):
-        if Path(c).exists():
-            sub.update(dict(pd.read_csv(c)[["sn", "subtype"]].values))
+    rd = lambda c: dict(pd.read_csv(c)[["sn", "subtype"]].values) if Path(c).exists() else {}
+    sub_ibc, sub_ii = rd(subtypes_csv), rd(ii_csv)
+    if set(sub_ibc) & set(sub_ii):
+        raise ValueError(f"SN en los dos csv de subtipos: {sorted(set(sub_ibc) & set(sub_ii))}")
+    sub = {**sub_ibc, **sub_ii}
     rows = []
     for meta_p in sorted(Path(store_dir).glob("templates/*/*/meta.json")):
         tpl = load_template(meta_p.parent)
         cls = tpl["clase"]
         if cls in ("Ibc", "II") and tpl["sn"] not in sub:
             raise ValueError(f"{tpl['sn']}: {cls} sin subtipo en {subtypes_csv if cls == 'Ibc' else ii_csv}")
+        if cls in SUBTYPES_OK and sub[tpl["sn"]] not in SUBTYPES_OK[cls]:
+            raise ValueError(f"{tpl['sn']}: subtipo {sub[tpl['sn']]!r} no valido para {cls} (validos: {sorted(SUBTYPES_OK[cls])})")
         subtype = sub[tpl["sn"]] if cls in ("Ibc", "II") else cls
         t = tpl["time"]
         m_r = rest_mag(tpl, rb["r_rest"])
         t_peak, _, edge, _ = peak_and_dm15(t, m_r)
         i_arg = int(np.argmin(m_r))
         m_ref = rest_mag(tpl, rb[REF_BAND[cls]])
-        M_ref = float(m_ref[main_peak_index(t, m_ref)])
+        i_ref = main_peak_index(t, m_ref)
+        M_ref = float(m_ref[i_ref])
         dm15 = peak_and_dm15(t, rest_mag(tpl, rb["B_rest"]))[3] if cls == "Ia" else float("nan")
         meta = json.loads(meta_p.read_text())
         meta.update(t_peak=t_peak, peak_at_edge=edge, M_ref=M_ref, ref_band=REF_BAND[cls],
                     dm15_B=None if np.isnan(dm15) else dm15, clf_class=CLF_CLASS[cls], subtype=subtype,
                     t_peak_argmin=float(t[i_arg]), early_peak=bool(t_peak != float(t[i_arg])),
-                    dm_early=float(m_r[main_peak_index(t, m_r)] - m_r[i_arg]))
+                    dm_early=float(m_r[main_peak_index(t, m_r)] - m_r[i_arg]),
+                    t_peak_ref=float(t[i_ref]))
         meta_p.write_text(json.dumps(meta, indent=1))
         rows.append(dict(meta, store_path=str(meta_p.parent)))
     cat = pd.DataFrame(rows)
