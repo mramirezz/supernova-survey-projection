@@ -89,7 +89,10 @@ def simulate(field, cls, k, epochs, mw):
     if not mags:
         return sim, None
     t_anchor = project.anchor_time(cfg, rng, k, cfg["n_by_class"][cls], epochs)
-    df = project.project_one(t_rel, mags, epochs, t_anchor, rng, cfg)
+    t_exp_rel = None     # solo Ia: sus plantillas empiezan en el primer punto, las demas ya en la explosion (tesis cap. 3)
+    if cfg.get("edge_pre", "window") == "texp" and cls == "Ia":
+        t_exp_rel = (tpl["t_Bmax"] - cfg["rise_Ia_days"] - tpl["t_peak"]) * (1.0 + z)
+    df = project.project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=t_exp_rel, z=z)
     sim["t_anchor"] = t_anchor
     if df is None:
         sim["status"] = "no_epochs"

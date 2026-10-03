@@ -12,6 +12,11 @@ RUNS_CFG = {
         mw_mode="ztf_sfd", mw_const=0.02, rule="ztf",
         pre_ul_days=25.0, noise_k=5.0, sigma_floor=0.02),
 }
+# Puerta de realismo: variantes de borde de ztf_v78 (sin estas claves, project_one usa window/none)
+RUNS_CFG["ztf_v78_texp"] = dict(RUNS_CFG["ztf_v78"], edge_pre="texp",
+                                rise_Ia_days=18.9)       # Miller+2020 2020ApJ...902...47M: rise medio 18.9 d hasta el maximo en B
+RUNS_CFG["ztf_v78_tail"] = dict(RUNS_CFG["ztf_v78"], edge_post="tail", tail_days=150, tail_fit_days=20,
+                                tail_min_slope=0.005)    # cola lineal en magnitud declarada, supuesto, no medicion
 
 
 def units(cfg, fields):

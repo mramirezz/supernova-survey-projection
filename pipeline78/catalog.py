@@ -1,4 +1,4 @@
-"""Una fila por template: maximo en r de reposo (ancla), M de referencia y dm15(B)."""
+"""Una fila por template: maximo en r de reposo (ancla), M de referencia, dm15(B) y t_Bmax (Ia)."""
 import json
 from pathlib import Path
 import numpy as np
@@ -69,13 +69,14 @@ def build_catalog(store_dir=STORE, subtypes_csv=DATA / "ibc_subtypes.csv", ii_cs
         m_ref = rest_mag(tpl, rb[REF_BAND[cls]])
         i_ref = main_peak_index(t, m_ref)
         M_ref = float(m_ref[i_ref])
-        dm15 = peak_and_dm15(t, rest_mag(tpl, rb["B_rest"]))[3] if cls == "Ia" else float("nan")
+        # Ia: maximo en B de reposo (t_Bmax) y dm15(B) con la misma funcion
+        t_Bmax, _, _, dm15 = peak_and_dm15(t, rest_mag(tpl, rb["B_rest"])) if cls == "Ia" else (None, 0, 0, float("nan"))
         meta = json.loads(meta_p.read_text())
         meta.update(t_peak=t_peak, peak_at_edge=edge, M_ref=M_ref, ref_band=REF_BAND[cls],
                     dm15_B=None if np.isnan(dm15) else dm15, clf_class=CLF_CLASS[cls], subtype=subtype,
                     t_peak_argmin=float(t[i_arg]), early_peak=bool(t_peak != float(t[i_arg])),
                     dm_early=float(m_r[main_peak_index(t, m_r)] - m_r[i_arg]),
-                    t_peak_ref=float(t[i_ref]))
+                    t_peak_ref=float(t[i_ref]), t_Bmax=t_Bmax)
         meta_p.write_text(json.dumps(meta, indent=1))
         rows.append(dict(meta, store_path=str(meta_p.parent)))
     cat = pd.DataFrame(rows)

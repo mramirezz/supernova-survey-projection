@@ -137,6 +137,21 @@ def test_t_peak_ref_in_catalog():
         r = pipeline78.catalog.build_catalog(pathlib.Path(td)).iloc[0]
         assert abs(r.t_peak_ref - 55000.0) <= 1.0
 
+def test_t_Bmax_only_ia():
+    with tempfile.TemporaryDirectory() as td:
+        os.environ["P78_STORE"] = td
+        import importlib, json, pipeline78.paths, pipeline78.store, pipeline78.catalog
+        for m in (pipeline78.paths, pipeline78.store, pipeline78.catalog): importlib.reload(m)
+        from tests.p78_fakes import fake_template
+        fake_template(pathlib.Path(td) / "templates/Ia/FAKE1", t_peak=55000.0)
+        fake_template(pathlib.Path(td) / "templates/Ibc/FAKEIBC", sn="FAKEIBC", clase="Ibc", t_peak=55000.0)
+        csv = pathlib.Path(td) / "sub.csv"
+        csv.write_text("sn,subtype\nFAKEIBC,Ic\n")
+        cat = pipeline78.catalog.build_catalog(pathlib.Path(td), subtypes_csv=csv).set_index("sn")
+        assert abs(cat.loc["FAKE1", "t_Bmax"] - 55000.0) <= 1.0 and np.isnan(cat.loc["FAKEIBC", "t_Bmax"])
+        assert np.isfinite(cat.loc["FAKE1", "dm15_B"]) and np.isnan(cat.loc["FAKEIBC", "dm15_B"])
+        assert json.loads((pathlib.Path(td) / "templates/Ia/FAKE1/meta.json").read_text())["t_Bmax"] == cat.loc["FAKE1", "t_Bmax"]
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"): f(); print("ok", n)
