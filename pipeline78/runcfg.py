@@ -27,6 +27,12 @@ RUNS_CFG["ztf_v78_t9_iidust"] = dict(RUNS_CFG["ztf_v78_t9"], ii_dust="sudare")  
 
 RUNS_CFG["ztf_v78_t9_iinnyholm"] = dict(RUNS_CFG["ztf_v78_t9"], iin_lf="nyholm")   # variante de sistematico: LF de IIn de Nyholm+2020
 
+# Calibracion de la eficiencia de deteccion (Fix G, 2026-10-03): logistica en S/N, sin UL tras la ultima deteccion y
+# la misma limpieza que las reales. El controlador elige m0 y fija la config T9.
+for m0 in (0.0, 0.25, 0.5, 0.75, 1.0):
+    RUNS_CFG[f"ztf_v78_t9_det{m0}"] = dict(RUNS_CFG["ztf_v78_t9"], det_model="logistic", det_m0=m0, det_w=0.2,
+                                          ul_after_last=False, lc_clean=True)
+
 
 def units(cfg, fields):
     n = max(cfg["n_by_class"].values())

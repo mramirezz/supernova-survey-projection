@@ -181,6 +181,75 @@ def test_bad_edge_raises():
         _run(dict(CFG, edge_pre="explosion"))
 
 
+LOG = dict(CFG, det_model="logistic", det_m0=0.5, det_w=0.2)
+
+
+def test_e_logistic_limit_is_hard():
+    """m0 = 0 y w -> 0: el corte duro. El ruido no cambia (los uniformes van despues)."""
+    pd.testing.assert_frame_equal(_run(dict(CFG, det_model="logistic", det_m0=0.0, det_w=1e-9)), _run(CFG))
+    t_rel = _inputs()[0]
+    for cfg, kw in ((TAIL, dict(z=Z)), (dict(TAIL, edge_pre="fireball"), dict(z=Z, t_exp_rel=t_rel[0] - 8.0))):
+        pd.testing.assert_frame_equal(_run(dict(cfg, det_model="logistic", det_m0=0.0, det_w=1e-9), **kw), _run(cfg, **kw))
+    with pytest.raises(ValueError):
+        _run(dict(CFG, det_model="searcheff"))
+
+
+def test_e_logistic_half_at_m0():
+    """Fraccion detectada en mm = maglim - m0: ~0.5. Mas brillante detecta casi siempre, mas debil casi nunca."""
+    mjd = np.arange(59000.0, 63000.0, 1.0)
+    t_rel = np.array([0.0, 4000.0])
+    for dm, lo, hi in ((0.0, 0.47, 0.53), (-0.6, 0.94, 1.0), (0.6, 0.0, 0.06)):
+        epochs = {"g": (mjd, np.full(mjd.size, 20.0))}
+        x = project_one(t_rel, {"g": np.full(2, 19.5 + dm)}, epochs, 59000.0, np.random.default_rng(1), dict(LOG, bands=["g"]))
+        x = x[x.magnitud_modelo < 50]
+        assert len(x) == 4000 and lo <= (x.upperlimit == "F").mean() <= hi, (dm, (x.upperlimit == "F").mean())
+        d = x[x.upperlimit == "F"]
+        assert d.magerr.notna().all() and x.loc[x.upperlimit == "T", "magerr"].isna().all()
+        assert (x.loc[x.upperlimit == "T", "magnitud_proyectada"] == x.loc[x.upperlimit == "T", "maglimit"]).all()
+
+
+def test_e_logistic_shared_rows_keep_noise():
+    t0, t1 = _t0_t1()
+    t_rel = _inputs()[0]
+    h, x = _run(CFG), _run(LOG)
+    assert len(h) == len(x) and (h.mjd.to_numpy() == x.mjd.to_numpy()).all()
+    both = (h.upperlimit == "F") & (x.upperlimit == "F")
+    assert both.sum() > 20 and (h.upperlimit != x.upperlimit).any()
+    for c in ("magnitud_proyectada", "magerr", "magnitud_modelo", "maglimit"):
+        assert (h.loc[both, c] == x.loc[both, c]).all(), c
+    # otro m0: mismos uniformes, filas detectadas en ambas con el mismo ruido
+    y = _run(dict(LOG, det_m0=0.0))
+    both = (y.upperlimit == "F") & (x.upperlimit == "F")
+    assert ((y.upperlimit == "F").sum() > (x.upperlimit == "F").sum()) and (y[both] == x[both]).all().all()
+    # variantes de borde: las filas comunes conservan el ruido (el uniforme no, va despues de todo el ruido)
+    xt = _run(dict(TAIL, **LOG), z=Z)
+    xf = _run(dict(TAIL, edge_pre="fireball", **LOG), z=Z, t_exp_rel=t_rel[0] - 8.0)
+    ht = _run(TAIL, z=Z)
+    for a, b in ((xt[xt.mjd <= t1].reset_index(drop=True), x), (xt, ht),
+                 (xf[xf.mjd >= t0].reset_index(drop=True), xt[xt.mjd >= t0].reset_index(drop=True))):
+        assert len(a) == len(b) and (a.mjd.to_numpy() == b.mjd.to_numpy()).all()
+        both = (a.upperlimit == "F") & (b.upperlimit == "F")
+        assert both.sum() > 20 and (a.loc[both, "magnitud_proyectada"] == b.loc[both, "magnitud_proyectada"]).all()
+
+
+def test_f_no_ul_after_last_and_clean():
+    from pipeline78.lcclean import clean_lc
+    cfg = dict(TAIL, **LOG)
+    a = _run(cfg, z=Z)
+    b = _run(dict(cfg, ul_after_last=False), z=Z)
+    last = a.loc[a.upperlimit == "F", "mjd"].max()
+    assert (a.mjd > last).any() and not (b.mjd > last).any()
+    pd.testing.assert_frame_equal(b, a[a.mjd <= last].reset_index(drop=True))
+    c = _run(dict(cfg, ul_after_last=False, lc_clean=True), z=Z)
+    pd.testing.assert_frame_equal(c, clean_lc(b, b.loc[b.upperlimit == "F", "mjd"].min())[0])
+    mjd = np.arange(58000.0, 59300.0, 1.0)              # epocas 900 d antes: la ventana desde la primera det las saca
+    t_rel, mags, _ = _inputs()
+    e = {k: (mjd, np.full(mjd.size, 20.5)) for k in ("g", "r")}
+    c = project_one(t_rel, mags, e, T_ANCHOR, np.random.default_rng(3), dict(cfg, pre_ul_days=900.0, lc_clean=True), z=Z)
+    first = c.loc[c.upperlimit == "F", "mjd"].min()
+    assert c.mjd.min() >= first - 50.0 and c.mjd.max() <= first + 400.0
+
+
 def _real_tpls(cls):
     from pipeline78.paths import STORE
     from pipeline78.store import load_template
@@ -202,7 +271,7 @@ def test_d_variants_same_physics(monkeypatch):
     monkeypatch.setitem(r._W, "bands", B.survey_bands("ZTF")); monkeypatch.setitem(r._W, "rest", B.rest_bands())
     monkeypatch.setitem(r._W, "tpl", {c: _real_tpls(c) for c in ("Ia", "II")})
     out = {}
-    for name in ("ztf_v78", "ztf_v78_tail", "ztf_v78_texp"):
+    for name in ("ztf_v78", "ztf_v78_tail", "ztf_v78_texp", "ztf_v78_t9_det0.5"):
         cfg = runcfg.RUNS_CFG[name]
         monkeypatch.setitem(r._W, "cfg", cfg); monkeypatch.setitem(r._W, "z", sampling.z_sampler(cfg))
         out[name] = {(c, k): r.simulate("F1", c, k, epochs, 0.02) for c in ("Ia", "II") for k in (1, 2, 3)}
@@ -211,10 +280,15 @@ def test_d_variants_same_physics(monkeypatch):
         assert s0["status"] == "ok"
         t_rel = (tpl[s0["template"]]["time"] - tpl[s0["template"]]["t_peak"]) * (1 + s0["z"])
         t0, t1 = s0["t_anchor"] + t_rel[0], s0["t_anchor"] + t_rel[-1]
-        for v in ("ztf_v78_tail", "ztf_v78_texp"):
+        for v in ("ztf_v78_tail", "ztf_v78_texp", "ztf_v78_t9_det0.5"):
             s, d = out[v][key]
             for f in ("template", "z", "ebmv_host", "m_peak_abs", "t_anchor"):
                 assert s[f] == s0[f], (v, key, f)
+        s, d = out["ztf_v78_t9_det0.5"][key]                 # deteccion logistica + sin UL tras la ultima + limpieza
+        if s["found"]:
+            dt = d[d.upperlimit == "F"]
+            assert d.mjd.max() == dt.mjd.max() and d.mjd.between(dt.mjd.min() - 50, dt.mjd.min() + 400).all()
+            assert s["n_det_r"] == ((d["filter"] == "r") & d.detected).sum() and s["n_rows"] == len(d)
         d = out["ztf_v78_tail"][key][1]
         assert (d.mjd > t1).any()
         pd.testing.assert_frame_equal(d[d.mjd <= t1].reset_index(drop=True), d0)
@@ -227,6 +301,7 @@ def test_d_variants_same_physics(monkeypatch):
         else:
             assert not ((d.mjd >= t_exp) & (d.mjd < t0)).any()
             assert (d[d.mjd < t_exp].upperlimit == "T").all() and (d.mjd < t_exp).any()
+    assert sum(s["found"] for s, _ in out["ztf_v78_t9_det0.5"].values()) >= 3
 
 
 if __name__ == "__main__":

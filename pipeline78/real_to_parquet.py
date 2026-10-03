@@ -1,12 +1,17 @@
 """Fotometria real -> el mismo esquema que la proyeccion, para que real y sintetico pasen por el MISMO
 run_parquet.py (misma cascada de reintentos, mismos filtros de calidad, mismo MCMC).
 Dos listas: el holdout nuevo (origen=holdout, split val/final) y las 675 viejas (origen=viejas,
-split val_viejo/final_viejo). Los upper limits se respetan: upperlimit 'T' con magerr NaN."""
+split val_viejo/final_viejo). Los upper limits se respetan: upperlimit 'T' con magerr NaN.
+Limpieza (Fix G, 2026-10-03): ALeRCE junta todo lo de esa posicion del cielo. Cada SN pasa por clean_lc con t_ref =
+descubrimiento de TNS (discoverydate, cruce por el ZTF de internal_names como en holdout.py), o la primera deteccion
+si no esta en TNS. revisar_reales.csv: < 7 detecciones en r o span de detecciones > 300 d sin ser IIn."""
 import sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
 from pipeline78.paths import OC, PHD, DATA, ZLF
+from pipeline78.lcclean import clean_lc
+from pipeline78.holdout import TNS
 
 sys.path.insert(0, str(ZLF))
 PHOT = PHD / "paper2_ZTF/Photometry_ZTF_ST_Alerce"
@@ -25,6 +30,20 @@ def photometry_rows(sn, label, filters_data, bands=("g", "r")):
     return pd.concat(out, ignore_index=True) if out else None
 
 
+def tns_disc(tns=TNS):
+    """ZTF -> MJD de descubrimiento de TNS. Cada ZTF de internal_names apunta a su fila (la primera gana)."""
+    from astropy.time import Time
+    t = pd.read_csv(tns, usecols=["discoverydate", "internal_names"]).dropna()
+    mjd = Time(t.discoverydate.astype(str).tolist(), format="iso", scale="utc").mjd
+    idx = {}
+    for names, m in zip(t.internal_names, mjd):
+        for n in names.split(","):
+            n = n.strip()
+            if n.startswith("ZTF") and n not in idx:
+                idx[n] = float(m)
+    return idx
+
+
 def load_meta(holdout=None, oc=OC):
     holdout = Path(holdout) if holdout else DATA / "holdout_ztf_v78.csv"
     h = pd.read_csv(holdout)
@@ -36,7 +55,7 @@ def load_meta(holdout=None, oc=OC):
     return pd.concat([h] + v, ignore_index=True)
 
 
-def ztf_real_to_parquet(out_dir, holdout=None, oc=OC, phot=PHOT):
+def ztf_real_to_parquet(out_dir, holdout=None, oc=OC, phot=PHOT, tns=TNS):
     from reader import parse_photometry_file
     out_dir = Path(out_dir).expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -50,7 +69,8 @@ def ztf_real_to_parquet(out_dir, holdout=None, oc=OC, phot=PHOT):
             if f.exists():
                 return f
         return None
-    frames, missing, empty = {}, [], []
+    disc = tns_disc(tns)
+    frames, missing, empty, sin_tns, res = {}, [], [], [], {}
     for r in meta.drop_duplicates("oid").itertuples():
         f = find(r.oid)
         if f is None:
@@ -59,14 +79,30 @@ def ztf_real_to_parquet(out_dir, holdout=None, oc=OC, phot=PHOT):
         rows = photometry_rows(r.oid, r.sn_type, fd)
         if rows is None:
             empty.append(r.oid); continue
+        t_disc = disc.get(r.oid)
+        if t_disc is None:                              # sin TNS: la primera deteccion hace de descubrimiento
+            sin_tns.append(r.oid)
+            t_disc = float(rows.mjd[rows.upperlimit == "F"].min())
+        rows, s = clean_lc(rows, t_disc)
+        if not (rows.upperlimit == "F").any():          # nada de la SN en la ventana
+            empty.append(r.oid); continue
+        res[r.oid] = dict(t_disc=t_disc, **s, n_det_r=int(((rows["filter"] == "r") & (rows.upperlimit == "F")).sum()))
         frames.setdefault(r.sn_type, []).append(rows)
     for label, fr in frames.items():
         pd.concat(fr, ignore_index=True).to_parquet(out_dir / f"{label}.parquet", index=False)
     bad = set(missing) | set(empty)
     m = meta[~meta.oid.isin(bad)].assign(part_index=0)
-    m.to_csv(out_dir / "meta_real_ztf.csv", index=False)
-    print(f"{len(meta)} SNe en las listas, {len(missing)} sin archivo de fotometria {missing[:10]}, {len(empty)} sin g/r {empty[:10]}")
+    m = m.join(pd.DataFrame.from_dict(res, orient="index"), on="oid")
+    m.drop(columns="n_det_r").to_csv(out_dir / "meta_real_ztf.csv", index=False)
+    rev = m[(m.n_det_r < 7) | ((m.span_det_despues > 300) & (m.sn_type != "IIn"))]
+    rev.to_csv(out_dir / "revisar_reales.csv", index=False)
+    print(f"{len(meta)} SNe en las listas, {len(missing)} sin archivo de fotometria {missing[:10]}, {len(empty)} sin g/r o sin "
+          f"detecciones en la ventana {empty[:10]}")
+    print(f"{len(sin_tns)} sin fecha de TNS (t_disc = primera deteccion): {sin_tns}")
     print(m.groupby(["origen", "split", "sn_type"]).size())
+    print("SNe que pierden filas al limpiar (pierden / total):")
+    print(m.assign(pierden=m.n_filas_despues < m.n_filas_antes).groupby(["origen", "sn_type"]).pierden.agg(["sum", "size"]))
+    print(f"{len(rev)} a revisar (< 7 det en r, o span > 300 d sin ser IIn) -> {out_dir / 'revisar_reales.csv'}")
     return m
 
 
