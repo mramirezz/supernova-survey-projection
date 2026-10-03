@@ -1712,7 +1712,7 @@ $PY -m pipeline78.pilot_report ~/thesis_runs/ztf_v78_piloto
 zsh "$PHD/paper2_ZTF/Codes/spectral_series/run/sync_atlas_local.sh"
 ```
 
-- [ ] **Step 4: Puerta G1 con Mauricio.** Se presenta la página y estos criterios:
+- [x] **Step 4: Puerta G1 con Mauricio.** Se presenta la página y estos criterios:
   - (a) status `ok` por sobre el 85 % en cada clase;
   - (b) `delta_med` del M observado dentro de 0.3 mag en Ia, II e Ibc;
   - (c) `std_sim` de las Ia entre 0.4 y 0.7, porque la real robusta es 0.55;
@@ -1774,7 +1774,7 @@ cp -R ~/thesis_runs/ztf_v78 "$D/" && (cd ~/thesis_runs/ztf_v78 && find . -type f
 **Interfaces:**
 - Produces: `compare(csv_a, csv_b) -> DataFrame`, con una fila por parámetro y las columnas mediana y p90 de |Δ|/σ más la razón de tiempos
 
-- [ ] **Step 1: Hacer configurable el MCMC.** En `ZLF/config.py` hay que agregar `import os` arriba y reemplazar el bloque:
+- [x] **Step 1: Hacer configurable el MCMC.** En `ZLF/config.py` hay que agregar `import os` arriba y reemplazar el bloque:
 
 ```python
 MCMC_CONFIG = {
@@ -1786,7 +1786,7 @@ MCMC_CONFIG = {
 }
 ```
 
-- [ ] **Step 2: Implementar la comparación**
+- [x] **Step 2: Implementar la comparación**
 
 ```python
 # pipeline78/compare_features.py
@@ -1819,7 +1819,7 @@ if __name__ == "__main__":
     print(compare(sys.argv[1], sys.argv[2]).round(3).to_string(index=False))
 ```
 
-- [ ] **Step 3: Correr el benchmark.** Son unos 30 minutos, hay que avisar. Las mismas 100 tareas salen con `--n_test 100 --seed 42`.
+- [x] **Step 3: Correr el benchmark.** Son unos 30 minutos, hay que avisar. Las mismas 100 tareas salen con `--n_test 100 --seed 42`.
 
 ```bash
 Z="$PHD/paper2_ZTF/Codes/feature_extraction/ztf_literature_features"
@@ -1839,7 +1839,7 @@ Si no se cumple, se repite con 50 walkers, 3000 pasos y 500 de burn-in.
 
 - [x] **Step 4: Puerta G2.** Mauricio elige la configuración y se anota en "Decisiones tomadas". Desde aquí, **todas** las features (reales y sintéticas, ZTF y SUDARE) se extraen con esa misma configuración.
 
-- [ ] **Step 5: Commit en los dos repos**
+- [x] **Step 5: Commit en los dos repos**
 
 ```bash
 cd "$Z" && git add config.py && git commit -m "MCMC configurable por variables de entorno (benchmark pipeline78)"
@@ -2982,5 +2982,12 @@ EOF
 **2026-10-03, Mauricio (II y polvo de las LF sin corregir):**
 - **LF de las II:** Li+2011b (2011MNRAS.412.1441L), Tabla 6, en R a H0 = 70. IIP N(−15.75, 1.23) e IIL N(−17.53, 0.64), con pesos 0.875/0.125. Las 13 plantillas II se etiquetan IIP/IIL con el criterio de Li, y las etiquetas pasan por Mauricio antes de usarse.
 - **Polvo de las LF no corregidas por host (II y IIn):** el polvo queda ON y la LF se impone en la banda de referencia de reposo **después** del polvo, como en la variante de Vincenzi+2021 §6.2 (2021MNRAS.505.2819V). La distribución de polvo es la de SUDARE I (Cappellaro+2015), pendiente de verificar en el texto. Esto reemplaza el "polvo OFF" de las IIn.
+
+**Re-cierre de G1 (2026-10-03, Mauricio: cerrada):** el piloto de 200 campos (`ztf_v78_piloto_c200`) usa la física de Fix B y Fix C. Sin igualar la selección, las simulaciones salen más brillantes que las reales: Ia −0.39, II −0.38 e Ibc −1.03. La causa es la selección, porque las simulaciones están a z mayor y llegan a m más débiles. Con un corte común m_r < 18.5 y las simulaciones re-pesadas a la distribución de z real (`g1_selcut.py`), las diferencias quedan dentro de la barra y las tres clases pasan:
+- Ia −0.24 ± 0.10
+- II −0.07 ± 0.19
+- Ibc −0.19 ± 0.19
+
+Las Ibc siguen llegando a z mayor que las reales incluso con el mismo corte (0.045 contra 0.026). Hay dos causas posibles: la cola brillante del σ = 0.85 de las Ic, o una selección extra en la muestra real. Se vuelve a medir cuando S(m) esté calibrada. Siguiente paso, con el ok de Mauricio: implementar y correr la puerta de realismo de features (§2b, punto 4).
 
 Avance y rulings del ejecutor: `.superpowers/sdd/2026-10-02-biblioteca-a-tasas/progress.md`.
