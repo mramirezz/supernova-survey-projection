@@ -2972,4 +2972,6 @@ EOF
 
 **2026-10-03, Mauricio:** la tasa es de Nivel 1 (cambiar solo el clasificador de SUDARE). El Nivel 2 solo si hay tiempo. Faltan las psn. Las 78 plantillas sin whitelist. Se incorporan las enmiendas del consenso (§2b).
 
+**2026-10-03, Mauricio:** sí al holdout nuevo desde TNS. La clasificación anterior fue una prueba, y ahora va la versión real de la tesis. El set real cubre los tipos nuevos (IIb, IIn, Ic-BL y subtipos de Ia), no solo Ia, II e Ibc.
+
 Avance y rulings del ejecutor: `.superpowers/sdd/2026-10-02-biblioteca-a-tasas/progress.md`.
