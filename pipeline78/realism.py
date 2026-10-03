@@ -22,7 +22,7 @@ G_WIN = 2.0                                    # d: ventana de g alrededor del p
 KEYS = ["oid", "part_index", "sn_type"]
 FIT = ["f", "t_rise", "t_fall", "gamma"]
 PARS = ("t_rise_rest", "t_fall_rest", "gamma_rest", "f", "M_r", "g_r")
-SEL_COLS = ["sim_id", "oid", "part_index", "sn_type", "z", "m_peak_r", "peso", "variante"]
+SEL_COLS = ["sim_id", "oid", "part_index", "sn_type", "z", "m_peak_r", "peso", "variante", "bin_z"]
 PAGE = PHD / "paper2_ZTF/figures_templates/pipeline78_realismo"
 COLOR = {"base": "C0", "texp": "C1", "tail": "C2"}
 
@@ -46,14 +46,39 @@ def photo(d):
     return m, (float(g["MAG"].astype(float).median()) - m) if len(g) else np.nan
 
 
-def z_weights(z_sim, z_real):
-    """Mismo metodo que g1_selcut.py: 4 bins por cuantiles de la z real con bordes extremos 0 y 9.
-    Peso = fraccion real del bin / conteo simulado del bin."""
-    z_sim, z_real = np.asarray(z_sim, float), np.asarray(z_real, float)
-    edges = np.quantile(z_real, [0, .25, .5, .75, 1]); edges[0], edges[-1] = 0, 9
-    ka = np.clip(np.digitize(z_sim, edges) - 1, 0, 3); kb = np.clip(np.digitize(z_real, edges) - 1, 0, 3)
-    fa = np.bincount(ka, minlength=4).astype(float); fb = np.bincount(kb, minlength=4) / len(z_real)
-    return np.where(fa[ka] > 0, fb[ka] / np.maximum(fa[ka], 1), 0.0)
+def z_edges(z_real):
+    """4 bins por cuantiles de la z real con bordes extremos 0 y 9 (como g1_selcut.py)."""
+    e = np.quantile(np.asarray(z_real, float), [0, .25, .5, .75, 1])
+    e[0], e[-1] = 0, 9
+    return e
+
+
+def z_bin(z, edges):
+    return np.clip(np.digitize(np.asarray(z, float), edges) - 1, 0, 3)
+
+
+def bin_targets(n, f_real, pool):
+    """Cuota por bin = n * fraccion real del bin, redondeada por restos mayores (la suma es n).
+    Un bin con menos sims que su cuota da todas y el faltante pasa, de a una, al bin vecino mas cercano con sims
+    libres (empate: el de mas libres). Si no quedan libres, la clase no llega a n. Devuelve (cuotas, notas)."""
+    x = n * np.asarray(f_real, float)
+    t = np.floor(x).astype(int)
+    for k in np.argsort(-(x - t), kind="stable")[: n - t.sum()]:
+        t[k] += 1
+    pool = np.asarray(pool, int)
+    falta, t, notas = np.maximum(t - pool, 0), np.minimum(t, pool), []
+    for k in np.nonzero(falta)[0]:
+        dado = {}
+        for _ in range(falta[k]):
+            libres = [(abs(j - k), -(pool[j] - t[j]), j) for j in range(len(t)) if pool[j] > t[j]]
+            if not libres:
+                break
+            j = min(libres)[2]
+            t[j] += 1
+            dado[int(j)] = dado.get(int(j), 0) + 1
+        notas.append(f"bin {k}: {falta[k]} sims menos que su cuota, pasan a los bins {dado}" if dado
+                     else f"bin {k}: {falta[k]} sims menos que su cuota y no hay sims libres en otros bins")
+    return t, notas
 
 
 def sim_peaks(run_dir):
@@ -73,8 +98,8 @@ def _clases_variante(cfg):
     return ["Ia"] if cfg.get("edge_pre", "window") == "texp" else []
 
 
-def _write_sims(run_dir, sel, dest):
-    """Fotometria de las sim_id de sel (una lectura por archivo de campo) -> dest/<clase>.parquet."""
+def _read_sims(run_dir, sel):
+    """Fotometria de las sim_id de sel, una lectura por archivo de campo. Error si falta alguna."""
     ids, fr = set(sel.sim_id), []
     for f in sorted(set(sel.oid)):
         for p in sorted(Path(run_dir).glob(f"{f}__*.parquet")):
@@ -83,26 +108,30 @@ def _write_sims(run_dir, sel, dest):
     ph = pd.concat(fr, ignore_index=True)
     if set(ph.sim_id) != ids:
         raise ValueError(f"{run_dir}: {len(ids - set(ph.sim_id))} sim_id sin fotometria")
+    return ph
+
+
+def _write_classes(ph, dest):
+    """Un parquet por clase de proyeccion (run_parquet separa las tareas por oid, part_index y sn_type)."""
     dest.mkdir(parents=True, exist_ok=True)
     for c, d in ph.groupby("sn_type"):
         d.reset_index(drop=True).to_parquet(dest / f"{c}.parquet", index=False)
 
 
-def _pick(rng, k, n, p=None):
-    """Indices ordenados de un sorteo sin reemplazo de min(n, k) entre k candidatos (con p: solo los de peso > 0)."""
-    m = min(n, k if p is None else int((p > 0).sum()))
-    if m == 0:
-        return np.array([], int)
-    return np.sort(rng.choice(k, size=m, replace=False, p=None if p is None else p / p.sum()))
+def _pick(rng, k, m):
+    """Indices ordenados de un sorteo uniforme sin reemplazo de min(m, k) entre k."""
+    m = min(m, k)
+    return np.sort(rng.choice(k, size=m, replace=False)) if m > 0 else np.array([], int)
 
 
 def prepare(runs, out, n=50, seed=20261003, real_dir=RUNS / "real_ztf"):
+    """Todo se valida en memoria y recien al final se escribe: si algo falla, out queda sin tocar."""
     out, real_dir = Path(out).expanduser(), Path(real_dir).expanduser()
     runs = {k: Path(v).expanduser() for k, v in runs.items()}
     if "base" not in runs:
         raise ValueError("--runs necesita base=DIR")
-    if (out / "selection.csv").exists():      # run_parquet cachea las tareas por ruta y acumula features.csv
-        raise ValueError(f"{out} ya tiene una seleccion. No se mezcla: usa otra carpeta.")
+    if out.exists() and any(out.iterdir()):     # run_parquet cachea las tareas y acumula features.csv
+        raise ValueError(f"{out} no esta vacia. No se mezcla: usa otra carpeta.")
     man = {k: json.loads((d / "run_manifest.json").read_text()) for k, d in runs.items()}
     if len({m["seed"] for m in man.values()}) > 1:
         raise ValueError(f"semillas distintas entre runs: { {k: m['seed'] for k, m in man.items()} }")
@@ -112,7 +141,7 @@ def prepare(runs, out, n=50, seed=20261003, real_dir=RUNS / "real_ztf"):
     sims = pd.read_parquet(runs["base"] / "_sims_all.parquet")
     sims = sims[sims.status == "ok"].copy()
     sims["m_peak_r"] = sims.sim_id.map(sim_peaks(runs["base"]))
-    reales, sel = [], []
+    reales, real_ph, sel, bins = [], {}, [], []
     for c in CLASES:
         m, p = meta[meta.sn_type == c], real_dir / f"{c}.parquet"
         if not len(m) or not p.exists():
@@ -127,17 +156,25 @@ def prepare(runs, out, n=50, seed=20261003, real_dir=RUNS / "real_ztf"):
             print(f"WARNING: {c}: ninguna real pasa el corte, la clase queda fuera")
             continue
         reales.append(m)
-        (out / "real/parquet").mkdir(parents=True, exist_ok=True)
-        ph[ph.oid.isin(set(m.oid))].reset_index(drop=True).to_parquet(out / "real/parquet" / f"{c}.parquet", index=False)
+        real_ph[c] = ph[ph.oid.isin(set(m.oid))]
+        # sims: muestreo estratificado en los 4 bins de z de las reales seleccionadas
         a = sims[(sims.sn_type == c) & (sims.m_peak_r < M_CUT)]
-        w = z_weights(a.z, m.z) if len(a) else np.zeros(0)
-        i = _pick(rng, len(a), n, w)
-        sel.append(a.iloc[i].assign(peso=w[i]))
+        e = z_edges(m.z)
+        ka, kr = z_bin(a.z, e), z_bin(m.z, e)
+        f, pool = np.bincount(kr, minlength=4) / len(m), np.bincount(ka, minlength=4)
+        t, notas = bin_targets(n, f, pool)
+        idx = np.sort(np.concatenate([np.nonzero(ka == k)[0][_pick(rng, pool[k], t[k])] for k in range(4)]))
+        s = a.iloc[idx].assign(bin_z=ka[idx])
+        nk = np.bincount(s.bin_z, minlength=4)
+        s["peso"] = f[s.bin_z] / (nk[s.bin_z] / len(s))      # fraccion real / fraccion seleccionada del bin
+        sel.append(s)
+        bins.append(dict(clase=c, bordes_z=np.round(e[1:-1], 4).tolist(), pool=pool.tolist(),
+                         real=np.bincount(kr, minlength=4).tolist(), cuota_n=t.tolist(), sims=nk.tolist(),
+                         notas=notas + ([f"la clase no llega a n = {n}: {len(s)} sims"] if len(s) < n else [])))
     real = pd.concat(reales, ignore_index=True)
-    real[["oid", "sn_type", "subtipo", "z", "m_peak_r"]].to_csv(out / "real_selection.csv", index=False)
     base = pd.concat(sel, ignore_index=True).rename(columns={"field": "oid"})
-    _write_sims(runs["base"], base, out / "base/parquet")
-    rows = [base.assign(variante="base")]
+    phot, rows = {"base": _read_sims(runs["base"], base)}, [base.assign(variante="base")]
+    fis = ["template", "z", "m_peak_abs", "ebmv_host", "rv_host", "t_anchor"]
     for v, d in runs.items():
         if v == "base":
             continue
@@ -150,15 +187,23 @@ def prepare(runs, out, n=50, seed=20261003, real_dir=RUNS / "real_ztf"):
         if not len(s):
             print(f"WARNING: {v}: ninguna clase seleccionada cambia en esta variante (cfg sin edge_pre/edge_post)")
             continue
-        fis = ["template", "z", "m_peak_abs"]
         if (vs.loc[s.sim_id, fis].to_numpy() != s[fis].to_numpy()).any():
             raise ValueError(f"{v}: las mismas sim_id tienen otra fisica que base (otra semilla, campos o commit)")
-        _write_sims(d, s, out / v / "parquet")
+        phot[v] = _read_sims(d, s)
         rows.append(s.assign(variante=v))
+    # escritura: solo despues de validar todo
+    for v, ph in phot.items():
+        _write_classes(ph, out / v / "parquet")
+    _write_classes(pd.concat(real_ph.values(), ignore_index=True), out / "real/parquet")
     selc = pd.concat(rows, ignore_index=True)[SEL_COLS]
     selc.to_csv(out / "selection.csv", index=False)
+    real[["oid", "sn_type", "subtipo", "z", "m_peak_r"]].to_csv(out / "real_selection.csv", index=False)
     (out / "prepare.json").write_text(json.dumps(dict(runs={k: str(d) for k, d in runs.items()}, real=str(real_dir),
-                                                      n=n, seed=seed, m_cut=M_CUT), indent=1))
+                                                      n=n, seed=seed, m_cut=M_CUT, bins_z=bins), indent=1))
+    for b in bins:
+        print(f"{b['clase']}: bordes z {b['bordes_z']}  pool {b['pool']}  real {b['real']}  cuota {b['cuota_n']}  sims {b['sims']}")
+        for x in b["notas"]:
+            print(f"    {x}")
     cnt = selc.groupby(["sn_type", "variante"]).size().unstack(fill_value=0)
     cnt["real"] = real.groupby("sn_type").size()
     print(cnt.fillna(0).astype(int).to_string())
@@ -191,7 +236,9 @@ def load_variant(out, v, s):
     x = s[KEYS + ["z"]].astype({"oid": str, "part_index": int}).merge(ft, on=KEYS, how="left")
     for p in ("t_rise", "t_fall", "gamma"):
         x[f"{p}_rest"] = x[p].astype(float) / (1.0 + x.z)
-    ph = pd.concat([pd.read_parquet(q) for q in sorted((out / v / "parquet").glob("*.parquet"))], ignore_index=True)
+    # solo los parquets de clase que escribe prepare (no el _tasks_index de run_parquet ni nada mas)
+    ph = pd.concat([pd.read_parquet(q) for q in (out / v / "parquet" / f"{c}.parquet" for c in CLASES) if q.exists()],
+                   ignore_index=True)
     pc = pd.DataFrame([(str(o), int(k), c, *photo(d)) for (o, k, c), d in ph.groupby(KEYS)],
                       columns=KEYS + ["m_peak_r", "g_r"])
     x = x.merge(pc, on=KEYS, how="left")
@@ -244,8 +291,10 @@ def report(out, page=PAGE, seed=20261003, n_boot=1000):
     regla = (f"Seleccion igualada en ambos lados: real = holdout nuevo, mitad val (origen holdout, split val). "
              f"Sims = simulaciones ok del run base. En los dos lados m_peak_r &lt; {M_CUT} y al menos {P.MIN_PTS} puntos r "
              f"agrupados en 8 h (peak_mag_8h). A lo m&aacute;s n = {prep.get('n', '?')} por clase de proyecci&oacute;n "
-             f"(semilla {prep.get('seed', '?')}). Las sims se sortean sin reemplazo con un peso que iguala la z de las reales "
-             f"seleccionadas (4 bins por cuantiles, bordes 0 y 9, como g1_selcut.py). texp y tail usan las mismas sim_id "
+             f"(semilla {prep.get('seed', '?')}). Las sims se sortean sin reemplazo, estratificadas en los 4 bins de z de las "
+             f"reales seleccionadas (cuartiles, bordes 0 y 9, como g1_selcut.py): cuota por bin = n &times; fracci&oacute;n real "
+             f"(restos mayores). Un bin con menos sims que su cuota da todas y el faltante pasa al bin vecino con sims libres "
+             f"(tabla de bins abajo). texp y tail usan las mismas sim_id "
              f"(texp solo cambia las Ia). Features de run_parquet.py en r; t_rise, t_fall y gamma en reposo (/(1+z)). "
              f"M_r = m_peak_r - &mu;(z). g - r: mediana de g agrupada en 8 h a &plusmn;{G_WIN:g} d del pico r, menos m_peak_r. "
              f"&Delta; = mediana sim - mediana real, &sigma; por bootstrap ({n_boot} remuestreos de las dos muestras), KS de dos muestras.")
@@ -255,6 +304,8 @@ def report(out, page=PAGE, seed=20261003, n_boot=1000):
         "<h1>Puerta de realismo: bordes de plantilla contra la validaci&oacute;n real ZTF</h1>"
         f"<p>Salida: {out}. Runs: {prep.get('runs', {})}</p><p>{regla}</p>"
         "<p>Real relleno (gris); base, texp y tail como contornos.</p><img src='realismo.png' width='100%'>"
+        f"<h2>Bins de z por clase (pool de sims, reales, cuota y sims seleccionadas)</h2>"
+        f"{pd.DataFrame(prep.get('bins_z', [])).to_html(index=False)}"
         f"<h2>Tabla</h2>{tab.round(3).to_html(index=False) if len(tab) else '<p>sin filas</p>'}</body></html>")
     return tab
 

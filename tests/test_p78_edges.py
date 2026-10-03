@@ -114,6 +114,27 @@ def test_c_tail():
         _run(TAIL)                                         # sin z
 
 
+def test_c_tail_frame_factors():
+    """z alto y quiebre de pendiente dentro de la diferencia entre 20 d de reposo y 20 d observados: la pendiente es
+    el ajuste sobre exactamente los ultimos tail_fit_days (1+z) observados, y la cola llega a t1 + tail_days (1+z)."""
+    z = 0.3
+    tt = np.arange(0.0, 61.0, 1.0)                           # reposo; ventana correcta tt >= 40, la erronea tt >= 44.6
+    g = 18.0 + np.where(tt < 42.0, 0.0, 0.06 * (tt - 42.0))      # plana y despues 0.06 mag/d de reposo
+    t_rel = tt * (1 + z)
+    mjd = np.arange(58990.0, 59400.0, 1.0)
+    epochs = {"g": (mjd, np.full(mjd.size, 30.0))}          # limite profundo: toda la cola detectada
+    cfg = dict(TAIL, bands=["g"])
+    x = project_one(t_rel, {"g": g}, epochs, T_ANCHOR, np.random.default_rng(0), cfg, z=z)
+    t, t1 = T_ANCHOR + t_rel, T_ANCHOR + t_rel[-1]
+    tail = x[x.mjd > t1]
+    s = np.polyfit(tail.mjd - t1, tail.magnitud_modelo.astype(float), 1)[0]
+    ok = np.polyfit(t[t >= t1 - 20 * (1 + z)] - t1, g[t >= t1 - 20 * (1 + z)], 1)[0]
+    malo = np.polyfit(t[t >= t1 - 20] - t1, g[t >= t1 - 20], 1)[0]
+    assert abs(s - ok) < 1e-5 and abs(malo - ok) > 1e-3, (s, ok, malo)
+    assert t1 + 150 < tail.mjd.max() <= t1 + 150 * (1 + z)
+    assert tail.mjd.max() > t1 + 150 * (1 + z) - 1.0         # epocas diarias: llega al final de la cola
+
+
 def test_bad_edge_raises():
     with pytest.raises(ValueError):
         _run(dict(CFG, edge_pre="explosion"))

@@ -1,11 +1,13 @@
 # tests/test_p78_realism.py
-"""Puerta de realismo con datos falsos chicos: seleccion igualada, re-pesado en z, bootstrap y KS."""
+"""Puerta de realismo con datos falsos chicos: seleccion igualada, muestreo estratificado en z, lectura con el lector
+real de run_parquet (parquet_reader), reposo /(1+z), color con la ventana de +-2 d, bootstrap y KS."""
 import sys, json, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import numpy as np, pandas as pd
 import pytest
 from pipeline78 import realism as R
 from pipeline78.pilot_report import peak_mag_8h
+from parquet_reader import enumerate_tasks, parse_parquet_lightcurve      # ZLF, en sys.path por pilot_report
 
 COLS = ["oid", "part_index", "sn_type", "mjd", "filter", "magnitud_proyectada", "magerr", "upperlimit"]
 
@@ -31,7 +33,8 @@ def _fake(td):
                 z, m = rng.uniform(0.005, 0.12), 17.0 + rng.uniform(0, 2.5)
                 nn = 12 if k % 5 else 5                     # 1 de cada 5 con < 7 puntos
                 sims.append(dict(sim_id=sid, field=f, part_index=k, sn_type=c, template=f"T{c}{k % 3}", z=z,
-                                 m_peak_abs=-19.0 + 0.01 * k, status="ok"))
+                                 m_peak_abs=-19.0 + 0.01 * k, ebmv_host=0.01 * (k % 7), rv_host=3.1,
+                                 t_anchor=59010.0 + k, status="ok"))
                 ph.append(_lc(f, k, c, m, nn, rng).assign(sim_id=sid))
     sims, ph = pd.DataFrame(sims), pd.concat(ph, ignore_index=True)
     runs = {}
@@ -92,12 +95,30 @@ def test_prepare_and_report(tmp_path, capsys):
             assert np.isfinite(m) and m < 18.5 and R.photo(d)[0] == m
     hv = set(meta[(meta.origen == "holdout") & (meta.split == "val")].oid)
     assert set(real.oid) <= hv
-    # re-pesado en z: la mediana de z seleccionada queda mas cerca de la real que la del pool que pasa el corte
+    # estratificado en z: por bin, las sims seleccionadas son la cuota n * fraccion real, y la mediana se acerca a la real
     pk = R.sim_peaks(runs["base"])
     pool = sims.assign(m=sims.sim_id.map(pk)).query("m < 18.5")
     for c in ("Ia", "II"):
-        zr = real[real.sn_type == c].z.median()
-        assert abs(base[base.sn_type == c].z.median() - zr) < 0.5 * abs(pool[pool.sn_type == c].z.median() - zr)
+        zr = real[real.sn_type == c].z
+        e = R.z_edges(zr)
+        f = np.bincount(R.z_bin(zr, e), minlength=4) / len(zr)
+        t, notas = R.bin_targets(10, f, np.bincount(R.z_bin(pool[pool.sn_type == c].z, e), minlength=4))
+        b = base[base.sn_type == c]
+        assert not notas and (np.bincount(b.bin_z, minlength=4) == t).all() and (b.bin_z == R.z_bin(b.z, e)).all()
+        assert np.allclose(b.peso, 1.0)                      # cuotas cumplidas: fraccion real = fraccion seleccionada
+        assert abs(b.z.median() - zr.median()) < 0.5 * abs(pool[pool.sn_type == c].z.median() - zr.median())
+    assert "bordes z" in printed and "cuota" in printed
+    # la salida de prepare pasa por el lector real de run_parquet: cada tarea recibe solo sus filas
+    for v in ("base", "tail", "real"):
+        ph = pd.concat([pd.read_parquet(q) for q in (out / v / "parquet").glob("*.parquet")], ignore_index=True)
+        tasks = enumerate_tasks(out / v / "parquet", cache_path=tmp_path / f"_idx_{v}.parquet", workers=1)
+        assert len(tasks) == len(ph.groupby(["oid", "part_index", "sn_type"]))
+        for o, k, c, path in tasks[["oid", "part_index", "sn_type", "parquet_path"]].itertuples(index=False):
+            fd, name, typ = parse_parquet_lightcurve(path, k, c, oid=o)
+            assert name == f"{o}_{c}_p{int(k):02d}" and typ == c
+            own = ph[(ph.oid == o) & (ph.part_index == k) & (ph.sn_type == c)]
+            for b in ("g", "r"):
+                assert np.array_equal(fd[b].MJD.to_numpy(), np.sort(own[own["filter"] == b].mjd.to_numpy())), (v, o, k, b)
     # texp solo Ia; tail omite las que no estan ok y lo reporta
     assert set(selc[selc.variante == "texp"].sn_type) == {"Ia"}
     assert [p.name for p in (out / "texp/parquet").glob("*.parquet")] == ["Ia.parquet"]
@@ -106,6 +127,7 @@ def test_prepare_and_report(tmp_path, capsys):
     assert "tail:" in printed and "no ok" in printed
     with pytest.raises(ValueError, match="otra carpeta"):
         R.prepare({k: str(v) for k, v in runs.items()}, out, n=10, seed=1, real_dir=rd)
+    assert "_tasks_index.parquet" not in {q.name for q in (out / "base/parquet").iterdir()}
     # report: features falsas, bootstrap y KS
     frng = np.random.default_rng(2)
     for v in ("base", "texp", "tail"):
@@ -122,20 +144,51 @@ def test_prepare_and_report(tmp_path, capsys):
     assert (b.frac_validos_sim < 1).any()
     assert tab[tab.par == "M_r"].n_sim.gt(0).all() and tab[tab.par == "g_r"].n_sim.gt(0).all()
     assert (tmp_path / "page/index.html").exists() and (tmp_path / "page/realismo.png").exists()
+    # reposo: t/(1+z) con la z de la seleccion, y la mediana de la tabla sale de esos valores
+    ft = pd.read_csv(out / "base/features/features.csv").query("filter_band == 'r'")
+    x = R.load_variant(out, "base", base)
+    m = x.merge(ft[["oid", "part_index", "sn_type", "t_rise", "gamma"]], on=["oid", "part_index", "sn_type"],
+                suffixes=("", "_csv"))
+    assert len(m) and np.allclose(m.t_rise_rest, m.t_rise_csv / (1 + m.z)) and np.allclose(m.gamma_rest, m.gamma_csv / (1 + m.z))
+    row = tab[(tab.clase == "Ia") & (tab.variante == "base") & (tab.par == "t_rise_rest")].iloc[0]
+    assert np.isclose(row.med_sim, np.median((m.t_rise_csv / (1 + m.z))[m.sn_type == "Ia"]))
+    # m1: un _tasks_index (u otro parquet ajeno) en la carpeta no entra a la fotometria
+    pd.DataFrame({"oid": ["X"], "part_index": [0], "sn_type": ["Ia"]}).to_parquet(out / "base/parquet/_tasks_index.parquet")
+    pd.testing.assert_frame_equal(R.load_variant(out, "base", base), x)
 
 
-def test_prepare_refuses_other_physics(tmp_path):
+@pytest.mark.parametrize("campo,delta", [("z", 0.001), ("ebmv_host", 0.01), ("t_anchor", 1.0)])
+def test_prepare_refuses_other_physics_and_writes_nothing(tmp_path, campo, delta):
     runs, rd, sims, meta = _fake(tmp_path)
     s = pd.read_parquet(runs["tail"] / "_sims_all.parquet")
-    s["z"] = s.z + 0.001
+    s[campo] = s[campo] + delta
     s.to_parquet(runs["tail"] / "_sims_all.parquet", index=False)
+    out = tmp_path / "out"
     with pytest.raises(ValueError, match="otra fisica"):
-        R.prepare({k: str(v) for k, v in runs.items()}, tmp_path / "out", n=5, seed=1, real_dir=rd)
+        R.prepare({k: str(v) for k, v in runs.items()}, out, n=5, seed=1, real_dir=rd)
+    assert not out.exists()                                  # m2: se valida antes de escribir
 
 
-def test_z_weights_and_boot():
-    w = R.z_weights([0.01, 0.02, 0.2, 0.21, 0.22, 0.23], [0.01, 0.015, 0.02, 0.03])
-    assert w[2:].sum() < w[:2].sum()
+def test_photo_color_window():
+    """g - r: solo las g a +-2 d del pico r (dos noches) entran en la mediana; las de 3 y 5 d quedan fuera."""
+    t = 59000.0 + 2.0 * np.arange(10)                       # pico r en 59010
+    rows = [("o", 0, "Ia", ti, "r", 17.0 + 0.05 * abs(ti - 59010.0), 0.05, "F") for ti in t]
+    g = [(59008.2, 17.4), (59010.5, 17.2), (59013.0, 15.0), (59005.0, 15.5)]
+    rows += [("o", 0, "Ia", ti, "g", mi, 0.05, "F") for ti, mi in g]
+    m, gr = R.photo(pd.DataFrame(rows, columns=COLS))
+    assert m == 17.0 and np.isclose(gr, np.median([17.4, 17.2]) - 17.0)
+
+
+def test_bin_targets():
+    t, notas = R.bin_targets(50, [13 / 50, 11 / 50, 13 / 50, 13 / 50], [197, 111, 43, 49])
+    assert t.tolist() == [13, 11, 13, 13] and not notas
+    t, notas = R.bin_targets(50, [0.25] * 4, [24, 36, 10, 5])          # bins altos cortos: el faltante va al vecino
+    assert t.sum() == 50 and t[2] == 10 and t[3] == 5 and len(notas) == 2
+    t, notas = R.bin_targets(10, [0.25] * 4, [1, 1, 1, 1])             # no llega a n
+    assert t.tolist() == [1, 1, 1, 1] and "no hay sims libres" in notas[0]
+
+
+def test_boot():
     rng = np.random.default_rng(0)
     assert np.isnan(R.boot_sigma(np.array([1.0]), np.array([1.0, 2.0]), rng))
     assert R.boot_sigma(rng.normal(0, 1, 50), rng.normal(0, 1, 50), rng) > 0
