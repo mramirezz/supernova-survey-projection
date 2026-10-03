@@ -7,7 +7,7 @@ from multiprocessing import Pool
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from config import EXTINCTION_CONFIG, LUMINOSITY_CONFIG, PHILLIPS_CONFIG, SUBTYPE_FRACTIONS
+from config import EXTINCTION_CONFIG, LUMINOSITY_CONFIG, PHILLIPS_CONFIG, SUBTYPE_FRACTIONS, LF_AFTER_HOST_DUST
 from pipeline78.paths import REPO, STORE, FILTERS, DATA
 from pipeline78 import bands as B, engine, sampling, project, runcfg, survey
 from pipeline78.store import load_template, md5_file
@@ -53,7 +53,7 @@ def choose_template(seed, field, cls, k, rng, tpls, fractions=None):
 
 def _init(cfg, seed, log_path, fields, out):
     cat = pd.read_csv(STORE / "catalog.csv")
-    _W.update(cfg=cfg, seed=seed, out=Path(out), bands=B.survey_bands(cfg["survey"], cfg["bands"]),
+    _W.update(cfg=cfg, seed=seed, out=Path(out), bands=B.survey_bands(cfg["survey"], cfg["bands"]), rest=B.rest_bands(),
               log=survey.load_log(log_path, fields), mw=sampling.load_mw(cfg), z=sampling.z_sampler(cfg),
               tpl={c: [load_template(p) for p in cat[cat.clase == c].sort_values("sn").store_path]
                    for c in cfg["classes"]})
@@ -75,10 +75,15 @@ def simulate(field, cls, k, epochs, mw):
     ebv, rv = sampling.sample_ebv_host(rng, cls, tpl.get("subtype"))
     dm15 = tpl.get("dm15_B")
     M = sampling.sample_mpeak(rng, cls, dm15, tpl.get("subtype"))
-    t_rel, mags = engine.observed_lightcurves(tpl, z, ebv, rv, mw, _W["bands"], M - tpl["M_ref"])
+    dmag = M - tpl["M_ref"]
+    A_ref = 0.0
+    if cls in LF_AFTER_HOST_DUST:      # LF sin corregir por host: M es el pico ya enrojecido en la banda de referencia
+        A_ref = engine.host_ext_ref(tpl, ebv, rv, _W["rest"][tpl["ref_band"]])
+        dmag -= A_ref
+    t_rel, mags = engine.observed_lightcurves(tpl, z, ebv, rv, mw, _W["bands"], dmag)
     sim = dict(sim_id=_h(f"{field}|{cls}|{k}"), field=field, part_index=k, sn_type=cls,
                clf_class=tpl["clf_class"], template=tpl["sn"], subtype=tpl.get("subtype"), z=z, ebmv_host=ebv, rv_host=rv,
-               ebmv_mw=mw, m_peak_abs=M, w_z=w_z, dm15_used=np.nan if dm15 is None else dm15, t_anchor=np.nan,
+               ebmv_mw=mw, m_peak_abs=M, A_ref_host=A_ref, w_z=w_z, dm15_used=np.nan if dm15 is None else dm15, t_anchor=np.nan,
                status="no_coverage", n_rows=0, found=False, **{f"n_det_{b}": 0 for b in cfg["bands"]})
     if not mags:
         return sim, None
@@ -91,7 +96,7 @@ def simulate(field, cls, k, epochs, mw):
     sim.update(status="ok", n_rows=len(df), found=bool(df["found"].any()),
                **{f"n_det_{b}": int(df.loc[df["filter"] == b, "detected"].sum()) for b in cfg["bands"]})
     for c in ("sim_id", "part_index", "sn_type", "template", "subtype", "z", "ebmv_host", "rv_host", "ebmv_mw",
-              "m_peak_abs", "w_z", "dm15_used"):
+              "m_peak_abs", "A_ref_host", "w_z", "dm15_used"):
         df[c] = sim[c]
     df["oid"] = field
     df["part_index"] = df["part_index"].astype(np.int32)
@@ -147,7 +152,7 @@ def config_hash(cfg):
         inputs["sfd98_cache.parquet"] = md5_file(DATA / "sfd98_cache.parquet")
     blob = json.dumps(dict(cfg=cfg, catalog=md5_file(STORE / "catalog.csv"), filters=filt, inputs=inputs,
                            lf=LUMINOSITY_CONFIG, ext=EXTINCTION_CONFIG, phillips=PHILLIPS_CONFIG,
-                           subtype_fractions=SUBTYPE_FRACTIONS),
+                           subtype_fractions=SUBTYPE_FRACTIONS, lf_after_host_dust=sorted(LF_AFTER_HOST_DUST)),
                       sort_keys=True)
     return hashlib.md5(blob.encode()).hexdigest()
 

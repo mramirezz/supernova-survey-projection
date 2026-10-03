@@ -8,7 +8,7 @@ from config import EXTINCTION_CONFIG, LUMINOSITY_CONFIG, PHILLIPS_CONFIG
 from pipeline78.paths import DATA, STORE
 
 COSMO = FlatLambdaCDM(H0=70.0, Om0=0.3)          # la misma que core.utils.DL_calculator
-EXT_KEY = {"Ia": "SNIa", "II": "SNII", "IIb": "SNIIb", "IIn": "SNIIn", "Ibc": "SNIbc"}
+EXT_KEY = {"Ia": "SNIa", "II": "SNII_v78", "IIb": "SNIIb", "IIn": "SNIIn_v78", "Ibc": "SNIbc"}
 
 
 EXT_KEY_SUBTYPE = {"Ib": "SNIb", "Ic": "SNIc", "Ic-BL": "SNIcBL"}

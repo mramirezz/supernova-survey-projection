@@ -17,6 +17,18 @@ def extinction_factor(wave, rv, ebv):
     return np.asarray(redden_spectrum_adjusted(wave, np.ones_like(wave), Rv=rv, ebmv=ebv), dtype=float)
 
 
+def host_ext_ref(tpl, ebv, rv, band):
+    """Extincion del host (mag) en la banda de referencia de reposo, en la epoca mas cercana a t_peak."""
+    if ebv <= 0:
+        return 0.0
+    w = np.asarray(tpl["wave"], dtype=float)
+    i = int(np.argmin(np.abs(np.asarray(tpl["time"], dtype=float) - float(tpl["t_peak"]))))
+    f = np.asarray(tpl["flux"], dtype=np.float64)[i:i + 1]
+    F0, _ = synphot(w, f, band)
+    F1, _ = synphot(w, f * extinction_factor(w, rv, ebv)[None, :], band)
+    return float(-2.5 * np.log10(np.clip(F1[0], 1e-300, None) / np.clip(F0[0], 1e-300, None)))
+
+
 def observed_lightcurves(tpl, z, ebv_host, rv_host, ebv_mw, bands, dmag=0.0):
     if z <= 0:
         raise ValueError(f"observed_lightcurves: z debe ser > 0 (z={z})")

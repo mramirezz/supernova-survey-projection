@@ -8,7 +8,7 @@ from config import EXTINCTION_CONFIG, PHILLIPS_CONFIG
 
 def test_ebv_cdf_matches_mixture():
     # P(E<t) analitica de la mezcla: f0*erf(t/(s0*sqrt2)) + (1-f0)*(1-exp(-t*Rv/tau)), t=0.05
-    p = EXTINCTION_CONFIG["SNII"]
+    p = EXTINCTION_CONFIG["SNII_v78"]
     t = 0.05
     expected = (p["frac_zero"] * math.erf(t / (p["sigma_zero"] * math.sqrt(2)))
                 + (1 - p["frac_zero"]) * (1 - math.exp(-t * p["Rv"] / p["tau"])))
@@ -85,9 +85,14 @@ def test_ebv_subtype_without_key_uses_class():
     b = [sample_ebv_host(np.random.default_rng(i), "II") for i in range(20)]
     assert a == b
 
-def test_ebv_iin_is_always_zero():
-    rng = np.random.default_rng(2)
-    assert all(sample_ebv_host(rng, "IIn")[0] == 0.0 for _ in range(2000))
+def test_ebv_ii_iin_halfnormal_fixc():
+    # Fix C: half-normal sigma 0.2 en E(B-V), nunca negativa, R_V 3.1
+    for cls, st in (("II", "IIP"), ("II", "IIL"), ("IIn", "IIn")):
+        rng = np.random.default_rng(11)
+        d = [sample_ebv_host(rng, cls, st) for _ in range(20000)]
+        e = np.array([x[0] for x in d])
+        assert abs(e.mean() - 0.2 * math.sqrt(2 / math.pi)) < 0.004, (cls, e.mean())
+        assert (e >= 0).all() and all(x[1] == 3.1 for x in d)
 
 def test_fixb_config_values():
     from config import LUMINOSITY_CONFIG, SUBTYPE_FRACTIONS
@@ -101,7 +106,19 @@ def test_fixb_config_values():
     assert E["SNIb"] == {"frac_zero": 0.375, "tau": 0.68, "sigma_zero": 0.01, "Av_max": 3.0, "Rv": 2.6}
     assert E["SNIc"] == {"frac_zero": 0.27, "tau": 0.86, "sigma_zero": 0.01, "Av_max": 3.0, "Rv": 4.3}
     assert E["SNIcBL"] == {"frac_zero": 0.74, "tau": 0.58, "sigma_zero": 0.01, "Av_max": 3.0, "Rv": 3.1}
-    assert E["SNIIn"]["frac_zero"] == 1.0 and E["SNIIn"]["sigma_zero"] == 0.0
+    assert E["SNIIn"]["frac_zero"] == 1.0 and E["SNIIn"]["sigma_zero"] == 0.0     # runner viejo, sin tocar
+
+def test_fixc_config_values():
+    from config import LUMINOSITY_CONFIG, SUBTYPE_FRACTIONS, LF_AFTER_HOST_DUST, EXTINCTION_CONFIG as E
+    mp = LUMINOSITY_CONFIG["M_peak"]
+    assert mp["IIP"] == {"mean": -15.75, "sigma": 1.23} and mp["IIL"] == {"mean": -17.53, "sigma": 0.64}
+    assert SUBTYPE_FRACTIONS["II"] == {"IIP": 0.875, "IIL": 0.125}
+    assert LF_AFTER_HOST_DUST == {"II", "IIn"}
+    v = {"frac_zero": 1.0, "sigma_zero": 0.2, "tau": 0.25, "Av_max": 3.0, "Rv": 3.1}
+    assert E["SNII_v78"] == v and E["SNIIn_v78"] == v
+    rng = np.random.default_rng(4)
+    m = np.array([sample_mpeak(rng, "II", subtype="IIL") for _ in range(20000)])
+    assert abs(m.mean() + 17.53) < 0.03
 
 if __name__ == "__main__":
     for n, f in list(globals().items()):

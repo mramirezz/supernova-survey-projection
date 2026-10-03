@@ -74,6 +74,25 @@ def test_ibc_subtype_from_csv_and_missing_raises():
         else:
             raise AssertionError("no levanto ValueError")
 
+def test_ii_missing_subtype_raises_and_ref_band_R():
+    with tempfile.TemporaryDirectory() as td:
+        os.environ["P78_STORE"] = td
+        import importlib, pipeline78.paths, pipeline78.store, pipeline78.catalog
+        for m in (pipeline78.paths, pipeline78.store, pipeline78.catalog): importlib.reload(m)
+        from tests.p78_fakes import fake_template
+        fake_template(pathlib.Path(td) / "templates/II/FAKEII", sn="FAKEII", clase="II", t_peak=55000.0)
+        csv = pathlib.Path(td) / "ii.csv"
+        csv.write_text("sn,subtype\nOTRA,IIP\n")
+        try:
+            pipeline78.catalog.build_catalog(pathlib.Path(td), ii_csv=csv)
+        except ValueError as e:
+            assert "FAKEII" in str(e)
+        else:
+            raise AssertionError("no levanto ValueError")
+        csv.write_text("sn,subtype\nFAKEII,IIL\n")
+        r = pipeline78.catalog.build_catalog(pathlib.Path(td), ii_csv=csv).iloc[0]
+        assert r.subtype == "IIL" and r.ref_band == "R_rest" and r.clf_class == "II"
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"): f(); print("ok", n)

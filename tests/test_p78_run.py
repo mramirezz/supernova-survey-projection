@@ -158,3 +158,48 @@ def test_untracked_source_is_dirty():
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"): f(); print("ok", n)
+
+def _real_ii():
+    import pandas as pd
+    from pipeline78.store import load_template
+    c = pd.read_csv(pathlib.Path.home() / "thesis_store" / "catalog.csv")     # el real, aunque otros tests cambien P78_STORE
+    return [load_template(p) for p in c[c.clase == "II"].sort_values("sn").store_path]
+
+def test_fixc_peak_mag_equals_M_after_dust():
+    # con la regla nueva, el pico enrojecido en la banda de referencia de reposo es M
+    from pipeline78 import bands as B, engine
+    from pipeline78.engine import extinction_factor
+    rb = B.rest_bands()
+    for tpl in _real_ii():
+        band = rb[tpl["ref_band"]]
+        M, ebv, rv = -16.5, 0.3, 3.1
+        A = engine.host_ext_ref(tpl, ebv, rv, band)
+        assert A > 0.3
+        dmag = M - tpl["M_ref"] - A
+        i = int(np.argmin(np.abs(tpl["time"] - tpl["t_peak"])))
+        f = tpl["flux"][i:i + 1] * 10 ** (-0.4 * dmag) * extinction_factor(tpl["wave"], rv, ebv)[None, :]
+        F, _ = B.synphot(tpl["wave"], f, band)
+        m = float(-2.5 * np.log10(F[0] / band.f0))
+        assert abs(m - M) < 0.005, (tpl["sn"], m, M)
+
+def test_fixc_dmag_unchanged_other_classes_and_A_ref_zero():
+    import pipeline78.run as r
+    from config import LF_AFTER_HOST_DUST
+    assert not ({"Ia", "IIb", "Ibc"} & LF_AFTER_HOST_DUST)
+    from pipeline78.engine import host_ext_ref
+    assert host_ext_ref(dict(), 0.0, 3.1, None) == 0.0
+    with tempfile.TemporaryDirectory() as td:
+        run, _ = _setup(td, n=3)
+        out = run.main(_argv(td, "r_fc"))
+        s = pd.read_parquet(out / "_sims_all.parquet")
+        assert (s.A_ref_host == 0.0).all() and s.m_peak_abs.notna().all()
+
+def test_fixc_ii_subtype_frequencies_real_catalog():
+    import pipeline78.run as r
+    from config import SUBTYPE_FRACTIONS
+    tpls = _real_ii()
+    fr = SUBTYPE_FRACTIONS["II"]
+    rng = np.random.default_rng(9)
+    got = [r.choose_template(1, "F1", "II", k, rng, tpls, fr)["subtype"] for k in range(20000)]
+    for st, f in fr.items():
+        assert abs(np.mean([g == st for g in got]) - f) < 0.01, st

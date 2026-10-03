@@ -254,7 +254,11 @@ LUMINOSITY_CONFIG = {
         "Ic":    {"mean": -17.78, "sigma": 0.85},
         # Ic-BL: Taddia+2019 (2019A&A...621A..71T), banda r, corregida por Malmquist.
         "Ic-BL": {"mean": -18.57, "sigma": 0.63},
-        "II":  {"mean": -16.9, "sigma": 1.1},#-16.9 para SNII
+        "II":  {"mean": -16.9, "sigma": 1.1},#-16.9 para SNII (legado, sin cita; pipeline78 usa IIP/IIL)
+        # II por subtipo: Li+2011b (2011MNRAS.412.1441L), Tabla 6, banda R Vega, sin correccion de host,
+        # convertido de H0 = 73 a 70 (-0.091 mag). Criterio IIP/IIL de Li §2.2.3. Etiquetas en data/ii_subtypes.csv.
+        "IIP": {"mean": -15.75, "sigma": 1.23},
+        "IIL": {"mean": -17.53, "sigma": 0.64},
         # IIb: banda r, MW+host corregido; Taddia+2018 (2018A&A...609A.136T,
         # Tabla 5, 10 IIb CSP-I). Cross-check Richardson+2014: M_B=-16.99+/-0.45.
         # 2026-10-03: media -17.45 -> -17.57, convertida de H0 = 73.8 a H0 = 70 (Taddia+2018).
@@ -443,6 +447,12 @@ EXTINCTION_CONFIG = {
         "Av_max":     3.0,
         "Rv":         3.1,
     },
+    # --- pipeline78: II e IIn con la LF sin corregir por host (ver LF_AFTER_HOST_DUST). El runner viejo sigue con SNII/SNIIn.
+    # SUDARE I (Cappellaro+2015, 2015A&A...584A..62C, §7.1) siguiendo a Neill+2006 (2006AJ....132.1126N):
+    # half-normal sigma_E(B-V)=0.2, R_V=3.1. LF no corregida por host: el polvo solo da color y extincion
+    # relativa a la banda de referencia (LF_AFTER_HOST_DUST). frac_zero = 1 deja una half-normal en E(B-V).
+    "SNII_v78":  {"frac_zero": 1.0, "sigma_zero": 0.2, "tau": 0.25, "Av_max": 3.0, "Rv": 3.1},
+    "SNIIn_v78": {"frac_zero": 1.0, "sigma_zero": 0.2, "tau": 0.25, "Av_max": 3.0, "Rv": 3.1},
     "random_seed": None,           # None = aleatorio
     "use_reproducible_sampling": False,
 }
@@ -527,4 +537,11 @@ SN_WHITELIST = {
 # verificada (tabla-LF-polvo.md). Vacío = equiprobable entre plantillas (comportamiento actual)
 # Ibc: Shivvers+2017 (2017PASP..129e4201S, Tabla 3), dentro de las SE: Ib 35.6, Ic 21.5 + Ic-pec 3.2
 # y Ic-BL 3.7, normalizado (total 64.0): Ib 0.556, Ic 0.386, Ic-BL 0.058.
-SUBTYPE_FRACTIONS = {"Ibc": {"Ib": 0.556, "Ic": 0.386, "Ic-BL": 0.058}}
+# II: Li+2011b §3.2, IIP 70 % e IIL 10 % de las SNe II, renormalizado: IIP 0.875, IIL 0.125.
+SUBTYPE_FRACTIONS = {"Ibc": {"Ib": 0.556, "Ic": 0.386, "Ic-BL": 0.058}, "II": {"IIP": 0.875, "IIL": 0.125}}
+
+# Clases cuya LF (Li+2011b para II, Nyholm+2020 para IIn) NO esta corregida por polvo del host: ya lo trae dentro.
+# Para no contarlo dos veces: se sortea el polvo, se aplica a la plantilla desenrojecida y la escala de brillo se
+# elige para que la magnitud del pico YA enrojecida, en la banda de referencia de reposo, sea igual al M sorteado
+# (variante de Vincenzi+2021 §6.2). Ia, IIb e Ibc (LF corregida) imponen el M antes del polvo (D4).
+LF_AFTER_HOST_DUST = {"II", "IIn"}

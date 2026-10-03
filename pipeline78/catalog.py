@@ -8,8 +8,8 @@ from pipeline78.store import load_template
 from pipeline78.bands import rest_bands, synphot, COVERAGE_MIN
 
 CLF_CLASS = {"Ia": "Ia", "II": "II", "IIb": "II", "IIn": "II", "Ibc": "Ibc"}           # D1
-REF_BAND = {"Ia": "R_rest", "II": "r_rest", "IIb": "r_rest", "IIn": "r_rest", "Ibc": "r_rest"}
-# Ia: Prieto+2006 calibra en R (Bessell). IIb: Taddia+2018 en r. Ibc: Taddia (2018, 2019) mide en r (antes R por Drout+2011). II: valor adoptado, anclado en r.
+REF_BAND = {"Ia": "R_rest", "II": "R_rest", "IIb": "r_rest", "IIn": "r_rest", "Ibc": "r_rest"}
+# Ia: Prieto+2006 calibra en R (Bessell). IIb: Taddia+2018 en r. Ibc: Taddia (2018, 2019) mide en r (antes R por Drout+2011). II: Li+2011b mide en R (Vega).
 
 # Decision 2026-10-02: el pico de enfriamiento por shock se excluye del ancla (se usa el pico principal de Ni).
 EARLY_DAYS = 5.0          # el maximo global solo cuenta como enfriamiento si cae en los primeros 5 d
@@ -45,16 +45,19 @@ def peak_and_dm15(t, m):
     return tp, float(m[i]), bool(i == 0 or i == len(m) - 1), dm15
 
 
-def build_catalog(store_dir=STORE, subtypes_csv=DATA / "ibc_subtypes.csv"):
+def build_catalog(store_dir=STORE, subtypes_csv=DATA / "ibc_subtypes.csv", ii_csv=DATA / "ii_subtypes.csv"):
     rb = rest_bands()
-    sub = dict(pd.read_csv(subtypes_csv)[["sn", "subtype"]].values) if Path(subtypes_csv).exists() else {}
+    sub = {}
+    for c in (subtypes_csv, ii_csv):
+        if Path(c).exists():
+            sub.update(dict(pd.read_csv(c)[["sn", "subtype"]].values))
     rows = []
     for meta_p in sorted(Path(store_dir).glob("templates/*/*/meta.json")):
         tpl = load_template(meta_p.parent)
         cls = tpl["clase"]
-        if cls == "Ibc" and tpl["sn"] not in sub:
-            raise ValueError(f"{tpl['sn']}: Ibc sin subtipo en {subtypes_csv}")
-        subtype = sub[tpl["sn"]] if cls == "Ibc" else cls
+        if cls in ("Ibc", "II") and tpl["sn"] not in sub:
+            raise ValueError(f"{tpl['sn']}: {cls} sin subtipo en {subtypes_csv if cls == 'Ibc' else ii_csv}")
+        subtype = sub[tpl["sn"]] if cls in ("Ibc", "II") else cls
         t = tpl["time"]
         m_r = rest_mag(tpl, rb["r_rest"])
         t_peak, _, edge, _ = peak_and_dm15(t, m_r)
