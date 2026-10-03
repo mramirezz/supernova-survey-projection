@@ -65,7 +65,7 @@ def test_ibc_subtype_from_csv_and_missing_raises():
         cat = pipeline78.catalog.build_catalog(pathlib.Path(td), subtypes_csv=csv)
         d = dict(zip(cat.sn, cat.subtype))
         assert d["FAKEIBC"] == "Ic" and d["FAKE1"] == "Ia"
-        assert pipeline78.catalog.REF_BAND["Ibc"] == "R_rest"
+        assert pipeline78.catalog.REF_BAND["Ibc"] == "r_rest"
         csv.write_text("sn,subtype,source\nOTRA,Ic,test\n")
         try:
             pipeline78.catalog.build_catalog(pathlib.Path(td), subtypes_csv=csv)

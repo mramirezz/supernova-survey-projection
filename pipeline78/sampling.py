@@ -11,8 +11,11 @@ COSMO = FlatLambdaCDM(H0=70.0, Om0=0.3)          # la misma que core.utils.DL_ca
 EXT_KEY = {"Ia": "SNIa", "II": "SNII", "IIb": "SNIIb", "IIn": "SNIIn", "Ibc": "SNIbc"}
 
 
-def sample_ebv_host(rng, cls):
-    p = EXTINCTION_CONFIG[EXT_KEY[cls]]
+EXT_KEY_SUBTYPE = {"Ib": "SNIb", "Ic": "SNIc", "Ic-BL": "SNIcBL"}
+
+
+def sample_ebv_host(rng, cls, subtype=None):
+    p = EXTINCTION_CONFIG[EXT_KEY_SUBTYPE.get(subtype, EXT_KEY[cls])]
     if rng.random() < p["frac_zero"]:
         return float(abs(rng.normal(0.0, p["sigma_zero"]))), float(p["Rv"])
     av = min(float(rng.exponential(p["tau"])), float(p["Av_max"]))

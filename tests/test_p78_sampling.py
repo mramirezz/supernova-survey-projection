@@ -28,7 +28,7 @@ def test_same_seed_same_draws():
 def test_subtype_ic_bl_mean():
     rng = np.random.default_rng(3)
     m = np.array([sample_mpeak(rng, "Ibc", subtype="Ic-BL") for _ in range(20000)])
-    assert abs(m.mean() - (-19.0)) < 0.03
+    assert abs(m.mean() - (-18.57)) < 0.03
 
 def test_unknown_subtype_falls_back_to_class():
     from config import LUMINOSITY_CONFIG
@@ -69,6 +69,31 @@ def test_volume_weight_cache_equals_direct():
     assert _vol_norm(0.005, 0.25) == direct and _vol_norm(0.005, 0.25) == direct
     z = np.array([0.01, 0.1])
     assert np.array_equal(z_volume_weight(z, 0.005, 0.25), COSMO.differential_comoving_volume(z).value / direct)
+
+def test_ebv_subtype_ic_mean_av():
+    rng = np.random.default_rng(5)
+    av = np.array([(lambda e, r: e * r)(*sample_ebv_host(rng, "Ibc", "Ic")) for _ in range(20000)])
+    assert abs(av.mean() - (1 - 0.27) * 0.86) < 0.02, av.mean()
+    rng = np.random.default_rng(5)
+    assert all(sample_ebv_host(rng, "Ibc", "Ic")[1] == 4.3 for _ in range(50))
+
+def test_ebv_subtype_without_key_uses_class():
+    a = [sample_ebv_host(np.random.default_rng(i), "II", None) for i in range(20)]
+    b = [sample_ebv_host(np.random.default_rng(i), "II") for i in range(20)]
+    assert a == b
+
+def test_ebv_iin_is_always_zero():
+    rng = np.random.default_rng(2)
+    assert all(sample_ebv_host(rng, "IIn")[0] == 0.0 for _ in range(2000))
+
+def test_fixb_config_values():
+    from config import LUMINOSITY_CONFIG, SUBTYPE_FRACTIONS
+    mp = LUMINOSITY_CONFIG["M_peak"]
+    assert mp["Ib"] == {"mean": -17.33, "sigma": 0.60} and mp["Ic"] == {"mean": -17.78, "sigma": 0.85}
+    assert mp["Ic-BL"] == {"mean": -18.57, "sigma": 0.63} and mp["IIb"]["mean"] == -17.57
+    assert mp["IIn"] == {"mean": -18.72, "sigma": 1.32}
+    f = SUBTYPE_FRACTIONS["Ibc"]
+    assert f == {"Ib": 0.556, "Ic": 0.386, "Ic-BL": 0.058} and abs(sum(f.values()) - 1) < 1e-9
 
 if __name__ == "__main__":
     for n, f in list(globals().items()):

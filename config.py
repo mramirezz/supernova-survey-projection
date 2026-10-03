@@ -244,15 +244,21 @@ LUMINOSITY_CONFIG = {
     "M_peak": {
         "Ia":  {"mean": -19.3, "sigma": 0.3},
         "Ibc": {"mean": -17.3, "sigma": 0.9},
-        # Ib, Ic, Ic-BL: Drout+2011 (2011ApJ...741...97D), banda R (Vega), corregidas
-        # por extincion del host, decision Mauricio 2026-10-02 (G1). "Ibc" queda para el runner viejo.
-        "Ib":    {"mean": -17.9, "sigma": 0.9},
-        "Ic":    {"mean": -18.3, "sigma": 0.6},
-        "Ic-BL": {"mean": -19.0, "sigma": 1.1},
+        # Ib, Ic, Ic-BL. "Ibc" queda para el runner viejo.
+        # Historial: Drout+2011 (Ib -17.9/0.9, Ic -18.3/0.6, Ic-BL -19.0/1.1, banda R) reemplazado
+        # 2026-10-03: su LF supone <A_V>~1.1 y el par era inconsistente.
+        # Ib: Taddia+2018 (2018A&A...609A.136T), banda r, H0 = 70.
+        "Ib":    {"mean": -17.33, "sigma": 0.60},
+        # Ic: media de Taddia+2018 (banda r, H0 = 70). sigma de Barbarino+2021 (2021A&A...651A..81B),
+        # porque Taddia tiene N = 5 y da sigma 0.21 (eleccion de Mauricio, 2026-10-03).
+        "Ic":    {"mean": -17.78, "sigma": 0.85},
+        # Ic-BL: Taddia+2019 (2019A&A...621A..71T), banda r, corregida por Malmquist.
+        "Ic-BL": {"mean": -18.57, "sigma": 0.63},
         "II":  {"mean": -16.9, "sigma": 1.1},#-16.9 para SNII
         # IIb: banda r, MW+host corregido; Taddia+2018 (2018A&A...609A.136T,
         # Tabla 5, 10 IIb CSP-I). Cross-check Richardson+2014: M_B=-16.99+/-0.45.
-        "IIb": {"mean": -17.45, "sigma": 0.54},
+        # 2026-10-03: media -17.45 -> -17.57, convertida de H0 = 73.8 a H0 = 70 (Taddia+2018).
+        "IIb": {"mean": -17.57, "sigma": 0.54},
         # SLSN-I: banda g REST-FRAME con K-corr; Chen+2023 (2023ApJ...943...41C,
         # 78 SLSN-I de ZTF-I): mediana -21.48, percentiles 16/84 = -22.09/-20.35.
         # Distribucion ASIMETRICA (decision Mauricio 2026-08-15): split-normal
@@ -263,7 +269,9 @@ LUMINOSITY_CONFIG = {
         # "superluminosas" IIn; Nyholm+2020 (2020A&A...637A..73N, verificado en
         # ADS 2026-10-02): M_r,peak = -19.18 +/- 1.32. Muestra limitada en
         # magnitud (sesgo Malmquist hacia brillantes). Decision Mauricio 2026-10-02.
-        "IIn": {"mean": -19.18, "sigma": 1.32},
+        # 2026-10-03: Nyholm+2020 SIN las 3 SLSN-IIn (media -18.72, sigma 1.32). No corrige el polvo
+        # del host (solo 3 de 42), asi que el polvo de IIn queda OFF (ver EXTINCTION_CONFIG).
+        "IIn": {"mean": -18.72, "sigma": 1.32},
     },
 
     # Anclaje REST-FRAME por tipo (2026-08-15): para tipos cuya M de literatura
@@ -396,6 +404,11 @@ EXTINCTION_CONFIG = {
         "Rv":         3.1,   # Cardelli+1989. Nota: Stritzinger ve Rv por subtipo
                              # (IIb~1.1, Ic~4.3); como mezclamos todo Ibc usamos un Rv único.
     },
+    # --- Ibc por subtipo (2026-10-03): Stritzinger+2018 (2018A&A...609A.135S, CSP-I) para Ib e Ic,
+    # Taddia+2019 (2019A&A...621A..71T) para Ic-BL. Sustituyen a "SNIbc" en el pipeline78.
+    "SNIb":   {"frac_zero": 0.375, "tau": 0.68, "sigma_zero": 0.01, "Av_max": 3.0, "Rv": 2.6},   # Stritzinger+2018
+    "SNIc":   {"frac_zero": 0.27,  "tau": 0.86, "sigma_zero": 0.01, "Av_max": 3.0, "Rv": 4.3},   # Stritzinger+2018
+    "SNIcBL": {"frac_zero": 0.74,  "tau": 0.58, "sigma_zero": 0.01, "Av_max": 3.0, "Rv": 3.1},   # Taddia+2019
     # --- SNe IIb (clase propia desde 2026-08-15) ---
     # Stritzinger+2018 (2018A&A...609A.135S, CSP-I): 3/10 IIb minimamente
     # enrojecidas -> frac_zero 0.30; tau = <A_V> de las 7 enrojecidas = 0.35
@@ -421,12 +434,12 @@ EXTINCTION_CONFIG = {
         "Av_max":     3.0,
         "Rv":         3.1,
     },
-    # --- SNe IIn: PROVISIONAL = mismos parametros que SNII (decision Mauricio
-    # 2026-10-02), hasta tener una distribucion de host propia para IIn.
+    # --- SNe IIn: polvo OFF. LF de Nyholm no corregida por host: el polvo ya esta dentro
+    # (decision 2026-10-03). Antes: provisional = parametros de SNII (frac_zero 0.20, sigma_zero 0.01).
     "SNIIn": {
         "tau":        0.25,
-        "frac_zero":  0.20,
-        "sigma_zero": 0.01,
+        "frac_zero":  1.0,
+        "sigma_zero": 0.0,
         "Av_max":     3.0,
         "Rv":         3.1,
     },
@@ -512,4 +525,6 @@ SN_WHITELIST = {
 # ============================================================
 # fracciones intrínsecas por clase de proyección, {clase: {subtipo: fracción}}; se llenan con la tabla
 # verificada (tabla-LF-polvo.md). Vacío = equiprobable entre plantillas (comportamiento actual)
-SUBTYPE_FRACTIONS = {}
+# Ibc: Shivvers+2017 (2017PASP..129e4201S, Tabla 3), dentro de las SE: Ib 35.6, Ic 21.5 + Ic-pec 3.2
+# y Ic-BL 3.7, normalizado (total 64.0): Ib 0.556, Ic 0.386, Ic-BL 0.058.
+SUBTYPE_FRACTIONS = {"Ibc": {"Ib": 0.556, "Ic": 0.386, "Ic-BL": 0.058}}

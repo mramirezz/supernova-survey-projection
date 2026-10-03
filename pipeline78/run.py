@@ -72,7 +72,7 @@ def simulate(field, cls, k, epochs, mw):
         w_z = float(sampling.z_volume_weight(z, cfg["zmin"], zmx)) * (zmx - cfg["zmin"])
     else:
         w_z = 1.0
-    ebv, rv = sampling.sample_ebv_host(rng, cls)
+    ebv, rv = sampling.sample_ebv_host(rng, cls, tpl.get("subtype"))
     dm15 = tpl.get("dm15_B")
     M = sampling.sample_mpeak(rng, cls, dm15, tpl.get("subtype"))
     t_rel, mags = engine.observed_lightcurves(tpl, z, ebv, rv, mw, _W["bands"], M - tpl["M_ref"])

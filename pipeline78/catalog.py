@@ -8,8 +8,8 @@ from pipeline78.store import load_template
 from pipeline78.bands import rest_bands, synphot, COVERAGE_MIN
 
 CLF_CLASS = {"Ia": "Ia", "II": "II", "IIb": "II", "IIn": "II", "Ibc": "Ibc"}           # D1
-REF_BAND = {"Ia": "R_rest", "II": "r_rest", "IIb": "r_rest", "IIn": "r_rest", "Ibc": "R_rest"}
-# Ia: Prieto+2006 calibra en R (Bessell). IIb: Taddia+2018 en r. Ibc: Drout+2011 calibra en R. II: valor adoptado, anclado en r.
+REF_BAND = {"Ia": "R_rest", "II": "r_rest", "IIb": "r_rest", "IIn": "r_rest", "Ibc": "r_rest"}
+# Ia: Prieto+2006 calibra en R (Bessell). IIb: Taddia+2018 en r. Ibc: Taddia (2018, 2019) mide en r (antes R por Drout+2011). II: valor adoptado, anclado en r.
 
 # Decision 2026-10-02: el pico de enfriamiento por shock se excluye del ancla (se usa el pico principal de Ni).
 EARLY_DAYS = 5.0          # el maximo global solo cuenta como enfriamiento si cae en los primeros 5 d
