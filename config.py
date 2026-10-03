@@ -506,3 +506,10 @@ SN_WHITELIST = {
     "IIb": None,
     "SLSN-I": None,
 }
+
+# ============================================================
+# FRACCIONES DE SUBTIPO (pipeline78)
+# ============================================================
+# fracciones intrínsecas por clase de proyección, {clase: {subtipo: fracción}}; se llenan con la tabla
+# verificada (tabla-LF-polvo.md). Vacío = equiprobable entre plantillas (comportamiento actual)
+SUBTYPE_FRACTIONS = {}

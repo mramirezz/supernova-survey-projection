@@ -43,6 +43,14 @@ def zgrid_cdf(zmin, zmax, n=4000):
     return z, c / c[-1]
 
 
+def z_volume_weight(z, zmin, zmax, n=4000):
+    """(dV/dz)(z) / int_zmin^zmax dV/dz, con la misma cosmologia que zgrid_cdf."""
+    g = np.linspace(zmin, zmax, n)
+    dv = COSMO.differential_comoving_volume(g).value
+    norm = float(np.sum(0.5 * (dv[1:] + dv[:-1]) * np.diff(g)))
+    return COSMO.differential_comoving_volume(np.asarray(z, float)).value / norm
+
+
 def z_sampler(cfg):
     mode = cfg["z_mode"]
     if mode == "fixed":
@@ -53,6 +61,9 @@ def z_sampler(cfg):
     if mode == "volumetric":
         z, c = zgrid_cdf(cfg["zmin"], cfg["zmax"])
         return lambda rng, cls: float(np.interp(rng.random(), c, z))
+    if mode == "uniform_weighted":
+        zmin, zmx = cfg["zmin"], cfg["zmax_by_class"]
+        return lambda rng, cls: float(rng.uniform(zmin, zmx[cls]))
     raise ValueError(mode)
 
 

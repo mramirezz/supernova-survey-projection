@@ -3,7 +3,7 @@ import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import math
 import numpy as np
-from pipeline78.sampling import sample_ebv_host, sample_mpeak, zgrid_cdf, z_sampler
+from pipeline78.sampling import sample_ebv_host, sample_mpeak, zgrid_cdf, z_sampler, z_volume_weight
 from config import EXTINCTION_CONFIG, PHILLIPS_CONFIG
 
 def test_ebv_cdf_matches_mixture():
@@ -42,6 +42,25 @@ def test_volumetric_favours_high_z():
 
 def test_fixed_z_sampler():
     assert z_sampler({"z_mode": "fixed", "z_fixed": 0.2})(np.random.default_rng(0), "Ia") == 0.2
+
+_UW = dict(z_mode="uniform_weighted", zmin=0.005, zmax_by_class={"Ia": 0.25, "II": 0.15})
+
+def _uw_draws(cls, n=20000, seed=11):
+    rng = np.random.default_rng(seed); f = z_sampler(_UW)
+    z = np.array([f(rng, cls) for _ in range(n)])
+    return z, z_volume_weight(z, _UW["zmin"], _UW["zmax_by_class"][cls]) * (_UW["zmax_by_class"][cls] - _UW["zmin"])
+
+def test_uniform_weighted_mean_weight_is_one():
+    for cls in ("Ia", "II"):
+        z, w = _uw_draws(cls)
+        assert z.min() >= _UW["zmin"] and z.max() <= _UW["zmax_by_class"][cls]
+        assert abs(w.mean() - 1.0) < 0.02, w.mean()
+
+def test_uniform_weighted_reproduces_volumetric_cdf():
+    z, w = _uw_draws("Ia")
+    i = np.argsort(z); ecdf = np.cumsum(w[i]) / w.sum()
+    g, c = zgrid_cdf(_UW["zmin"], _UW["zmax_by_class"]["Ia"])
+    assert np.abs(ecdf - np.interp(z[i], g, c)).max() < 0.02
 
 if __name__ == "__main__":
     for n, f in list(globals().items()):

@@ -99,6 +99,44 @@ def test_refuses_changed_log():
         except SystemExit as e:
             assert "otra configuracion" in str(e)
 
+def test_subtype_fractions_choose_template():
+    import pipeline78.run as r
+    fr = {"Ic-BL": 0.05, "Ib": 0.27, "Ic": 0.68}
+    tpls = [dict(sn=f"{st}{i}", subtype=st) for st in fr for i in range(4)]
+    rng = np.random.default_rng(5)
+    n = 20000
+    got = [r.choose_template(1, "F1", "Ibc", k, rng, tpls, fr)["subtype"] for k in range(n)]
+    for st, f in fr.items():
+        assert abs(np.mean([g == st for g in got]) - f) < 0.01, st
+    # sin fracciones: igual que la permutacion original y sin consumir rng
+    rng2 = np.random.default_rng(5); st0 = rng2.bit_generator.state
+    t = r.choose_template(1, "F1", "Ibc", 3, rng2, tpls, None)
+    assert rng2.bit_generator.state == st0
+    order = np.random.default_rng([1, r._h("F1") & 0xFFFFFFFF, r._h("Ibc") & 0xFFFFFFFF]).permutation(len(tpls))
+    assert t is tpls[order[3 % len(tpls)]]
+
+def test_missing_subtype_templates_raises():
+    import pipeline78.run as r
+    tpls = [dict(sn="a", subtype="Ib")]
+    try:
+        r._by_subtype(tpls, {"Ib": 0.5, "Ic-BL": 0.5}, "Ibc"); raise AssertionError("debio fallar")
+    except ValueError as e:
+        assert "Ic-BL" in str(e)
+
+def test_w_z_column_and_hash_includes_fractions():
+    with tempfile.TemporaryDirectory() as td:
+        run, cfg = _setup(td, n=3)
+        out = run.main(_argv(td, "r9"))
+        s = pd.read_parquet(out / "_sims_all.parquet")
+        assert (s.w_z == 1.0).all()
+        assert "w_z" in pd.read_parquet(next(out.glob("F1__*.parquet"))).columns
+        h1 = run.config_hash(cfg)
+        run.SUBTYPE_FRACTIONS["Ia"] = {"Ia": 1.0}
+        try:
+            assert run.config_hash(cfg) != h1
+        finally:
+            run.SUBTYPE_FRACTIONS.pop("Ia")
+
 def test_untracked_source_is_dirty():
     import pipeline78.run as r
     f = pathlib.Path(r.REPO) / "pipeline78" / "_zz_untracked_probe.py"

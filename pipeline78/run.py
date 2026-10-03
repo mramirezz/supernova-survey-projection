@@ -7,7 +7,7 @@ from multiprocessing import Pool
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from config import EXTINCTION_CONFIG, LUMINOSITY_CONFIG, PHILLIPS_CONFIG
+from config import EXTINCTION_CONFIG, LUMINOSITY_CONFIG, PHILLIPS_CONFIG, SUBTYPE_FRACTIONS
 from pipeline78.paths import REPO, STORE, FILTERS, DATA
 from pipeline78 import bands as B, engine, sampling, project, runcfg, survey
 from pipeline78.store import load_template, md5_file
@@ -23,27 +23,59 @@ def sim_rng(seed, field, cls, k):
     return np.random.default_rng([seed, _h(field) & 0xFFFFFFFF, _h(cls) & 0xFFFFFFFF, k])
 
 
+def _by_subtype(tpls, fractions, cls):
+    """{subtipo: [plantillas]} solo si la clase tiene fracciones. Un subtipo con fraccion > 0 sin plantillas es error."""
+    by = {}
+    for t in tpls:
+        by.setdefault(t.get("subtype"), []).append(t)
+    for st, f in fractions.items():
+        if f > 0 and not by.get(st):
+            raise ValueError(f"clase {cls}: el subtipo {st!r} tiene fraccion {f} pero no hay plantillas")
+    return by
+
+
+def choose_template(seed, field, cls, k, rng, tpls, fractions=None):
+    """Sin fracciones: permutacion por (seed, field, cls), idem al comportamiento original (no consume rng).
+    Con fracciones: sortea el subtipo con rng y elige dentro de el con permutacion por (seed, field, cls, subtipo)."""
+    if not fractions:
+        order = np.random.default_rng([seed, _h(field) & 0xFFFFFFFF, _h(cls) & 0xFFFFFFFF]).permutation(len(tpls))
+        return tpls[order[k % len(tpls)]]
+    names = sorted(st for st, f in fractions.items() if f > 0)
+    p = np.array([fractions[st] for st in names], float)
+    st = names[int(rng.choice(len(names), p=p / p.sum()))]
+    pool = [t for t in tpls if t.get("subtype") == st]
+    order = np.random.default_rng([seed, _h(field) & 0xFFFFFFFF, _h(cls) & 0xFFFFFFFF, _h(st) & 0xFFFFFFFF]).permutation(len(pool))
+    return pool[order[k % len(pool)]]
+
+
 def _init(cfg, seed, log_path, fields, out):
     cat = pd.read_csv(STORE / "catalog.csv")
     _W.update(cfg=cfg, seed=seed, out=Path(out), bands=B.survey_bands(cfg["survey"], cfg["bands"]),
               log=survey.load_log(log_path, fields), mw=sampling.load_mw(cfg), z=sampling.z_sampler(cfg),
               tpl={c: [load_template(p) for p in cat[cat.clase == c].sort_values("sn").store_path]
                    for c in cfg["classes"]})
+    for c in cfg["classes"]:
+        if SUBTYPE_FRACTIONS.get(c):
+            _by_subtype(_W["tpl"][c], SUBTYPE_FRACTIONS[c], c)
 
 
 def simulate(field, cls, k, epochs, mw):
     cfg, tpls = _W["cfg"], _W["tpl"][cls]
     rng = sim_rng(_W["seed"], field, cls, k)
-    order = np.random.default_rng([_W["seed"], _h(field) & 0xFFFFFFFF, _h(cls) & 0xFFFFFFFF]).permutation(len(tpls))
-    tpl = tpls[order[k % len(tpls)]]
+    tpl = choose_template(_W["seed"], field, cls, k, rng, tpls, SUBTYPE_FRACTIONS.get(cls))
     z = _W["z"](rng, cls)
+    if cfg["z_mode"] == "uniform_weighted":
+        zmx = cfg["zmax_by_class"][cls]
+        w_z = float(sampling.z_volume_weight(z, cfg["zmin"], zmx)) * (zmx - cfg["zmin"])
+    else:
+        w_z = 1.0
     ebv, rv = sampling.sample_ebv_host(rng, cls)
     dm15 = tpl.get("dm15_B")
     M = sampling.sample_mpeak(rng, cls, dm15, tpl.get("subtype"))
     t_rel, mags = engine.observed_lightcurves(tpl, z, ebv, rv, mw, _W["bands"], M - tpl["M_ref"])
     sim = dict(sim_id=_h(f"{field}|{cls}|{k}"), field=field, part_index=k, sn_type=cls,
                clf_class=tpl["clf_class"], template=tpl["sn"], subtype=tpl.get("subtype"), z=z, ebmv_host=ebv, rv_host=rv,
-               ebmv_mw=mw, m_peak_abs=M, dm15_used=np.nan if dm15 is None else dm15, t_anchor=np.nan,
+               ebmv_mw=mw, m_peak_abs=M, w_z=w_z, dm15_used=np.nan if dm15 is None else dm15, t_anchor=np.nan,
                status="no_coverage", n_rows=0, found=False, **{f"n_det_{b}": 0 for b in cfg["bands"]})
     if not mags:
         return sim, None
@@ -56,7 +88,7 @@ def simulate(field, cls, k, epochs, mw):
     sim.update(status="ok", n_rows=len(df), found=bool(df["found"].any()),
                **{f"n_det_{b}": int(df.loc[df["filter"] == b, "detected"].sum()) for b in cfg["bands"]})
     for c in ("sim_id", "part_index", "sn_type", "template", "subtype", "z", "ebmv_host", "rv_host", "ebmv_mw",
-              "m_peak_abs", "dm15_used"):
+              "m_peak_abs", "w_z", "dm15_used"):
         df[c] = sim[c]
     df["oid"] = field
     df["part_index"] = df["part_index"].astype(np.int32)
@@ -111,7 +143,8 @@ def config_hash(cfg):
     if cfg.get("mw_mode") == "ztf_sfd":
         inputs["sfd98_cache.parquet"] = md5_file(DATA / "sfd98_cache.parquet")
     blob = json.dumps(dict(cfg=cfg, catalog=md5_file(STORE / "catalog.csv"), filters=filt, inputs=inputs,
-                           lf=LUMINOSITY_CONFIG, ext=EXTINCTION_CONFIG, phillips=PHILLIPS_CONFIG),
+                           lf=LUMINOSITY_CONFIG, ext=EXTINCTION_CONFIG, phillips=PHILLIPS_CONFIG,
+                           subtype_fractions=SUBTYPE_FRACTIONS),
                       sort_keys=True)
     return hashlib.md5(blob.encode()).hexdigest()
 
