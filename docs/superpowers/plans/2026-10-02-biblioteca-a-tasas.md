@@ -2803,6 +2803,7 @@ git commit -m "pipeline78: tasas por control time Monte Carlo con matriz de clas
 
 ### Task 23: Validación contra SUDARE I con su propia clasificación
 
+> **Nota 2026-10-03:** en arXiv:1509.04496v4 la tabla de tasas es la **Tabla 7**. La Tabla 5 es la comparación de clasificación. Ya está transcrita en `data/sudare_I_table5.csv` y la exposición A = N/r está en `.superpowers/sdd/.../sudare-table5-notas.md`. Los bines publicados son: Ia en 0.05–0.75 (4 bines), CC en 0.05–0.35, II e Ib/c solo en 0.15–0.35, e IIn en 0.15–0.75.
 > **Enmienda 2026-10-03 (Nivel 1).** Se reduce a transcribir la Tabla 5 (N, r y errores por tipo y bin) a `data/sudare_I_table5.csv` y a verificar que N_SUDARE / A reproduce r_SUDARE. Recalcular el CT propio queda como chequeo opcional.
 
 > **Enmienda 2026-10-02.** `data/sudare_I_table5.csv` lleva columnas `z1, z2` (no `zbin`), que son las que usa el código.
