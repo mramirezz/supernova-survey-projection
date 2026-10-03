@@ -48,19 +48,31 @@ def wmedian(x, w=None):
 
 def real_peak_M(real):
     """M_r al pico (estimador de 8 h) de cada SN real de validacion. Devuelve DataFrame label, M."""
-    files = {p.name: p for p in PHOT_DIR.glob("*/*_photometry.dat")}
-    rows = []
+    files, dup = {}, set()
+    for p in PHOT_DIR.glob("*/*_photometry.dat"):
+        if p.name in files:
+            dup.add(p.name)
+        files.setdefault(p.name, p)
+    if dup:
+        print(f"WARNING: {len(dup)} nombres de fotometria duplicados entre subcarpetas (se usa el primero): {sorted(dup)[:10]}")
+    rows, no_file, bad_z, few = [], 0, 0, 0
     for sn, lab, z in zip(real.sn_name, real.label, real.z):
         f = files.get(f"{sn}_photometry.dat")
-        if f is None or not np.isfinite(z):
+        if f is None:
+            no_file += 1
+            continue
+        if not np.isfinite(z):
+            bad_z += 1
             continue
         fd, _ = parse_photometry_file(str(f))
         r = fd.get("r")
-        if r is None:
-            continue
-        m = peak_mag_8h(r[~r["Upperlimit"]])
+        m = peak_mag_8h(r[~r["Upperlimit"]]) if r is not None else np.nan
         if np.isfinite(m):
             rows.append(dict(sn_name=sn, label=lab, M=m - mu(z)))
+        else:
+            few += 1
+    print(f"real_val: {len(real)} SNe, usadas {len(rows)}, descartadas: sin archivo {no_file}, z no finito {bad_z}, "
+          f"< {MIN_PTS} puntos agrupados en r {few}")
     return pd.DataFrame(rows)
 
 

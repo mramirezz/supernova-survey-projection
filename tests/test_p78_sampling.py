@@ -62,6 +62,14 @@ def test_uniform_weighted_reproduces_volumetric_cdf():
     g, c = zgrid_cdf(_UW["zmin"], _UW["zmax_by_class"]["Ia"])
     assert np.abs(ecdf - np.interp(z[i], g, c)).max() < 0.02
 
+def test_volume_weight_cache_equals_direct():
+    from pipeline78.sampling import COSMO, _vol_norm
+    g = np.linspace(0.005, 0.25, 4000); dv = COSMO.differential_comoving_volume(g).value
+    direct = float(np.sum(0.5 * (dv[1:] + dv[:-1]) * np.diff(g)))
+    assert _vol_norm(0.005, 0.25) == direct and _vol_norm(0.005, 0.25) == direct
+    z = np.array([0.01, 0.1])
+    assert np.array_equal(z_volume_weight(z, 0.005, 0.25), COSMO.differential_comoving_volume(z).value / direct)
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"): f(); print("ok", n)

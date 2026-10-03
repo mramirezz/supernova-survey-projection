@@ -2,7 +2,7 @@
 """Runner v78. Uso:
     $PY -m pipeline78.run --run ztf_v78 --out ~/thesis_runs/ztf_v78 --fields-file ~/thesis_store/ztf_fields_1000.txt --seed 20261002 --workers 4
 """
-import argparse, hashlib, json, os, subprocess, sys, time
+import argparse, hashlib, json, os, subprocess, sys, time, warnings
 from multiprocessing import Pool
 from pathlib import Path
 import numpy as np
@@ -31,6 +31,9 @@ def _by_subtype(tpls, fractions, cls):
     for st, f in fractions.items():
         if f > 0 and not by.get(st):
             raise ValueError(f"clase {cls}: el subtipo {st!r} tiene fraccion {f} pero no hay plantillas")
+    orphan = sorted(t["sn"] for st, ts in by.items() if not fractions.get(st, 0) > 0 for t in ts)
+    if orphan:
+        warnings.warn(f"clase {cls}: plantillas sin fraccion de subtipo, nunca se elegiran: {orphan}")
     return by
 
 

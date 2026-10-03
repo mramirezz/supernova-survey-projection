@@ -1,5 +1,6 @@
 # pipeline78/sampling.py
 """Sorteos de una simulacion con SU propio rng (determinista e independiente del orden de ejecucion)."""
+import functools
 import numpy as np
 import pandas as pd
 from astropy.cosmology import FlatLambdaCDM
@@ -43,12 +44,16 @@ def zgrid_cdf(zmin, zmax, n=4000):
     return z, c / c[-1]
 
 
-def z_volume_weight(z, zmin, zmax, n=4000):
-    """(dV/dz)(z) / int_zmin^zmax dV/dz, con la misma cosmologia que zgrid_cdf."""
+@functools.lru_cache(maxsize=None)
+def _vol_norm(zmin, zmax, n=4000):
     g = np.linspace(zmin, zmax, n)
     dv = COSMO.differential_comoving_volume(g).value
-    norm = float(np.sum(0.5 * (dv[1:] + dv[:-1]) * np.diff(g)))
-    return COSMO.differential_comoving_volume(np.asarray(z, float)).value / norm
+    return float(np.sum(0.5 * (dv[1:] + dv[:-1]) * np.diff(g)))
+
+
+def z_volume_weight(z, zmin, zmax):
+    """(dV/dz)(z) / int_zmin^zmax dV/dz, con la misma cosmologia que zgrid_cdf (normalizacion en cache)."""
+    return COSMO.differential_comoving_volume(np.asarray(z, float)).value / _vol_norm(float(zmin), float(zmax))
 
 
 def z_sampler(cfg):

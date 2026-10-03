@@ -123,6 +123,15 @@ def test_missing_subtype_templates_raises():
     except ValueError as e:
         assert "Ic-BL" in str(e)
 
+def test_orphan_subtype_warns():
+    import warnings
+    import pipeline78.run as r
+    tpls = [dict(sn="a", subtype="Ib"), dict(sn="b", subtype="Ic")]
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        r._by_subtype(tpls, {"Ib": 1.0}, "Ibc")
+    assert any("'b'" in str(x.message) for x in w)
+
 def test_w_z_column_and_hash_includes_fractions():
     with tempfile.TemporaryDirectory() as td:
         run, cfg = _setup(td, n=3)
