@@ -229,12 +229,16 @@ def test_fixe_simulate_ii_dust_sudare(monkeypatch):
     r._W["cfg"]["ii_dust"] = "sudare"
     tpls = r._W["tpl"]["II"]
     got.clear(); out = []
-    for k in range(30):
+    for k in range(400):
         sim, _ = r.simulate("F1", "II", k, [], 0.02)
         out.append((sim, next(t for t in tpls if t["sn"] == sim["template"])))
     assert any(s["ebmv_host"] > 0 for s, _ in out)
     for (s, tpl), dmag in zip(out, got):
         assert s["A_ref_host"] == 0.0 and dmag == s["m_peak_abs"] - tpl["M_ref"]
+    # M debe venir de la LF desenrojecida (si no, el polvo se cuenta dos veces): residuo medio respecto de *_dered
+    from config import LUMINOSITY_CONFIG as L
+    res = [s["m_peak_abs"] - L["M_peak"][s["subtype"] + "_dered"]["mean"] for s, _ in out]
+    assert abs(np.mean(res)) < 0.2, np.mean(res)      # con la LF observada saldria ~ +0.40
 
 def test_fixc_A_ref_zero_in_end_to_end_run():
     from pipeline78.engine import host_ext_ref
