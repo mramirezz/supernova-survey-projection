@@ -19,6 +19,7 @@ CLASES = ("Ia", "II", "IIb", "IIn", "Ibc")
 VARIANTES = ("base", "texp", "tail")
 M_CUT = 18.5
 G_WIN = 2.0                                    # d: ventana de g alrededor del pico de r para el color
+W_RATIO = 1.5                                  # max/min de w por encima del cual la z no queda igualada (KS sin ponderar)
 KEYS = ["oid", "part_index", "sn_type"]
 FIT = ["f", "t_rise", "t_fall", "gamma"]
 PARS = ("t_rise_rest", "t_fall_rest", "gamma_rest", "f", "M_r", "g_r")
@@ -214,11 +215,34 @@ def prepare(runs, out, n=50, seed=20261003, real_dir=RUNS / "real_ztf"):
     return selc, real
 
 
-def boot_sigma(x, y, rng, n=1000):
-    """sigma por bootstrap de (mediana sim - mediana real), remuestreando las dos muestras."""
+def z_match_weights(z_sim, z_real):
+    """w = fraccion real del bin de z / fraccion sim del bin, con los 4 bins de prepare (cuartiles de la z real,
+    bordes 0 y 9). Es el peso que deja a las sims con la distribucion de z de las reales (= peso de selection.csv)."""
+    e = z_edges(z_real)
+    kr, ks = z_bin(z_real, e), z_bin(z_sim, e)
+    fr, fs = np.bincount(kr, minlength=4) / len(kr), np.bincount(ks, minlength=4) / len(ks)
+    return fr[ks] / fs[ks]
+
+
+def wmedian(x, w):
+    """Mediana ponderada. Con pesos iguales es np.median: si el peso acumulado cae justo en la mitad, promedia los
+    dos centrales (pilot_report.wmedian devuelve el central de abajo y cambiaria la mediana con n par)."""
+    i = np.argsort(x)
+    x, c = np.asarray(x, float)[i], np.cumsum(np.asarray(w, float)[i])
+    h = 0.5 * c[-1]
+    j = int(np.searchsorted(c, h))
+    if np.isclose(c[j], h, rtol=1e-9, atol=0.0) and j + 1 < len(x):
+        return float(0.5 * (x[j] + x[j + 1]))
+    return float(x[j])
+
+
+def boot_sigma(x, y, rng, n=1000, w=None):
+    """sigma por bootstrap de (mediana sim - mediana real), remuestreando las dos muestras. Con w, las sims se
+    remuestrean con probabilidad proporcional a w y las reales uniforme."""
     if len(x) < 2 or len(y) < 2:
         return np.nan
-    bx = np.median(x[rng.integers(0, len(x), (n, len(x)))], axis=1)
+    ix = rng.integers(0, len(x), (n, len(x))) if w is None else rng.choice(len(x), (n, len(x)), p=w / w.sum())
+    bx = np.median(x[ix], axis=1)
     by = np.median(y[rng.integers(0, len(y), (n, len(y)))], axis=1)
     return float(np.std(bx - by, ddof=1))
 
@@ -254,6 +278,13 @@ def report(out, page=PAGE, seed=20261003, n_boot=1000):
     data["real"] = load_variant(out, "real", real)
     rng = np.random.default_rng(seed)
     fin = lambda s: s.to_numpy(float)[np.isfinite(s.to_numpy(float))]
+    # peso por sim seleccionada: iguala la z de cada (variante, clase) a la de sus reales (mediana, bootstrap e histograma)
+    for v in VARIANTES:
+        if v in data:
+            data[v]["w"] = np.nan
+            for c in set(data[v].sn_type) & set(data["real"].sn_type):
+                k = data[v].sn_type == c
+                data[v].loc[k, "w"] = z_match_weights(data[v].z[k], data["real"].z[data["real"].sn_type == c])
     rows = []
     for c in CLASES:
         y0 = data["real"][data["real"].sn_type == c]
@@ -261,14 +292,17 @@ def report(out, page=PAGE, seed=20261003, n_boot=1000):
             x0 = data[v][data[v].sn_type == c] if v in data else []
             if not len(x0) or not len(y0):
                 continue
+            ratio = float(x0.w.max() / x0.w.min()) if x0.w.min() > 0 else np.inf
             for p in PARS:
-                x, y = fin(x0[p]), fin(y0[p])
-                ms, mr = (float(np.median(x)) if len(x) else np.nan), (float(np.median(y)) if len(y) else np.nan)
+                ok = np.isfinite(x0[p].to_numpy(float))
+                x, wx, y = x0[p].to_numpy(float)[ok], x0.w.to_numpy(float)[ok], fin(y0[p])
+                ms, mr = (wmedian(x, wx) if len(x) else np.nan), (float(np.median(y)) if len(y) else np.nan)
                 D, pv = ks_2samp(x, y) if len(x) and len(y) else (np.nan, np.nan)
                 rows.append(dict(clase=c, variante=v, par=p, n_sel=len(x0), n_sim=len(x), n_real=len(y),
                                  frac_validos_sim=len(x) / len(x0), frac_validos_real=len(y) / len(y0),
-                                 med_sim=ms, med_real=mr, delta=ms - mr, sigma_boot=boot_sigma(x, y, rng, n_boot),
-                                 ks_D=float(D), ks_p=float(pv)))
+                                 med_sim=ms, med_real=mr, delta=ms - mr, sigma_boot=boot_sigma(x, y, rng, n_boot, wx),
+                                 ks_D=float(D), ks_p=float(pv), w_max_min=ratio,
+                                 z_igualada="sí" if ratio <= W_RATIO else "no"))
     tab = pd.DataFrame(rows)
     tab.to_csv(out / "realismo_tabla.csv", index=False)
     clases = [c for c in CLASES if c in set(tab.clase)] if len(tab) else []
@@ -283,7 +317,9 @@ def report(out, page=PAGE, seed=20261003, n_boot=1000):
                 ax.hist(vals["real"], bins=bins, density=True, color="0.6", alpha=0.5, label="real")
             for v in VARIANTES:
                 if v in vals and len(vals[v]):
-                    ax.hist(vals[v], bins=bins, density=True, histtype="step", color=COLOR[v], lw=1.3, label=v)
+                    d = data[v][data[v].sn_type == c]
+                    ax.hist(vals[v], bins=bins, density=True, histtype="step", color=COLOR[v], lw=1.3, label=v,
+                            weights=d.w.to_numpy(float)[np.isfinite(d[p].to_numpy(float))])
             ax.set_title(f"{c}  {p}", fontsize=8); ax.tick_params(labelsize=7)
         axs[0, 0].legend(fontsize=7)
         fig.tight_layout(); fig.savefig(page / "realismo.png", dpi=90); plt.close(fig)
@@ -297,13 +333,21 @@ def report(out, page=PAGE, seed=20261003, n_boot=1000):
              f"(tabla de bins abajo). texp y tail usan las mismas sim_id "
              f"(texp solo cambia las Ia). Features de run_parquet.py en r; t_rise, t_fall y gamma en reposo (/(1+z)). "
              f"M_r = m_peak_r - &mu;(z). g - r: mediana de g agrupada en 8 h a &plusmn;{G_WIN:g} d del pico r, menos m_peak_r. "
-             f"&Delta; = mediana sim - mediana real, &sigma; por bootstrap ({n_boot} remuestreos de las dos muestras), KS de dos muestras.")
+             f"Cada sim lleva un peso w = fracci&oacute;n real de su bin de z / fracci&oacute;n sim del bin (los mismos 4 bins): "
+             f"la mediana sim es la mediana ponderada por w y el bootstrap ({n_boot} remuestreos) toma las sims con "
+             f"probabilidad &prop; w y las reales uniforme. &Delta; = mediana sim - mediana real. El KS de dos muestras va sin ponderar. "
+             f"Los histogramas de las sims van ponderados por w.")
+    no = sorted({f"{c} ({v})" for c, v in tab.loc[tab.z_igualada == "no", ["clase", "variante"]].itertuples(index=False)}) \
+        if len(tab) else []
+    nota_z = (f"<p><b>z_igualada = no</b> (max/min de w &gt; {W_RATIO:g}): {', '.join(no)}. En esas clases el KS compara "
+              f"muestras con distribuciones de z distintas. La mediana y el &sigma; s&iacute; van corregidos por w.</p>" if no else
+              f"<p>En todas las clases max/min de w &le; {W_RATIO:g} (z_igualada = s&iacute;).</p>")
     (page / "index.html").write_text(
         "<html><head><meta charset='utf-8'><title>Realismo de features v78</title></head>"
         "<body style='font-family:sans-serif;max-width:1500px;margin:auto'>"
         "<h1>Puerta de realismo: bordes de plantilla contra la validaci&oacute;n real ZTF</h1>"
         f"<p>Salida: {out}. Runs: {prep.get('runs', {})}</p><p>{regla}</p>"
-        "<p>Real relleno (gris); base, texp y tail como contornos.</p><img src='realismo.png' width='100%'>"
+        f"{nota_z}<p>Real relleno (gris); base, texp y tail como contornos.</p><img src='realismo.png' width='100%'>"
         f"<h2>Bins de z por clase (pool de sims, reales, cuota y sims seleccionadas)</h2>"
         f"{pd.DataFrame(prep.get('bins_z', [])).to_html(index=False)}"
         f"<h2>Tabla</h2>{tab.round(3).to_html(index=False) if len(tab) else '<p>sin filas</p>'}</body></html>")

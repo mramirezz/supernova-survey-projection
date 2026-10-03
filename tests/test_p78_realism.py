@@ -144,6 +144,14 @@ def test_prepare_and_report(tmp_path, capsys):
     assert (b.frac_validos_sim < 1).any()
     assert tab[tab.par == "M_r"].n_sim.gt(0).all() and tab[tab.par == "g_r"].n_sim.gt(0).all()
     assert (tmp_path / "page/index.html").exists() and (tmp_path / "page/realismo.png").exists()
+    # base y texp cumplen las cuotas: w = 1 y z igualada. tail omitio la mitad de las sims (part_index par), asi que su
+    # w se recalcula sobre las que quedan y en esta muestra chica deja de ser uniforme
+    assert {"w_max_min", "z_igualada"} <= set(tab.columns)
+    bt = tab[tab.variante.isin(["base", "texp"])]
+    assert (bt.z_igualada == "sí").all() and np.allclose(bt.w_max_min, 1.0)
+    tl = tab[tab.variante == "tail"]
+    assert ((tl.w_max_min > R.W_RATIO) == (tl.z_igualada == "no")).all() and (tl.z_igualada == "no").any()
+    assert "z_igualada = no" in (tmp_path / "page/index.html").read_text()
     # reposo: t/(1+z) con la z de la seleccion, y la mediana de la tabla sale de esos valores
     ft = pd.read_csv(out / "base/features/features.csv").query("filter_band == 'r'")
     x = R.load_variant(out, "base", base)
@@ -177,6 +185,26 @@ def test_photo_color_window():
     rows += [("o", 0, "Ia", ti, "g", mi, 0.05, "F") for ti, mi in g]
     m, gr = R.photo(pd.DataFrame(rows, columns=COLS))
     assert m == 17.0 and np.isclose(gr, np.median([17.4, 17.2]) - 17.0)
+
+
+def test_z_weights_fix_low_z_concentration():
+    """Sims concentradas a z baja: la mediana ponderada por w = f_real / f_sim del bin queda cerca de la real."""
+    rng = np.random.default_rng(3)
+    zr = rng.uniform(0.02, 0.06, 40)
+    zs = np.concatenate([rng.uniform(0.005, 0.03, 40), rng.uniform(0.03, 0.06, 12)])
+    w = R.z_match_weights(zs, zr)
+    e = R.z_edges(zr)
+    assert (np.bincount(R.z_bin(zs, e), minlength=4) > 0).all()
+    assert w.max() / w.min() > R.W_RATIO                          # esta clase saldria z_igualada = no
+    d_w, d_u = abs(R.wmedian(zs, w) - np.median(zr)), abs(np.median(zs) - np.median(zr))
+    assert d_w < 0.5 * d_u, (d_w, d_u)
+    assert np.allclose(R.z_match_weights(zr, zr), 1.0)
+    # pesos iguales: es np.median (n par y n impar)
+    assert R.wmedian([4.0, 1.0, 3.0, 2.0], [1, 1, 1, 1]) == 2.5 and R.wmedian([3.0, 1.0, 2.0], [0.7] * 3) == 2.0
+    # bootstrap ponderado: con todo el peso en las sims chicas la diferencia de medianas no varia
+    sig = R.boot_sigma(np.array([1.0, 1.0, 9.0]), np.array([1.0, 1.0]), np.random.default_rng(0), 200,
+                       np.array([1.0, 1.0, 0.0]))
+    assert sig == 0.0
 
 
 def test_bin_targets():
