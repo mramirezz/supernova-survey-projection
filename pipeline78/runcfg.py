@@ -108,6 +108,14 @@ T11 = dict(RUNS_CFG["ztf_v78_t9"], noise_params=NOISE_VIEJAS, alert_model=PALERT
            noise_draw_scale=OBS_K, det_w=0.2)
 for m0 in (-0.5, -0.25, 0.0, 0.25):
     RUNS_CFG[f"ztf_v78_t11_obs{m0}"] = dict(T11, det_m0=m0)
+# con el stream de alertas el minimo por banda no se mueve (calib_obs score --tag t11): g m0 -0.25 (7.4), r m0 0 (10.5)
+# k por punto fijo con el piloto de confirmacion de t11 a k = OBS_K (tripletes real/sim g 0.545/0.590, r 0.583/0.616):
+# k = 0.56 * 0.545/0.590 = 0.52 (g), 0.57 * 0.583/0.616 = 0.54 (r); i como r
+RUNS_CFG["ztf_v78_t11"] = dict(T11, det_m0={"g": -0.25, "r": 0.0, "i": 0.0},
+                               noise_draw_scale={"g": 0.52, "r": 0.54, "i": 0.54})
+# mas sims con la misma semilla (las k < n de ztf_v78_t11 se reproducen identicas): x2 para el MCMC de Villar, x4 para la red
+for f in (2, 4):
+    RUNS_CFG[f"ztf_v78_t11_x{f}"] = dict(RUNS_CFG["ztf_v78_t11"], n_by_class={c: f * n for c, n in RUNS_CFG["ztf_v78_t11"]["n_by_class"].items()})
 
 def units(cfg, fields):
     n = max(cfg["n_by_class"].values())
