@@ -16,6 +16,8 @@ data/*
 !data/excluir_manual_reales.csv
 # diffmaglim de las alertas ALeRCE del holdout ZTF val, entrada de pipeline78/calib_ruido.py (2026-10-04)
 !data/ruido_alerce_val.csv
+# alertas ALeRCE (diffmaglim) de los 1000 campos de la proyeccion, entrada de pipeline78/obslog_alerce.py (2026-10-04)
+!data/obslog_alerce_cache.csv.gz
 
 # Python cache
 __pycache__/

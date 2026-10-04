@@ -1,5 +1,6 @@
 # pipeline78/runcfg.py
 """Configuraciones con nombre. Cambiar una configuracion = nombre nuevo (el hash queda en el manifiesto)."""
+from pathlib import Path
 from pipeline78.paths import STORE
 
 RUNS_CFG = {
@@ -34,10 +35,15 @@ RUNS_CFG["ztf_v78_fireball"] = dict(RUNS_CFG["ztf_v78"], edge_pre="fireball",
 NOISE_TRES_TERMINOS = {"g": dict(A=0.7738, B=0.1644, C=0.0217),
                        "r": dict(A=0.7924, B=0.1371, C=0.0258),
                        "i": dict(A=0.7924, B=0.1371, C=0.0258)}
+# Log con limites reales (logfix, controlador 2026-10-04): en las epocas con deteccion del objeto del campo el maglim de
+# ztf_obslog_best es estimado y recortado a >= m + 0.5. ztf_obslog_alerce lo reemplaza por el diffmaglim de la alerta
+# de ALeRCE (pipeline78/obslog_alerce.py). Solo los 1000 campos de ztf_fields_1000.txt. ztf_v78 sigue con el log viejo.
+LOG_ALERCE = str(Path.home() / "thesis_runs/obslog/ztf_obslog_alerce.parquet")
 RUNS_CFG["ztf_v78_t9_bordes"] = dict(RUNS_CFG["ztf_v78"], edge_pre="fireball", rise_Ia_days=18.9, edge_post="tail",
                                      tail_days=150, tail_fit_days=20, tail_min_slope=0.005,
                                      anchor="uniform", pre_ul_mode="alerce", pre_ul_days=30, tail_min_span={"II": 120.0},
-                                     noise_model="tres_terminos", noise_params=NOISE_TRES_TERMINOS)
+                                     noise_model="tres_terminos", noise_params=NOISE_TRES_TERMINOS,
+                                     log_path=LOG_ALERCE)
 
 # Calibracion de la eficiencia de deteccion (Fix G, 2026-10-03): logistica sobre el S/N medido, sin UL tras la ultima
 # deteccion y la misma limpieza que las reales.
