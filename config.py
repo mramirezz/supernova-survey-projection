@@ -468,8 +468,9 @@ EXTINCTION_CONFIG = {
     # IIb v78: f0 y tau derivados de Stritzinger+2018; R_V 3.1 en vez de 1.1 (este sale de un solo objeto,
     # SN 2006T, y enrojecia las IIb +0.18 mag en g-r contra ZTF; decision 2026-10-03).
     "SNIIb_v78": {"frac_zero": 0.30, "tau": 0.35, "sigma_zero": 0.01, "Av_max": 3.0, "Rv": 3.1},
-    # modelo principal: sin polvo de host en II, LF de Li sin corregir ya lo contiene; color calibrado con ZTF val
-    # (0.20 vs 0.24) y de Jaeger+2018 2018MNRAS.476.4592D; decision 2026-10-03
+    # modelo principal: sin polvo de host en II, LF de Li sin corregir ya lo contiene; color g-r de las II seleccionadas
+    # +0.22 sim vs +0.24 ZTF real en el piloto T9 final (0.20 en el primer diagnostico) y de Jaeger+2018
+    # 2018MNRAS.476.4592D; decision 2026-10-03 (Fix E)
     "SNII_v78":  {"frac_zero": 1.0, "sigma_zero": 0.0, "tau": 0.25, "Av_max": 3.0, "Rv": 3.1},
     # variante ii_dust="sudare": polvo de SUDARE I (half-normal sigma 0.2, R_V 3.1) sobre la LF desenrojecida (*_dered)
     "SNII_sudare": {"frac_zero": 1.0, "sigma_zero": 0.2, "tau": 0.25, "Av_max": 3.0, "Rv": 3.1},
@@ -561,9 +562,11 @@ SN_WHITELIST = {
 # II: Li+2011b §3.2, IIP 70 % e IIL 10 % de las SNe II, renormalizado: IIP 0.875, IIL 0.125.
 SUBTYPE_FRACTIONS = {"Ibc": {"Ib": 0.556, "Ic": 0.386, "Ic-BL": 0.058}, "II": {"IIP": 0.875, "IIL": 0.125}}
 
-# Clases cuya LF (Li+2011b para II, Nyholm+2020 para IIn) NO esta corregida por polvo del host: ya lo trae dentro.
-# Para no contarlo dos veces: se sortea el polvo, se aplica a la plantilla desenrojecida y la escala de brillo se
-# elige para que la magnitud del pico YA enrojecida, en la banda de referencia de reposo, sea igual al M sorteado
-# (variante de Vincenzi+2021 §6.2). Ia, IIb e Ibc (LF corregida) imponen el M antes del polvo (D4).
-# II: LF de Li desenrojecida con el polvo de SUDARE I (decision 2026-10-03); IIn sigue con la LF impuesta despues del polvo.
+# Clases cuya LF NO esta corregida por polvo del host (ya lo trae dentro). IIn: LOSS revisada (Vincenzi+2019) en el
+# modelo principal y Nyholm+2020 como variante (corrige el host con Na I D en solo 3 de 42, casi observada). Para no
+# contar el polvo dos veces: se sortea, se aplica a la plantilla desenrojecida y la escala de brillo se elige para que
+# el pico YA enrojecido, en la banda de referencia de reposo, sea igual al M sorteado (Vincenzi+2021 §6.2). Ia, IIb e
+# Ibc (LF corregida) imponen el M antes del polvo (D4). II (Li+2011b, no corregida): en el modelo principal SIN polvo
+# de host (SNII_v78, decision 2026-10-03, Fix E); la variante ii_dust="sudare" usa la LF desenrojecida y el polvo de
+# SUDARE I con el M impuesto antes del polvo. Resumen en la tesis: cap 3, tab:methods:proj:lfdust.
 LF_AFTER_HOST_DUST = {"IIn"}
