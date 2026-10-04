@@ -69,6 +69,29 @@ RUNS_CFG["ztf_v78_t9_iidust"] = dict(RUNS_CFG["ztf_v78_t9"], ii_dust="sudare")  
 
 RUNS_CFG["ztf_v78_t9_iinnyholm"] = dict(RUNS_CFG["ztf_v78_t9"], iin_lf="nyholm")   # variante de sistematico: LF de IIn de Nyholm+2020
 
+# Calibracion del modelo de observacion por epoca (pipeline78/calib_obs.py, Mauricio 2026-10-04): pilotos sobre
+# ztf_v78_t9 con la escala del sorteo k por banda (dispersion de tripletes real/sim de las viejas val_viejo contra el
+# piloto calib_l/m0.0 a k = 1: g 0.549/0.986, r 0.584/1.025; i usa la de r) y det_m0, det_w comunes a las bandas.
+OBS_K = {"g": 0.56, "r": 0.57, "i": 0.57}
+for m0 in (-0.5, -0.25, 0.0, 0.25, 0.5):
+    for w in (0.2, 0.3):
+        RUNS_CFG[f"ztf_v78_t9_obs{m0}_w{w}"] = dict(RUNS_CFG["ztf_v78_t9"], det_m0=m0, det_w=w, noise_draw_scale=OBS_K)
+# techo de eficiencia 0.97 sobre lo mejor de la grilla por banda (g: m0 -0.25, w 0.2; r: m0 0, w 0.2; i como r)
+RUNS_CFG["ztf_v78_t9_obs_eps0.97"] = dict(RUNS_CFG["ztf_v78_t9"], det_m0={"g": -0.25, "r": 0.0, "i": 0.0}, det_w=0.2,
+                                          det_eps=0.97, noise_draw_scale=OBS_K)
+
+# Modelo de observacion recalibrado (Mauricio 2026-10-04, pipeline78/calib_obs.py contra las alertas ALeRCE de las viejas
+# val_viejo: 334 SNe con >= 7 noches r, sims re-pesadas a su clase y m_pk). Calibrado con la fotometria por epoca, no con
+# la duracion: distribucion de m_lim - m en las detecciones, profundidad de la primera y de la ultima deteccion.
+# Puntaje por banda (suma de |sim - real|/error de 7 blancos): g minimo en m0 -0.25 w 0.2 (15.1; m0 0: 25.2, -0.5: 37.0),
+# r minimo en m0 0 w 0.2 (17.4; -0.25: 39.4, 0.25: 28.0). w 0.3 peor en ambas salvo r m0 0.25. det_eps 0.97 no cambia el
+# puntaje (g 15.1, r 17.3): no queda restringido por estos blancos y no se usa. k = noise_draw_scale (OBS_K, tripletes).
+# Antes (ztf_v78_t9): m0 1.25 global, k 1. i usa los valores de r (supuesto, banda vecina sin reales).
+RUNS_CFG["ztf_v78_t10"] = dict(RUNS_CFG["ztf_v78_t9"], det_m0={"g": -0.25, "r": 0.0, "i": 0.0}, det_w=0.2,
+                               noise_draw_scale=OBS_K)
+# el doble de sims por campo con la misma semilla (las de ztf_v78_t10 se reproducen identicas), como ztf_v78_t9_x2
+RUNS_CFG["ztf_v78_t10_x2"] = dict(RUNS_CFG["ztf_v78_t10"], n_by_class={c: 2 * n for c, n in RUNS_CFG["ztf_v78_t10"]["n_by_class"].items()})
+
 def units(cfg, fields):
     n = max(cfg["n_by_class"].values())
     step = cfg["chunk"] or n
