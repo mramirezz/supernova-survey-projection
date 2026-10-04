@@ -9,7 +9,7 @@ REGLAS
 2. Train: sims de la T9 final2 con features (RUNS/features_ztf_v78_t9_final2), sin las plantillas de validacion
    interna del MISMO split que la red (data.split_templates, mismos n_folds, fold y seed). Pesos w_z por balance
    de clases (data.balance_weights, misma regla que la red).
-3. Validacion: features de las reales (RUNS/features_real_ztf2, post logfix), solo las oids de la mitad val. csv.reader recorre
+3. Validacion: features de las reales (RUNS/features_real_ztf3, post logfix y completadas desde la API), solo las oids de la mitad val. csv.reader recorre
    todas las lineas pero solo guarda las de oids val: las filas de la mitad final no llegan a pandas ni se guardan.
 4. Cobertura: la real de validacion sin features (Villar no ajusto) queda sin clasificar. Se reporta la cobertura y
    las metricas sobre las cubiertas. Con nn_run se calculan tambien las metricas de la red sobre las MISMAS oids, y
@@ -30,7 +30,7 @@ from pipeline78.nnclf.evaluate import metrics, summarize, write_outputs, print_s
 from pipeline78.paths import RUNS
 
 SIM_FEAT = RUNS / "features_ztf_v78_t9_final2/features/features.csv"
-REAL_FEAT = RUNS / "features_real_ztf2/features/features.csv"
+REAL_FEAT = RUNS / "features_real_ztf3/features/features.csv"
 PARAMS = ['A', 'f', 't0', 't_rise', 't_fall', 'gamma', 'A_err', 'f_err', 't_rise_err',
           't_fall_err', 'gamma_err', 'rms', 'mad', 'n_points', 'time_span']
 
