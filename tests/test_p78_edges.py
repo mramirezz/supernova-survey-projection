@@ -529,3 +529,45 @@ if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_") and n != "test_d_variants_same_physics":
             f(); print("ok", n)
+
+
+def _t9_alertas(**am):
+    """La T9 con el stream de alertas en vez de pre_ul_mode, sobre la plantilla sintetica (mismo ancla y t_exp)."""
+    from pipeline78.project import anchor_time
+    from pipeline78.runcfg import RUNS_CFG
+    t_rel, mags, epochs = _inputs()
+    cfg = dict(RUNS_CFG["ztf_v78_t9"], det_m0=0.0, **({"alert_model": am} if am else {}))
+    rng = np.random.default_rng(20261002)
+    ta = anchor_time(cfg, rng, 3, cfg["n_by_class"]["II"], epochs)
+    return project_one(t_rel, mags, epochs, ta, rng, cfg, t_exp_rel=t_rel[0] - 8.0, z=Z)
+
+
+def test_alertas_todas_igual_a_pre_ul_alerce():
+    """Si toda deteccion es alerta, el stream de alertas da lo mismo que pre_ul_mode "alerce" (los uniformes nuevos van
+    al final y no tocan ruido ni deteccion)."""
+    a = _t9_alertas()
+    b = _t9_alertas(m50=-100.0, w=0.01, eps=1.0)
+    pd.testing.assert_frame_equal(a, b)
+
+
+def test_alertas_cortan_tras_la_ultima_alerta():
+    """Con alertas parciales: queda un subconjunto de las filas de sin alertas, la ultima fila es una deteccion (nada
+    despues de la ultima alerta) y todo UL tiene una deteccion guardada en (t, t + 30 d]. Con eps ~0 no queda nada."""
+    a = _t9_alertas()
+    b = _t9_alertas(m50={"g": 0.5, "r": 0.5}, w=0.2, eps=0.9)
+    key = lambda d: set(zip(d["filter"], d["mjd"].round(6)))
+    assert key(b) <= key(a) and len(b) < len(a)
+    b = b.sort_values("mjd")
+    assert b["upperlimit"].iloc[-1] == "F"
+    dm = np.sort(b.loc[b.upperlimit == "F", "mjd"].to_numpy())
+    for t in b.loc[b.upperlimit == "T", "mjd"]:
+        assert ((dm > t) & (dm <= t + 30)).any()
+    assert _t9_alertas(m50=0.0, w=0.2, eps=1e-12) is None
+
+
+def test_piso_de_cola_por_clase():
+    """tail_min_slope por clase: run.simulate lo resuelve con la clase de la plantilla antes de proyectar."""
+    import inspect
+    from pipeline78 import run
+    src = inspect.getsource(run.simulate)
+    assert 'cfg["tail_min_slope"][cls]' in src

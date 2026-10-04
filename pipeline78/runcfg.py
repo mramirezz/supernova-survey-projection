@@ -92,6 +92,23 @@ RUNS_CFG["ztf_v78_t10"] = dict(RUNS_CFG["ztf_v78_t9"], det_m0={"g": -0.25, "r": 
 # el doble de sims por campo con la misma semilla (las de ztf_v78_t10 se reproducen identicas), como ztf_v78_t9_x2
 RUNS_CFG["ztf_v78_t10_x2"] = dict(RUNS_CFG["ztf_v78_t10"], n_by_class={c: 2 * n for c, n in RUNS_CFG["ztf_v78_t10"]["n_by_class"].items()})
 
+# Ronda t11 (Mauricio 2026-10-04, investigacion de la duracion): todo calibrado con las viejas val_viejo, nada con el holdout.
+# Ruido de tres terminos reajustado con val_viejo (calib_obs ruido -> calib_obs/ruido_abc_viejas.json; err g 0.029/0.005/
+# 0.006, r 0.027/0.004/0.003); el de t9 salia del holdout val.
+NOISE_VIEJAS = {"g": dict(A=0.8031, B=0.1616, C=0.0167), "r": dict(A=0.7425, B=0.1398, C=0.0217),
+                "i": dict(A=0.7425, B=0.1398, C=0.0217)}
+# Stream de alertas: P(alerta | deteccion) = eps expit((dm - m50)/w), maxima verosimilitud sobre las detecciones 2022+ de
+# val_viejo (calib_obs palert -> calib_obs/palert_params.json; g n 4178, r n 6069). Una deteccion que no es alerta solo
+# queda si hay una alerta en los 30 d siguientes, y nada despues de la ultima alerta (project.alert_model).
+PALERT = {"m50": {"g": 0.143, "r": -0.03, "i": -0.03}, "w": {"g": 0.145, "r": 0.169, "i": 0.169},
+          "eps": {"g": 0.93, "r": 0.932, "i": 0.932}}
+# piso de la cola: decaimiento del 56Co (0.0098 mag/d) salvo IIn (interaccion, p. ej. 2010jl, decae mas lento)
+TAIL_PISO = {"Ia": 0.0098, "Ibc": 0.0098, "II": 0.0098, "IIb": 0.0098, "IIn": 0.005}
+T11 = dict(RUNS_CFG["ztf_v78_t9"], noise_params=NOISE_VIEJAS, alert_model=PALERT, tail_min_slope=TAIL_PISO,
+           noise_draw_scale=OBS_K, det_w=0.2)
+for m0 in (-0.5, -0.25, 0.0, 0.25):
+    RUNS_CFG[f"ztf_v78_t11_obs{m0}"] = dict(T11, det_m0=m0)
+
 def units(cfg, fields):
     n = max(cfg["n_by_class"].values())
     step = cfg["chunk"] or n

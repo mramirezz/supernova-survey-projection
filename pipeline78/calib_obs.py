@@ -133,6 +133,64 @@ def fetch(split="val_viejo", out=CACHE):
     return df
 
 
+ALERTAS = DATA / "alertas_viejas.csv"
+MJD_STAMP = 59580.0                 # 2022-01-01: desde ahi has_stamp == (parent_candid nulo); antes no sirve (ingesta masiva)
+PALERT_BINS = [-9, -0.25, 0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 9]
+
+
+def fetch_alertas(split="val_viejo", out=ALERTAS):
+    """Detecciones de ALeRCE con has_stamp (alerta propia) y parent_candid de las SNe del split -> out."""
+    from concurrent.futures import ThreadPoolExecutor
+    from pipeline78.calib_ruido import _get
+    m = read_meta(split)
+    oids = sorted(m.oid[m.origen == ("viejas" if split == "val_viejo" else "holdout")])
+    cols = ["candid", "mjd", "fid", "magpsf", "diffmaglim", "isdiffpos", "has_stamp", "parent_candid"]
+    with ThreadPoolExecutor(4) as ex:
+        rows = [[oid] + [x.get(c) for c in cols] for oid, js in ex.map(_get, oids) for x in js]
+    df = pd.DataFrame(rows, columns=["oid"] + cols).sort_values(["oid", "mjd", "fid"])
+    df.to_csv(out, index=False)
+    print(f"{out.name}: {df.oid.nunique()} oid, {len(df)} detecciones")
+
+
+def palert(split="val_viejo", path=ALERTAS):
+    """P(alerta | deteccion positiva) contra dm = diffmaglim - magpsf por banda, en detecciones desde 2022 de las SNe
+    usables del split. Ajuste de maxima verosimilitud de P = eps expit((dm - m50)/w) por banda. -> (tabla, params)."""
+    from scipy.optimize import minimize
+    from scipy.special import expit
+    meta = calib_set(split)[0]
+    d = pd.read_csv(path, dtype={"candid": str, "parent_candid": str})
+    d = d[d.oid.isin(set(meta.oid)) & (d.isdiffpos > 0) & (d.mjd >= MJD_STAMP) & d.fid.isin(FID.values())].copy()
+    d["band"] = d.fid.map({v: k for k, v in FID.items()})
+    d["dm"] = d.diffmaglim - d.magpsf
+    d["alerta"] = d.has_stamp.astype(str).str.lower().eq("true")
+    d["bin"] = pd.cut(d.dm, PALERT_BINS, right=False)
+    tab = d.groupby(["band", "bin"], observed=True).alerta.agg(["mean", "size"]).reset_index()
+    tab["lo"], tab["hi"] = [i.left for i in tab["bin"]], [i.right for i in tab["bin"]]
+    par = {}
+    for b, x in d.groupby("band"):
+        dm, y = x.dm.to_numpy(float), x.alerta.to_numpy(float)
+
+        def nll(q):
+            p = np.clip(expit(q[2]) * expit((dm - q[0]) / np.exp(q[1])), 1e-9, 1 - 1e-9)
+            return -np.sum(y * np.log(p) + (1 - y) * np.log(1 - p))
+        q = minimize(nll, [0.0, np.log(0.2), 2.5], method="Nelder-Mead", options=dict(xatol=1e-4, fatol=1e-6)).x
+        par[b] = dict(m50=round(float(q[0]), 3), w=round(float(np.exp(q[1])), 3), eps=round(float(expit(q[2])), 3),
+                      n=int(len(x)), n_obj=int(x.oid.nunique()))
+    return tab.drop(columns="bin"), par
+
+
+def ruido(split="val_viejo", n_boot=300):
+    """A, B, C del ruido de tres terminos (calib_ruido.calibrate) con las detecciones del split, sin tocar el holdout:
+    m = magpsf, sig = sigmapsf, dm = diffmaglim - magpsf de la alerta emparejada (real_epochs). -> {g, r: (p, err, n)}."""
+    from pipeline78.calib_ruido import calibrate
+    ep = real_epochs(calib_set(split)[0], CACHE)[0]
+    d = pd.DataFrame({"oid": ep.oid, "filter": ep.band, "sig": ep.sig, "dm": ep.ml - ep.m})
+    d = d[np.isfinite(d.dm) & (d.dm >= 0) & (d.dm < 4)].reset_index(drop=True)
+    res = calibrate(d, n_boot)
+    return {b: dict(p=[round(float(x), 4) for x in res[b]["p"]], err=[round(float(x), 4) for x in res[b]["err"]],
+                    n_sn=int(res[b]["n_sn"]), n_det=int(res[b]["n_det"])) for b in ("g", "r", "gr")}
+
+
 def real_epochs(meta, cache):
     """Detecciones g/r de los parquets limpios de real_ztf, con magpsf, sigmapsf y diffmaglim de su alerta positiva.
     -> (epocas, resumen del emparejamiento)."""
@@ -636,6 +694,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sp = ap.add_subparsers(dest="cmd", required=True)
     sp.add_parser("fetch")
+    sp.add_parser("fetch_alertas")
+    sp.add_parser("palert")
+    sp.add_parser("ruido")
     a = sp.add_parser("k")
     a.add_argument("--runs", default=str(RUNS / "calib_l/m0.0"), help="el primero (a k = 1) define k")
     a = sp.add_parser("pilots")
@@ -658,6 +719,18 @@ def main(argv=None):
     pd.set_option("display.width", 220)
     if a.cmd == "fetch":
         fetch()
+    elif a.cmd == "fetch_alertas":
+        fetch_alertas()
+    elif a.cmd == "ruido":
+        r = ruido()
+        (OUT / "ruido_abc_viejas.json").write_text(json.dumps(r, indent=1))
+        print(json.dumps(r, indent=1))
+    elif a.cmd == "palert":
+        tab, par = palert()
+        _save(tab, "palert.csv")
+        (OUT / "palert_params.json").write_text(json.dumps(par, indent=1))
+        print(tab.round(3).to_string(index=False))
+        print(json.dumps(par, indent=1))
     elif a.cmd == "k":
         cmd_k(a.runs.split(","))
     elif a.cmd == "pilots":

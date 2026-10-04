@@ -113,7 +113,10 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
     (alertas), aplicado despues de limpiar.
     pre_ul_mode "window" (default): quedan todos los UL. "alerce": un UL queda solo si hay una deteccion de cualquier
     banda en (t, t + ALERCE_PRV_DAYS], como los prv_candidates de ALeRCE (no quedan UL tras la ultima deteccion). Va
-    despues de decidir la deteccion y antes de clean_lc; la ventana pre_ul_days tiene que cubrir esos 30 d."""
+    despues de decidir la deteccion y antes de clean_lc; la ventana pre_ul_days tiene que cubrir esos 30 d.
+    alert_model {"m50", "w", "eps"} (numeros o por banda; reemplaza a pre_ul_mode): cada deteccion es alerta con
+    P = eps expit((m_lim - m_obs - m50)/w) (calib_obs palert) y una fila (det o UL) queda solo si es alerta o si hay una
+    alerta de cualquier banda en (t, t + ALERCE_PRV_DAYS]: nada despues de la ultima alerta, como el stream real."""
     t = t_anchor + t_rel
     t0, t1 = float(t[0]), float(t[-1])
     pre, edge_pre, edge_post = cfg["pre_ul_days"], cfg.get("edge_pre", "window"), cfg.get("edge_post", "none")
@@ -181,7 +184,23 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
     if not frames:
         return None
     df = pd.concat(frames, ignore_index=True)
-    if cfg.get("pre_ul_mode", "window") == "alerce":   # UL solo con una det (cualquier banda) en (t, t + 30 d]
+    am = cfg.get("alert_model")
+    if am is not None:                                 # stream de alertas: uniformes al final, sin alert_model mismos bytes
+        u = rng.uniform(size=len(df))
+        det = (df["upperlimit"] == "F").to_numpy()
+        dmo = (df["maglimit"] - df["magnitud_proyectada"]).to_numpy(float)
+        p = np.zeros(len(df))
+        for b in df["filter"].unique():
+            s = (df["filter"] == b).to_numpy()
+            p[s] = _banda(am["eps"], b) * expit((dmo[s] - _banda(am["m50"], b)) / _banda(am["w"], b))
+        ta = np.sort(df["mjd"].to_numpy(float)[det & (u < p)])
+        t_all = df["mjd"].to_numpy(float)
+        nxt = np.append(ta, np.inf)[np.searchsorted(ta, t_all, side="right")]     # primera alerta despues de cada fila
+        # ALeRCE guarda una fila (det o UL) si es alerta o si cae en los 30 d previos a una alerta (prv_candidates)
+        df = df[(det & (u < p)) | (nxt <= t_all + ALERCE_PRV_DAYS)].reset_index(drop=True)
+        if df.empty:
+            return None
+    elif cfg.get("pre_ul_mode", "window") == "alerce":   # UL solo con una det (cualquier banda) en (t, t + 30 d]
         dm, t_ul = np.sort(df.loc[df["upperlimit"] == "F", "mjd"].to_numpy(float)), df["mjd"].to_numpy(float)
         nxt = np.append(dm, np.inf)[np.searchsorted(dm, t_ul, side="right")]     # primera det despues de cada fila
         df = df[(df["upperlimit"] == "F").to_numpy() | (nxt <= t_ul + ALERCE_PRV_DAYS)].reset_index(drop=True)

@@ -97,6 +97,8 @@ def simulate(field, cls, k, epochs, mw):
     t_exp_rel = None     # solo Ia: sus plantillas empiezan en el primer punto, las demas ya en la explosion (tesis cap. 3)
     if cfg.get("edge_pre", "window") in ("texp", "fireball") and cls == "Ia":
         t_exp_rel = (tpl["t_Bmax"] - cfg["rise_Ia_days"] - tpl["t_peak"]) * (1.0 + z)
+    if isinstance(cfg.get("tail_min_slope"), dict):   # piso de la cola por clase
+        cfg = dict(cfg, tail_min_slope=cfg["tail_min_slope"][cls])
     if tpl["time"][-1] - tpl["time"][0] < cfg.get("tail_min_span", {}).get(cls, 0.0):
         cfg = dict(cfg, edge_post="none")   # la plantilla termina antes de pasar su fase principal (plateau): sin cola
     df = project.project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=t_exp_rel, z=z)
