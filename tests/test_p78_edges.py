@@ -1,6 +1,6 @@
 # tests/test_p78_edges.py
 """Bordes de plantilla configurables: window/none identico a antes, texp, tail y determinismo entre variantes."""
-import sys, pathlib
+import sys, pathlib, hashlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import numpy as np, pandas as pd
 import pytest
@@ -353,6 +353,39 @@ def test_h_pre_ul_alerce():
     pd.testing.assert_frame_equal(x, w[~w.mjd.isin([60.0, 150.0])].reset_index(drop=True))
     with pytest.raises(ValueError):
         run(pre_ul_mode="ztf")
+    # frontera, det en 200: UL a 30 d exactos (170) queda, a 30.5 d (169.5) sale, a 27 d (173) queda
+    tb = np.arange(0.0, 51.0, 1.0)                           # plantilla de 160 a 210
+    eb = {"g": (np.array([169.5, 170.0, 173.0, 200.0]), np.full(4, 20.0))}
+    y = project_one(tb, {"g": np.where(tb == 40.0, 18.0, 25.0)}, eb, 160.0, np.random.default_rng(3),
+                    dict(cfg, bands=["g"], pre_ul_mode="alerce"))
+    assert list(y[y.upperlimit == "F"].mjd) == [200.0] and sorted(y[y.upperlimit == "T"].mjd) == [170.0, 173.0]
+
+
+def _digest(df):
+    """md5 de columnas, dtypes y bytes de cada columna (las de texto unidas con |)."""
+    h = hashlib.md5()
+    for c in df.columns:
+        v = df[c].to_numpy()
+        h.update(f"{c}:{v.dtype}".encode())
+        h.update("|".join(map(str, v)).encode() if v.dtype == object else v.tobytes())
+    return h.hexdigest()
+
+
+PIN_COUNTS, PIN_MD5 = (138, 104, 32), "ada78c83a5cc5035c8acdceff97cd4c4"     # filas, detecciones, filas sin flujo
+
+
+def test_j_ztf_v78_pinned():
+    """ztf_v78 congelada: ancla pivot (no consume rng) + project_one sobre la plantilla sintetica, con la cfg de
+    runcfg. El digest se saco con el codigo de 7e17e57 (antes del Fix H) y coincide con el actual."""
+    from pipeline78.project import anchor_time
+    from pipeline78.runcfg import RUNS_CFG
+    t_rel, mags, epochs = _inputs()
+    cfg = RUNS_CFG["ztf_v78"]
+    rng = np.random.default_rng(20261002)
+    ta = anchor_time(cfg, rng, 3, cfg["n_by_class"]["II"], epochs)
+    df = project_one(t_rel, mags, epochs, ta, rng, cfg)
+    assert (len(df), int((df.upperlimit == "F").sum()), int((df.magnitud_modelo == 99).sum())) == PIN_COUNTS
+    assert _digest(df) == PIN_MD5
 
 
 def test_i_tail_min_span(monkeypatch):
