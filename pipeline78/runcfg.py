@@ -36,10 +36,12 @@ for m0 in (0.0, 0.25, 0.5, 0.75, 0.9, 1.0, 1.25, 1.5, 2.0):
     # w angosto: casi un corte en S/N medido, corrido m0 mag
     RUNS_CFG[f"ztf_v78_t9_det{m0}_w05"] = dict(RUNS_CFG[f"ztf_v78_t9_det{m0}"], det_w=0.05)
 
-# Configuracion de la Tarea 9 (Mauricio 2026-10-03): bordes de arriba + eficiencia con la forma medida por DES
-# (Kessler+2015: 50% a S/N 5, ~100% a S/N 10 -> w=0.2 mag) desplazada m0=0.9 mag, calibrado con la duracion de las
-# curvas de Ia e Ibc del holdout ZTF val limpio (Ia 41.9 vs 42.0 d, Ibc 47.8 vs 47.4 d), procedimiento de Kessler+2019.
-RUNS_CFG["ztf_v78_t9"] = dict(RUNS_CFG["ztf_v78_t9_det0.9"])
+# Configuracion de la Tarea 9 (Mauricio 2026-10-03): bordes de arriba (fireball+cola, ancla uniforme, UL como ALeRCE,
+# sin cola en II que terminan en el plateau) + eficiencia con la forma medida por DES (Kessler+2015: 50% a S/N 5,
+# ~100% a S/N 10 -> w=0.2 mag) desplazada m0=1.25 mag, calibrada con la duracion de las curvas del holdout ZTF val limpio
+# (ultima det r - pico: II 70.9/70.8, IIb 53.0/50.0, Ibc 49.1/47.4, Ia 36.8/42.0 d; IIn 113.8/79.9 por plantillas
+# longevas), procedimiento de Kessler+2019. Calibracion efectiva (host, filtros de alertas), no medicion de ZTF.
+RUNS_CFG["ztf_v78_t9"] = dict(RUNS_CFG["ztf_v78_t9_det1.25"])
 
 RUNS_CFG["ztf_v78_t9_iidust"] = dict(RUNS_CFG["ztf_v78_t9"], ii_dust="sudare")   # variante de sistematico: polvo de SUDARE I en II
 
