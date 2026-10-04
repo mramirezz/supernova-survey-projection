@@ -9,10 +9,18 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from threadpoolctl import threadpool_limits
 
 from pipeline78 import clf_villar as C
 
 FEAT_COLS = ["sn_name", "filter_band"] + C.RAW + ["sn_type", "oid", "part_index"]
+
+
+@pytest.fixture(autouse=True)
+def _dos_hilos():
+    """OpenMP/BLAS con todos los nucleos sobre-suscribe la CPU con modelos chicos (163 s contra 75 s con 2 hilos)."""
+    with threadpool_limits(2):
+        yield
 
 
 def _feat_row(oid, part, st, band, A=1e-8, f=0.5, t_rise=3.0, t_fall=40.0, gamma=20.0, rng=None):
@@ -268,21 +276,255 @@ def test_cli_train_eval_sweep_gap(tmp_path):
     common = ["--features-sims", str(fd), "--run-dir", str(rd), "--features-real", str(fr), "--real-dir", str(real),
               "--out-root", str(out), "--folds", "3"]
     res = C.main(["train", "--name", "t1", "--model", "hgb", "--fset", "rg"] + common)
-    assert res["real_none"]["acc"] > 0.8 and res["real_none"]["n"] == 60      # 15 val x (Ia, II, IIb, Ibc); IIn fuera
-    lo, hi = res["real_none"]["acc_ic95"]
-    assert lo <= res["real_none"]["acc"] <= hi
-    for f in ("metrics.json", "model.joblib", "pred_real_val.csv", "confusion_real_val_none.csv",
-              "importancias_real_val.csv"):
+    rv, rr, rs = (res["real_none"][s] for s in ("val", "val_rep", "val_sel"))
+    assert rv["acc"] > 0.8 and rv["n"] == 60                   # 15 val x (Ia, II, IIb, Ibc); IIn fuera
+    assert rr["n"] + rs["n"] == 60 and rr["n"] == 31           # val_split: Ia 7/8, II+IIb 15/15, Ibc 7/8
+    for r in (rv, rr, rs):
+        lo, hi = r["acc_ic95"]
+        assert lo <= r["acc"] <= hi
+    for f in ("metrics.json", "model.joblib", "pred_real_val.csv", "confusion_none_rep.csv", "confusion_em_sel.csv",
+              "confusion_none_val.csv", "importancias_real_val.csv"):
         assert (out / "t1" / f).exists(), f
     pred = pd.read_csv(out / "t1" / "pred_real_val.csv")
     assert pred.oid.str.startswith("ZTFr").all() and len(pred) == 60
+    assert set(pred.subset) == {"val_sel", "val_rep"}
+    imp = pd.read_csv(out / "t1" / "importancias_real_val.csv")
+    assert set(imp.subset) == {"val_sel", "val_rep"}
     ev = C.main(["eval", "--name", "t1", "--features-real", str(fr), "--real-dir", str(real), "--out-root", str(out)])
-    assert np.isclose(ev["real_none"]["acc"], res["real_none"]["acc"])
+    for s in C.SUBSETS:
+        assert np.isclose(ev["real_none"][s]["acc"], res["real_none"][s]["acc"])
+        assert np.isclose(ev["real_em"][s]["bal_acc"], res["real_em"][s]["bal_acc"])
     tab = C.main(["sweep", "--name", "sw", "--grid", "rapido", "--models", "hgb,rf"] + common)
     assert len(tab) == 2 * 2 * 2 * 2 and (out / "sw" / "mejor" / "metrics.json").exists()
+    assert tab.es_base.sum() == 2 and tab.elegida.sum() == 2   # una configuracion, dos priors
     best = json.loads((out / "sw" / "mejor.json").read_text())
-    assert best["config"]["model"] in ("hgb", "rf")
+    assert best["elegida"]["model"] in ("hgb", "rf") and best["base"] == C.BASELINE
+    assert (out / "sw" / "mejor" / "model.joblib").exists()
+    # la base se agrega si la grilla no la tiene
+    tab2 = C.main(["sweep", "--name", "sw2", "--grid", "rapido", "--models", "rf", "--fsets", "viejo"] + common)
+    assert tab2.es_base.sum() == 2 and set(tab2[tab2.es_base].model) == {"hgb"}
     g = C.main(["gap", "--name", "gp", "--peso", "wz"] + common)
     assert 0.0 <= g["auc_sim_vs_real"] <= 1.0 and (out / "gp" / "gap_importancias.csv").exists()
     resumen = pd.read_csv(out / "resumen.csv")
-    assert set(resumen.name) == {"t1", "sw"} and set(resumen.prior) == {"none", "em"}
+    assert set(resumen.name) == {"t1", "sw", "sw2"} and set(resumen.prior) == {"none", "em"}
+    assert list(resumen.columns) == C.RESUMEN_COLS
+    t1 = resumen[(resumen.name == "t1") & (resumen.prior == "none")].iloc[0]
+    assert np.isclose(t1.bal_acc_rep, rr["bal_acc"]) and np.isclose(t1.bal_acc_sel, rs["bal_acc"])
+    assert np.isclose(t1.coverage_rep, 1.0) and t1.n_rep == 31
+
+
+# ----------------------------------------------------------------------------- seleccion anidada (revision B)
+CFG_HGB = {"model": "hgb", "fset": "rg", "use_z": True, "peso": "wz_S", "balance": True}
+
+
+def test_D1_etiquetas_val_no_entrenan_ni_calibran(tmp_path):
+    """Permutar las etiquetas de las reales val no cambia P, Q (EM) ni la temperatura (mata M9 y M10)."""
+    fd, rd, fr, real = _fake_world(tmp_path)
+    S, R, _ = C.prepare(fd, rd, fr, real)
+    perm = np.random.default_rng(0).permutation(len(R))
+    Rp = R.assign(y=R.y.to_numpy()[perm], cls=R.cls.to_numpy()[perm], sn_type=R.sn_type.to_numpy()[perm])
+    for cfg in (CFG_HGB, {**CFG_HGB, "model": "hier_hgb_II", "peso": "wz_dr"}):
+        a = C.run_config(S, R, cfg, C.classes(), folds=3, keep_model=True)
+        b = C.run_config(S, Rp, cfg, C.classes(), folds=3, keep_model=True)
+        assert np.allclose(a["_P"], b["_P"], rtol=0, atol=1e-12) and np.allclose(a["_Q"], b["_Q"], rtol=0, atol=1e-12)
+        assert a["temperatura"] == b["temperatura"] and a["prior_em"] == b["prior_em"]
+        assert a["real_none"]["val"]["bal_acc"] != b["real_none"]["val"]["bal_acc"]   # el test no es trivial
+
+
+def test_D1b_val_rep_no_ajusta_nada(tmp_path):
+    """Cambiar las features de val_rep no cambia S(m), wz_dr, la temperatura ni el prior EM, ni las predicciones de
+    val_sel: val_rep solo se reporta."""
+    fd, rd, fr, real = _fake_world(tmp_path)
+    S, R, _ = C.prepare(fd, rd, fr, real)
+    rep = (R.subset == "val_rep").to_numpy()
+    assert 0 < rep.sum() < len(R)
+    num = [c for c in R.columns if c.startswith(("m_pk", "M_pk", "f_", "t_", "gamma", "color", "d_", "rel_"))
+           or c == "m_sel"]
+    Rr = R.copy()
+    Rr.loc[rep, num] = Rr.loc[rep, num].to_numpy() + 0.7
+    for cfg in (CFG_HGB, {**CFG_HGB, "peso": "wz_dr"}):
+        a = C.run_config(S, R, cfg, C.classes(), folds=3, keep_model=True)
+        b = C.run_config(S, Rr, cfg, C.classes(), folds=3, keep_model=True)
+        assert a["pesos"] == b["pesos"] and a["temperatura"] == b["temperatura"] and a["prior_em"] == b["prior_em"]
+        assert np.allclose(a["_P"][~rep], b["_P"][~rep], rtol=0, atol=1e-12)
+        assert np.allclose(a["_Q"][~rep], b["_Q"][~rep], rtol=0, atol=1e-12)
+        assert not np.allclose(a["_P"][rep], b["_P"][rep])                       # val_rep si se predice
+
+
+def test_D2_cv_disjunta_por_plantilla(tmp_path, monkeypatch):
+    """Espia en Model.fit: en la CV de run_config ninguna plantilla del fold de prueba entrena (mata M8)."""
+    fd, rd, fr, real = _fake_world(tmp_path)
+    S, R, _ = C.prepare(fd, rd, fr, real)
+    modelos, fit0, pred0 = [], C.Model.fit, C.Model.predict_proba
+
+    def fit(self, F, y, w):
+        self.tpl_train = set(zip(F.sn_type, F.template)) if "template" in F else None
+        modelos.append(self)
+        return fit0(self, F, y, w)
+
+    def pred(self, F):
+        if "template" in F:                                     # sims (las reales no tienen plantilla)
+            self.tpl_test, self.n_test = set(zip(F.sn_type, F.template)), len(F)
+        return pred0(self, F)
+
+    monkeypatch.setattr(C.Model, "fit", fit)
+    monkeypatch.setattr(C.Model, "predict_proba", pred)
+    C.run_config(S, R, {**CFG_HGB, "peso": "wz"}, C.classes(), folds=4)
+    cv = [m for m in modelos if hasattr(m, "tpl_test")]
+    assert len(cv) == 4 and len(modelos) == 5                   # 4 folds + el modelo con todas las sims
+    for m in cv:
+        assert m.tpl_test and not (m.tpl_train & m.tpl_test)
+    assert sum(m.n_test for m in cv) == len(S)
+    assert set().union(*(m.tpl_test for m in cv)) == set(zip(S.sn_type, S.template))
+
+
+def test_D3_metrics_matriz_conocida_y_con_r():
+    """Recall por fila y precision por columna sobre una matriz conocida (mata M11); con_r es el subconjunto con r
+    (mata M12)."""
+    cls = ("Ia", "II", "Ibc")
+    cm = np.array([[8, 1, 1], [4, 5, 1], [0, 3, 2]])          # filas verdaderas, columnas predichas
+    y = np.concatenate([np.full(cm[i, j], i) for i in range(3) for j in range(3)]).astype(int)
+    yp = np.concatenate([np.full(cm[i, j], j) for i in range(3) for j in range(3)]).astype(int)
+    m = C.metrics(y, yp, cls)
+    rec, pre = np.array([0.8, 0.5, 0.4]), np.array([8 / 12, 5 / 9, 2 / 4])
+    f1 = 2 * pre * rec / (pre + rec)
+    assert m["confusion"] == cm.tolist() and np.isclose(m["acc"], 15 / 25) and np.isclose(m["bal_acc"], rec.mean())
+    assert np.allclose([m[f"recall_{c}"] for c in cls], rec) and np.allclose([m[f"f1_{c}"] for c in cls], f1)
+    assert np.isclose(m["f1_macro"], f1.mean())
+    # con_r y subconjuntos en evaluate_real
+    n = len(y)
+    rng = np.random.default_rng(0)
+    R = pd.DataFrame({"oid": [f"o{i}" for i in range(n)], "y": y, "tiene_r": rng.random(n) < 0.6,
+                      "subset": np.where(np.arange(n) % 2 == 0, "val_sel", "val_rep")})
+    P = np.eye(3)[yp] * 0.9 + 0.1 / 3
+    ev = C.evaluate_real(R, P, P, cls, n_boot=50, nn_oids={"o0", "o1", "o2"})
+    assert ev["none"]["val"]["confusion"] == cm.tolist()
+    for s in C.SUBSETS:
+        k = np.ones(n, bool) if s == "val" else (R.subset == s).to_numpy()
+        kr = k & R.tiene_r.to_numpy()
+        assert ev["none"][s]["n"] == k.sum() and ev["none"][s]["con_r"]["n"] == kr.sum()
+        assert ev["none"][s]["con_r"]["confusion"] == C.metrics(y[kr], yp[kr], cls)["confusion"]
+    assert ev["none"]["val"]["nn_oids"]["n"] == 3 and ev["none"]["val_sel"]["nn_oids"]["n"] == 2
+
+
+def test_D4_prior_efectivo_jerarquico_uniforme():
+    """Con features sin informacion, la media de P sobre las sims es 1/K por clase, tambien en el jerarquico (mata
+    M13: nivel 1 balanceado 50/50 favoreceria a la primera clase)."""
+    y = np.repeat([0, 1, 2], [300, 150, 60])
+    cols = ["f_r", "t_fall_r"]
+    F = pd.DataFrame(0.0, index=range(len(y)), columns=cols)
+    for name in ("hgb", "rf", "hier_hgb_II", "hier_hgb_Ia", "hier_rf_Ia"):
+        P = C.Model(name, cols, cols, 3, seed=1).fit(F, y, np.ones(len(y))).predict_proba(F)
+        assert np.allclose(P.mean(0), 1 / 3, atol=0.02), (name, P.mean(0))
+
+
+def test_D5_gap_no_usa_etiquetas(tmp_path):
+    """El AUC sim contra real y sus importancias no cambian al permutar las etiquetas de las reales (mata M14)."""
+    fd, rd, fr, real = _fake_world(tmp_path)
+    out = tmp_path / "out"
+    common = ["--features-sims", str(fd), "--run-dir", str(rd), "--features-real", str(fr), "--real-dir", str(real),
+              "--out-root", str(out), "--folds", "3", "--peso", "wz"]
+    g1 = C.main(["gap", "--name", "g1"] + common)
+    meta = pd.read_csv(real / "meta_real_ztf.csv")
+    ix = meta.index[(meta.split == "val") & meta.sn_type.isin(["Ia", "II", "IIb", "Ibc"])]
+    nuevo = dict(zip(meta.oid[ix], np.random.default_rng(1).permutation(meta.sn_type[ix].to_numpy())))
+    assert any(nuevo[o] != t for o, t in zip(meta.oid[ix], meta.sn_type[ix]))
+    feats = pd.read_csv(fr / "features" / "features.csv")
+    for df in (meta, feats):                                   # la llave lleva sn_type: se cambia en los dos
+        df["sn_type"] = [nuevo.get(o, t) for o, t in zip(df.oid, df.sn_type)]
+    meta.to_csv(real / "meta_real_ztf.csv", index=False)
+    feats.to_csv(fr / "features" / "features.csv", index=False)
+    g2 = C.main(["gap", "--name", "g2"] + common)
+    assert g1["auc_sim_vs_real"] == g2["auc_sim_vs_real"] and g1["n_real"] == g2["n_real"]
+    pd.testing.assert_frame_equal(pd.read_csv(out / "g1" / "gap_importancias.csv"),
+                                  pd.read_csv(out / "g2" / "gap_importancias.csv"))
+
+
+def _sel_world(n_per=40, seed=0):
+    """R con 3 clases y subset alternado; predicciones fabricadas con una tasa de acierto dada por subconjunto."""
+    y = np.repeat([0, 1, 2], n_per)
+    sub = np.where(np.arange(len(y)) % 2 == 0, "val_sel", "val_rep")
+    R = pd.DataFrame({"oid": [f"o{i}" for i in range(len(y))], "y": y, "subset": sub})
+    rng = np.random.default_rng(seed)
+
+    def pred(acc_sel, acc_rep):
+        acc = np.where(sub == "val_sel", acc_sel, acc_rep)
+        hit = rng.random(len(y)) < acc
+        return np.where(hit, y, (y + 1 + rng.integers(0, 2, len(y))) % 3)
+    return R, pred
+
+
+def test_seleccion_anidada_prefiltro_bootstrap_y_solo_val_sel():
+    cls = C.classes()
+    R, pred = _sel_world()
+    cfgs = [dict(C.BASELINE), {**C.BASELINE, "model": "rf"}, {**C.BASELINE, "model": "mlp"},
+            {**C.BASELINE, "model": "hier_hgb_II"}]
+    base_i = 0
+    yp = [pred(0.6, 0.6), pred(0.95, 0.5), pred(1.0, 1.0), pred(0.62, 0.62)]
+    cv = [0.6, 0.8, 0.1, 0.7]                                  # mediana 0.65: la 2 (cv 0.1) queda fuera
+    el = C.select_nested(cfgs, cv, yp, R, cls, base_i)
+    assert np.isclose(el["prefiltro_cv"]["mediana"], 0.65) and el["_pasa"] == {0: False, 1: True, 2: False, 3: True}
+    assert el["candidata"] == cfgs[1] and el["comparacion"]["gana"] and el["elegida"] == cfgs[1]
+    assert el["comparacion"]["n"] == (R.subset == "val_sel").sum()
+    # val_rep no entra: la 3 perfecta y la 1 siempre mal en val_rep no cambian ni el orden ni la comparacion
+    y, rep = R.y.to_numpy(), (R.subset == "val_rep").to_numpy()
+    yp2 = [np.where(rep, y, yp[0]), np.where(rep, (y + 1) % 3, yp[1]), yp[2], np.where(rep, y, yp[3])]
+    el2 = C.select_nested(cfgs, cv, yp2, R, cls, base_i)
+    assert el2["comparacion"] == el["comparacion"] and el2["elegida"] == el["elegida"]
+    assert el2["ranking_sel"] == el["ranking_sel"]
+    # una candidata que acierta un solo objeto mas que la base no gana: queda la base
+    uno_mas = yp[0].copy()
+    i0 = np.flatnonzero(~rep & (yp[0] != y))[0]
+    uno_mas[i0] = y[i0]
+    el3 = C.select_nested(cfgs, cv, [yp[0], None, yp[2], uno_mas], R, cls, base_i)
+    assert el3["candidata"] == cfgs[3] and el3["comparacion"]["delta"] > 0
+    assert not el3["comparacion"]["gana"] and el3["elegida"] == C.BASELINE
+    # si la primera en val_sel es la base, no hay comparacion
+    el4 = C.select_nested(cfgs, [0.9, 0.95, 0.1, 0.1], [pred(1.0, 0.3)] + yp[1:], R, cls, base_i)
+    assert el4["candidata"] == C.BASELINE and el4["comparacion"] is None and el4["elegida"] == C.BASELINE
+    with pytest.raises(SystemExit):                            # sin base no hay incumbente
+        C.select_nested(cfgs, cv, [None] + yp[1:], R, cls, base_i)
+
+
+def test_cobertura_por_subconjunto_y_oids_de_la_red(tmp_path):
+    fd, rd, fr, real = _fake_world(tmp_path)
+    feats = pd.read_csv(fr / "features" / "features.csv")
+    sin = {"ZTFrIa000", "ZTFrIa001", "ZTFrIbc002"}
+    feats[~feats.oid.isin(sin)].to_csv(fr / "features" / "features.csv", index=False)
+    S, R, v = C.prepare(fd, rd, fr, real)
+    nn = pd.DataFrame({"oid": ["ZTFrIa000", "ZTFrIa003", "ZTFrII004", "ZTFrIIn000"],
+                       "y_true": ["Ia", "Ia", "II", "IIn"]})
+    nn.to_csv(tmp_path / "pred_nn.csv", index=False)
+    oids = C.read_nn_oids(tmp_path / "pred_nn.csv", R)
+    cov = C.coverage(R, v, C.classes(), oids)
+    assert cov["val"]["n_real"] == 60 and cov["val"]["n_con_features"] == 57
+    assert cov["val"]["n_nn"] == 3 and cov["val"]["n_comun_nn"] == 2           # la IIn no es de las 3 clases
+    for s in ("val_sel", "val_rep"):
+        vs = v[v.subset == s]
+        assert cov[s]["n_real"] == len(vs) and cov[s]["n_con_features"] == len(vs) - len(sin & set(vs.oid))
+    nn.assign(y_true=["Ia", "II", "II", "IIn"]).to_csv(tmp_path / "pred_mal.csv", index=False)   # Ia003 como II
+    with pytest.raises(ValueError):                            # etiquetas distintas: no es la misma muestra
+        C.read_nn_oids(tmp_path / "pred_mal.csv", R)
+
+
+def test_particion_compartida_con_nnclf(tmp_path):
+    """val_sel y val_rep son exactamente los de pipeline78.splits (los mismos que usa nnclf)."""
+    from pipeline78 import splits
+    fd, rd, fr, real = _fake_world(tmp_path)
+    _, R, v = C.prepare(fd, rd, fr, real)
+    sel, rep = splits.val_split(splits.read_val_meta(real / "meta_real_ztf.csv"))
+    assert set(v.oid[v.subset == "val_sel"]) == set(sel) & set(v.oid)
+    assert set(v.oid[v.subset == "val_rep"]) == set(rep) & set(v.oid)
+    assert set(R.subset) == {"val_sel", "val_rep"}
+
+
+def test_resumen_viejo_se_alinea_como_val(tmp_path):
+    """Un resumen.csv anterior a la particion se reescribe con sus metricas como _val (eran de val completo)."""
+    pd.DataFrame([{"fecha": "x", "name": "viejo", "prior": "none", "acc": 0.7, "bal_acc": 0.65, "n_real": 309,
+                   "cobertura": 0.67}]).to_csv(tmp_path / "resumen.csv", index=False)
+    C.append_resumen([{"name": "nuevo", "bal_acc_rep": 0.6}], tmp_path)
+    r = pd.read_csv(tmp_path / "resumen.csv")
+    assert list(r.columns) == C.RESUMEN_COLS
+    v = r[r.name == "viejo"].iloc[0]
+    assert v.bal_acc_val == 0.65 and v.acc_val == 0.7 and v.n_val == 309 and v.coverage_val == 0.67
+    assert np.isnan(v.bal_acc_rep) and r[r.name == "nuevo"].iloc[0].bal_acc_rep == 0.6

@@ -6,8 +6,12 @@ REGLAS
 1. Llaves. Todo merge va por (oid, part_index, sn_type): r con g, y features con metadata. En las sims oid = field
    de _sims_all. El pipeline viejo (opt_clasificador/05_faseC*) juntaba r con g por (oid, part_index) sin sn_type
    y el color salia de otro tipo (bug H4: 13 063 filas pasaban a 26 082). Aca un duplicado de llave es un error.
-2. Reales. Solo origen == holdout & split == val & ~excluir. meta_real_ztf.csv y el features.csv real se leen con
-   csv linea a linea y solo las filas val llegan a pandas: la mitad final no se carga nunca (test que lo vigila).
+2. Reales. Solo origen == holdout & split == val & ~excluir. meta_real_ztf.csv (pipeline78.splits.read_val_meta) y
+   el features.csv real se leen con csv linea a linea y solo las filas val llegan a pandas: la mitad final no se
+   carga nunca (test que lo vigila). Por defecto las features reales son las re-extraidas tras el logfix
+   (RUNS/features_real_ztf2, --features-real). Seleccion anidada (revision B, mismo protocolo que nnclf): la mitad
+   val se parte con pipeline78.splits.val_split en val_sel (elegir y ajustar todo lo que mira reales: S(m), wz_dr,
+   prior EM) y val_rep (solo reportar). Columna subset de las reales.
 3. Clases. Ia, II (= II + IIb), Ibc. IIn fuera de la metrica principal (--cuatro-clases la agrega).
 4. Features por banda b (r, g): m_pk_b = -2.5 log10(A_b) (pico aparente desde A), M_pk_b = m_pk_b - mu(z) (solo
    con z, LCDM plano H0 = 70, Om = 0.3 como core.utils.DL_calculator), f_b, t_rise_b, t_fall_b, gamma_b en reposo
@@ -18,19 +22,30 @@ REGLAS
    Faltantes (p. ej. sin g) quedan NaN: HistGradientBoosting los acepta y RF/MLP imputan la mediana con bandera.
 5. Pesos de entrenamiento: w = w_z (ya trae 1/(1+z)) * peso de seleccion, y despues balance de clases (cada clase
    suma lo mismo; en el jerarquico, cada nivel queda con prior efectivo uniforme sobre las clases).
-   Peso de seleccion (--peso):
-     wz    nada mas.
+   Peso de seleccion (--peso, por defecto wz):
+     wz    nada mas. Es la configuracion principal (la mas limpia para las tasas).
      wz_S  S(m) = p_real(m) / p_sim(m), cociente de histogramas de la magnitud de pico aparente (r, o g si no hay
            r) suavizados con una gaussiana. Sims de todas las clases juntas ponderadas por w_z, contra las reales
-           val con features. NO usa etiquetas (la funcion no las recibe). Usa las reales val: declarado.
+           de val_sel con features (NUNCA val_rep). NO usa etiquetas (la funcion no las recibe). Variante.
+           PARA LAS TASAS S(m) se recalcula sobre la muestra objetivo (sin etiquetas): el de val_sel imita la
+           seleccion espectroscopica, no la de la muestra fotometrica de ZTF o SUDARE.
      wz_dr cociente de densidad p_real(x)/p_sim(x) en todo el espacio de features, estimado con un clasificador
-           sim contra real (validacion cruzada, sin etiquetas). Tambien usa las reales val: declarado.
-6. Prior (--prior). none: argmax de las probabilidades del modelo (prior de entrenamiento uniforme).
-   em: reajuste de prior por EM sobre las reales sin etiquetas (Saerens, Latinne y Decaestecker 2002). Corre sobre
-   las probabilidades calibradas con temperatura (ajustada en las predicciones fuera de fold de las sims).
-7. Seleccion de hiperparametros: validacion cruzada en las sims agrupada por PLANTILLA (por sn_type, II e IIb
-   aparte) y, como segundo criterio, las metricas sobre las reales val. El barrido ordena por la exactitud
-   balanceada en las reales val (declarado: la meta es la clasificacion real, y la mitad final queda intocada).
+           sim contra real (validacion cruzada, sin etiquetas), con las reales de val_sel. Variante.
+6. Prior. none: argmax de las probabilidades del modelo (prior de entrenamiento uniforme). La temperatura se ajusta
+   en las predicciones fuera de fold de las sims (no mira reales ni etiquetas) y no cambia el argmax.
+   em: reajuste de prior por EM sin etiquetas (Saerens, Latinne y Decaestecker 2002) sobre las probabilidades de
+   val_sel. El prior resultante se aplica igual a val_sel y val_rep.
+7. Seleccion anidada (sweep; revision B, decision del 2026-10-04, mismo protocolo que pipeline78.nnclf):
+   a. CV en las sims agrupada por PLANTILLA (por sn_type, II e IIb aparte) como pre-filtro: quedan fuera las
+      configuraciones con exactitud balanceada de CV bajo la mediana del barrido.
+   b. Las que pasan se ordenan SOLO por la exactitud balanceada en val_sel (prior none). val_rep no entra.
+   c. La primera (candidata) se compara con la base simple y fuerte BASELINE (hgb, rg, con z, wz) por bootstrap
+      pareado estratificado por clase sobre val_sel (pipeline78.nnclf.experimentos.paired_bootstrap, 2000
+      remuestreos). La candidata queda solo si P(delta > 0) >= 0.9. Si no, queda la base.
+   d. Todo se reporta en val_rep (la cifra honesta, con IC 95 % bootstrap), val_sel y val completo, con los sufijos
+      _rep, _sel y _val en resumen.csv (como nnclf). Cobertura = reales del subconjunto con features / reales del
+      subconjunto. Con --nn-preds se dan tambien las metricas sobre las oids que la red clasifica.
+   La cifra de la tesis sale de la mitad final, con la configuracion elegida aca.
 """
 import argparse
 import csv
@@ -54,11 +69,16 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import QuantileTransformer
 from threadpoolctl import threadpool_limits
 
+from pipeline78 import splits
+from pipeline78.nnclf.experimentos import BOOT_SEED, N_BOOT as N_BOOT_PAREADO, P_MIN, paired_bootstrap
 from pipeline78.paths import RUNS
 
 REAL_DIR = RUNS / "real_ztf"
-REAL_FEAT = RUNS / "features_real_ztf"
+REAL_FEAT = RUNS / "features_real_ztf2" / "features" / "features.csv"   # re-extraidas tras el logfix (bfcedc2)
 OUT_ROOT = RUNS / "clf_villar"
+SUBSETS = ("val_rep", "val_sel", "val")                 # val = val completo (referencia)
+SUFFIX = {"val_rep": "rep", "val_sel": "sel", "val": "val"}
+BASELINE = {"model": "hgb", "fset": "rg", "use_z": True, "peso": "wz", "balance": True}   # incumbente del barrido
 SEED = 20261004
 N_JOBS = int(os.environ.get("P78_CLF_THREADS", "2"))   # hilos de RF/HGB/BLAS: la RAM y la CPU se comparten
 KEYS = ["oid", "part_index", "sn_type"]
@@ -121,24 +141,15 @@ def _to_num(df):
     return df
 
 
-def _es_val(row):
-    return (row.get("origen") == "holdout" and row.get("split") == "val"
-            and str(row.get("excluir", "")).strip().lower() not in ("true", "1"))
-
-
 def read_val_meta(meta_path, four=False):
-    """Metadatos de las reales val (regla 2). Las filas de otros splits no se guardan: la segunda pasada solo
-    verifica que ninguna oid val aparezca en ellas."""
-    with open(meta_path, newline="") as fh:
-        rows = [r for r in csv.DictReader(fh) if _es_val(r)]
-    v = _to_num(pd.DataFrame(rows))
-    vo = set(v.oid)
-    if len(vo) != len(v):
-        raise ValueError("oid repetida en la mitad val")
-    with open(meta_path, newline="") as fh:
-        for r in csv.DictReader(fh):
-            if not (r.get("origen") == "holdout" and r.get("split") == "val") and r["oid"] in vo:
-                raise ValueError(f"la oid val {r['oid']} aparece tambien fuera de val")
+    """Metadatos de las reales val (regla 2) con la particion anidada en la columna subset (val_sel o val_rep).
+    pipeline78.splits.read_val_meta no guarda las filas de otros splits (una segunda pasada solo verifica que ninguna
+    oid val aparezca en ellas). La particion se hace sobre todo val (IIn incluida), igual que en nnclf, asi que las
+    dos variantes de clases y los dos metodos comparten exactamente val_sel y val_rep."""
+    v = splits.read_val_meta(meta_path)
+    sel, rep = splits.val_split(v)
+    v["oid"] = v.oid.astype(str)
+    v["subset"] = np.where(v.oid.isin(set(sel)), "val_sel", np.where(v.oid.isin(set(rep)), "val_rep", ""))
     v["part_index"] = v.part_index.astype(int)
     v["z"] = pd.to_numeric(v.z, errors="coerce")
     v["cls"] = v.sn_type.map(lambda t: class_of(t, four))
@@ -185,15 +196,20 @@ def load_sims(features_sims, run_dir=None, four=False):
 
 def load_real_val(features_real=REAL_FEAT, real_dir=REAL_DIR, four=False):
     """(features de las reales val con al menos una banda ajustada, metadatos val de la clase pedida)."""
-    v = read_val_meta(Path(real_dir) / "meta_real_ztf.csv", four)
-    f = read_rows_for_oids(features_csv(features_real), v.oid)
+    meta, feat = Path(real_dir) / "meta_real_ztf.csv", features_csv(features_real)
+    if feat.exists() and feat.stat().st_mtime < meta.stat().st_mtime:
+        print(f"[clf_villar] AVISO: {feat} es anterior a {meta} (re-extraer las features reales, revision A)",
+              flush=True)
+    v = read_val_meta(meta, four)
+    f = read_rows_for_oids(feat, v.oid)
     if not set(f.oid) <= set(v.oid):
         raise AssertionError("se colo una oid fuera de la mitad val")
+    cols = KEYS + ["z", "subtipo", "cls", "subset"]
     if len(f):
         f["part_index"] = f.part_index.astype(int)
-        W = widen(f).merge(v[KEYS + ["z", "subtipo", "cls"]], on=KEYS, how="inner", validate="one_to_one")
+        W = widen(f).merge(v[cols], on=KEYS, how="inner", validate="one_to_one")
     else:
-        W = pd.DataFrame(columns=KEYS + ["z", "subtipo", "cls"])
+        W = pd.DataFrame(columns=cols)
     return W.reset_index(drop=True), v
 
 
@@ -436,7 +452,8 @@ def metrics(y, yp, cls, w=None):
 
 
 def bootstrap_ci(y, yp, cls, n_boot=1000, seed=SEED):
-    """IC 95 % de acc y exactitud balanceada remuestreando las reales (con n ~ 300, +-0.025 en acc)."""
+    """IC 95 % (percentiles 2.5 y 97.5) de acc y exactitud balanceada remuestreando las reales. Ancho tipico: +-0.045
+    en acc con n ~ 300 (val completo) y +-0.065 con n ~ 150 (val_rep)."""
     y, yp = np.asarray(y, int), np.asarray(yp, int)
     rng = np.random.default_rng(seed)
     acc, bal = [], []
@@ -499,6 +516,12 @@ def em_prior(P, prior_train, n_iter=200, tol=1e-6):
     return Q, pi
 
 
+def apply_prior(P, pi, prior_train):
+    """Probabilidades con el prior pi en lugar del de entrenamiento (la misma regla de Bayes que usa em_prior)."""
+    Q = P * (np.asarray(pi, float) / np.asarray(prior_train, float))
+    return Q / Q.sum(1, keepdims=True)
+
+
 def template_folds(S, n_folds=5, seed=SEED):
     """Fold de cada sim: por sn_type, plantillas ordenadas, permutadas con default_rng(seed + indice del tipo) y
     repartidas en n_folds grupos (misma regla que nnclf.data.split_templates)."""
@@ -529,7 +552,8 @@ def prepare(features_sims, run_dir=None, features_real=REAL_FEAT, real_dir=REAL_
 
 
 def phys_weights(S, R, peso, cols, seed=SEED):
-    """w_z * peso de seleccion (regla 5). Devuelve (pesos, info). R solo aporta features, nunca etiquetas."""
+    """w_z * peso de seleccion (regla 5). Devuelve (pesos, info). R solo aporta features, nunca etiquetas, y
+    run_config le pasa solo las filas de val_sel (val_rep no ajusta nada)."""
     w = S.w_z.to_numpy(float)
     info = {"peso": peso}
     if peso == "wz_S":
@@ -547,13 +571,48 @@ def phys_weights(S, R, peso, cols, seed=SEED):
     return w, info
 
 
-def run_config(S, R, cfg, cls, folds=5, seed=SEED, keep_model=False):
+def sel_mask(R):
+    """Filas de val_sel (las unicas reales que pueden ajustar algo: S(m), wz_dr y el prior EM)."""
+    return (R["subset"] == "val_sel").to_numpy(bool)
+
+
+def evaluate_real(R, P, Q, cls, n_boot=1000, seed=SEED, nn_oids=None):
+    """Metricas de las reales por subconjunto (val_rep, val_sel, val) para el prior none (P) y em (Q). Cada una con
+    calibracion, IC 95 % bootstrap, el subconjunto con r y, si se da nn_oids, las oids que la red clasifica."""
+    y = R.y.to_numpy(int)
+    tiene_r = R.tiene_r.to_numpy(bool)
+    oid_nn = R.oid.astype(str).isin(nn_oids).to_numpy() if nn_oids is not None else None
+    out = {}
+    for tag, M in (("none", P), ("em", Q)):
+        yp, by = M.argmax(1), {}
+        for s in SUBSETS:
+            k = np.ones(len(R), bool) if s == "val" else (R["subset"] == s).to_numpy()
+            if not k.any():
+                by[s] = {"n": 0}
+                continue
+            r = metrics(y[k], yp[k], cls)
+            r.update(calib_metrics(M[k], y[k]))
+            r.update(bootstrap_ci(y[k], yp[k], cls, n_boot, seed))
+            kr = k & tiene_r
+            r["con_r"] = metrics(y[kr], yp[kr], cls) if kr.any() else {"n": 0}
+            if oid_nn is not None:
+                kn = k & oid_nn
+                r["nn_oids"] = metrics(y[kn], yp[kn], cls) if kn.any() else {"n": 0}
+            by[s] = r
+        out[tag] = by
+    return out
+
+
+def run_config(S, R, cfg, cls, folds=5, seed=SEED, keep_model=False, nn_oids=None):
     """Una configuracion: CV por plantilla en sims (fuera de fold) y modelo con todas las sims evaluado en las
-    reales val, con prior none y em. cfg: model, fset, use_z, peso, balance."""
+    reales val, con prior none y em, por subconjunto (val_rep, val_sel, val). cfg: model, fset, use_z, peso,
+    balance. Las reales solo aportan features, y solo las de val_sel (S(m), wz_dr, prior EM)."""
     K = len(cls)
     c1, c2 = fset_cols(cfg["fset"], cfg["use_z"])
     cols = sorted(set(c1) | set(c2), key=(c1 + c2).index)
-    w, winfo = phys_weights(S, R, cfg["peso"], cols, seed)
+    sel = sel_mask(R)
+    w, winfo = phys_weights(S, R[sel], cfg["peso"], cols, seed)
+    winfo["reales_ajuste"] = f"val_sel ({int(sel.sum())})"
     y = S.y.to_numpy()
     res = {"config": cfg, "cols": cols, "pesos": winfo, "n_sims": int(len(S)),
            "n_sims_por_clase": {c: int((S.cls == c).sum()) for c in cls}}
@@ -571,30 +630,56 @@ def run_config(S, R, cfg, cls, folds=5, seed=SEED, keep_model=False):
     model = Model(cfg["model"], c1, c2, K, seed, cfg.get("balance", True)).fit(S, y, w)
     Pr = temper(model.predict_proba(R), T) if len(R) else np.zeros((0, K))
     prior_tr = np.full(K, 1 / K) if cfg.get("balance", True) else np.bincount(y, weights=w, minlength=K) / w.sum()
-    Qr, pi = em_prior(Pr, prior_tr) if len(R) else (Pr, prior_tr)
+    pi = em_prior(Pr[sel], prior_tr)[1] if sel.any() else prior_tr       # EM sin etiquetas, solo val_sel
+    Qr = apply_prior(Pr, pi, prior_tr) if len(R) else Pr
+    ev = evaluate_real(R, Pr, Qr, cls, 300 if not keep_model else 1000, seed, nn_oids) if len(R) else {}
+    for tag in ("none", "em"):
+        res[f"real_{tag}"] = ev.get(tag)
     yr = R.y.to_numpy()
-    for tag, Q in (("none", Pr), ("em", Qr)):
-        res[f"real_{tag}"] = metrics(yr, Q.argmax(1), cls) if len(R) else None
-        if len(R):
-            res[f"real_{tag}"].update(calib_metrics(Q, yr))
-            res[f"real_{tag}"].update(bootstrap_ci(yr, Q.argmax(1), cls, 300 if not keep_model else 1000, seed))
-            con_r = R.tiene_r.to_numpy()
-            res[f"real_{tag}"]["con_r"] = metrics(yr[con_r], Q[con_r].argmax(1), cls)
     res["prior_train"] = [float(x) for x in prior_tr]
     res["prior_em"] = {c: float(pi[i]) for i, c in enumerate(cls)}
+    res["prior_em_ajustado_en"] = "val_sel"
     res["prior_real_val_verdadero"] = {c: float((yr == i).mean()) for i, c in enumerate(cls)} if len(R) else None
+    res["_yp"] = {"none": Pr.argmax(1), "em": Qr.argmax(1)}      # para el bootstrap pareado del barrido
     if keep_model:
         res["_model"], res["_P"], res["_Q"] = model, Pr, Qr
     return res
 
 
-def coverage(R, v, cls):
-    return {"n_real_val": int(len(v)), "n_con_features": int(len(R)), "cobertura": float(len(R) / max(len(v), 1)),
-            "cobertura_por_clase": {c: float((R.cls == c).sum() / max((v.cls == c).sum(), 1)) for c in cls}}
+def coverage(R, v, cls, nn_oids=None):
+    """Cobertura por subconjunto: reales con features / reales del subconjunto (de las clases pedidas). Con nn_oids,
+    tambien la fraccion de las oids que clasifica la red que Villar puede clasificar."""
+    out = {}
+    for s in SUBSETS:
+        vs = v if s == "val" else v[v["subset"] == s]
+        rs = R if s == "val" else R[R["subset"] == s]
+        c = {"n_real": int(len(vs)), "n_con_features": int(len(rs)), "cobertura": float(len(rs) / max(len(vs), 1)),
+             "cobertura_por_clase": {k: float((rs.cls == k).sum() / max((vs.cls == k).sum(), 1)) for k in cls}}
+        if nn_oids is not None:
+            n_nn = int(vs.oid.astype(str).isin(nn_oids).sum())
+            n_com = int(rs.oid.astype(str).isin(nn_oids).sum())
+            c.update({"n_nn": n_nn, "n_comun_nn": n_com, "cobertura_sobre_nn": float(n_com / max(n_nn, 1))})
+        out[s] = c
+    return out
+
+
+def read_nn_oids(path, R=None):
+    """Oids que clasifica una corrida de nnclf (su pred_real_val.csv, o el directorio de la corrida). Con R, verifica
+    que las etiquetas coincidan en las oids comunes."""
+    p = Path(path)
+    if p.is_dir():
+        p = next((q for q in (p / "comun" / "pred_real_val.csv", p / "pred_real_val.csv") if q.exists()),
+                 p / "pred_real_val.csv")
+    nn = pd.read_csv(p, dtype={"oid": str}, usecols=["oid", "y_true"])
+    if R is not None:
+        m = R[["oid", "cls"]].astype({"oid": str}).merge(nn, on="oid")
+        if not (m.cls == m.y_true).all():
+            raise ValueError(f"{p}: etiquetas distintas a las de Villar en {int((m.cls != m.y_true).sum())} oids")
+    return set(nn.oid)
 
 
 def perm_importance(model, R, cols, cls, n_rep=10, seed=SEED):
-    """Caida de exactitud balanceada en las reales val al permutar cada columna (usa etiquetas val: declarado)."""
+    """Caida de exactitud balanceada en las reales al permutar cada columna (usa etiquetas: declarado)."""
     rng = np.random.default_rng(seed)
     y = R.y.to_numpy()
     base = metrics(y, model.predict_proba(R).argmax(1), cls)["bal_acc"]
@@ -610,24 +695,38 @@ def perm_importance(model, R, cols, cls, n_rep=10, seed=SEED):
 
 
 # ------------------------------------------------------------------------------------------------ salidas
-RESUMEN_COLS = ["fecha", "name", "features_sims", "model", "fset", "use_z", "peso", "balance", "prior", "n_sims",
-                "cv_bal_acc", "n_real", "cobertura", "acc", "bal_acc", "f1_macro", "f1_Ia", "f1_II", "f1_Ibc",
-                "acc_con_r", "bal_acc_con_r", "logloss", "ece", "acc_ic95", "bal_acc_ic95"]
+SUB_KEYS = ["n", "coverage", "acc", "bal_acc", "f1_macro", "f1_Ia", "f1_II", "f1_Ibc", "f1_IIn", "acc_con_r",
+            "bal_acc_con_r", "logloss", "ece", "acc_ic95", "bal_acc_ic95", "n_nn_oids", "acc_nn_oids",
+            "bal_acc_nn_oids", "f1_macro_nn_oids"]
+RESUMEN_COLS = (["fecha", "name", "features_sims", "features_real", "model", "fset", "use_z", "peso", "balance",
+                 "prior", "n_sims", "cv_bal_acc", "temperatura"]
+                + [f"{k}_{SUFFIX[s]}" for s in SUBSETS for k in SUB_KEYS])
+# resumen.csv anterior a la particion: sus metricas eran sobre val completo
+LEGACY = {"n_real": "n_val", "cobertura": "coverage_val", **{k: f"{k}_val" for k in (
+    "acc", "bal_acc", "f1_macro", "f1_Ia", "f1_II", "f1_Ibc", "acc_con_r", "bal_acc_con_r", "logloss", "ece",
+    "acc_ic95", "bal_acc_ic95")}}
 
 
-def resumen_rows(res, name, features_sims, cov):
+def resumen_rows(res, name, features_sims, cov, features_real=None):
+    """Una fila por prior. Cada metrica de las reales con el sufijo _rep (honesta), _sel (con ella se elige) y _val
+    (val completo, referencia), como resumen.csv de nnclf."""
     cfg, rows = res["config"], []
     for tag in ("none", "em"):
-        r = res.get(f"real_{tag}") or {}
-        rows.append({"fecha": time.strftime("%Y-%m-%d %H:%M"), "name": name, "features_sims": str(features_sims),
-                     "model": cfg["model"], "fset": cfg["fset"], "use_z": cfg["use_z"], "peso": cfg["peso"],
-                     "balance": cfg.get("balance", True), "prior": tag, "n_sims": res["n_sims"],
-                     "cv_bal_acc": (res.get("cv_sims") or {}).get("bal_acc"), "n_real": r.get("n"),
-                     "cobertura": cov["cobertura"], "acc": r.get("acc"), "bal_acc": r.get("bal_acc"),
-                     "f1_macro": r.get("f1_macro"), "f1_Ia": r.get("f1_Ia"), "f1_II": r.get("f1_II"),
-                     "f1_Ibc": r.get("f1_Ibc"), "acc_con_r": (r.get("con_r") or {}).get("acc"),
-                     "bal_acc_con_r": (r.get("con_r") or {}).get("bal_acc"), "logloss": r.get("logloss"),
-                     "ece": r.get("ece"), "acc_ic95": r.get("acc_ic95"), "bal_acc_ic95": r.get("bal_acc_ic95")})
+        by = res.get(f"real_{tag}") or {}
+        row = {"fecha": time.strftime("%Y-%m-%d %H:%M"), "name": name, "features_sims": str(features_sims),
+               "features_real": str(features_real) if features_real else None, "model": cfg["model"],
+               "fset": cfg["fset"], "use_z": cfg["use_z"], "peso": cfg["peso"], "balance": cfg.get("balance", True),
+               "prior": tag, "n_sims": res["n_sims"], "cv_bal_acc": (res.get("cv_sims") or {}).get("bal_acc"),
+               "temperatura": res.get("temperatura")}
+        for s in SUBSETS:
+            sf, r = SUFFIX[s], by.get(s) or {}
+            cr, nn = r.get("con_r") or {}, r.get("nn_oids") or {}
+            vals = {"n": r.get("n"), "coverage": cov[s]["cobertura"], "acc_con_r": cr.get("acc"),
+                    "bal_acc_con_r": cr.get("bal_acc"), "n_nn_oids": nn.get("n"), "acc_nn_oids": nn.get("acc"),
+                    "bal_acc_nn_oids": nn.get("bal_acc"), "f1_macro_nn_oids": nn.get("f1_macro")}
+            for k in SUB_KEYS:
+                row[f"{k}_{sf}"] = vals[k] if k in vals else r.get(k)
+        rows.append(row)
     return rows
 
 
@@ -639,7 +738,9 @@ def append_resumen(rows, out_root=OUT_ROOT):
         with open(p, newline="") as fh:
             head = next(csv.reader(fh), [])
         if head != RESUMEN_COLS:                    # columnas de una version anterior: se reescribe alineado
-            pd.read_csv(p).reindex(columns=RESUMEN_COLS).to_csv(p, index=False)
+            old = pd.read_csv(p)
+            old = old.rename(columns={k: v for k, v in LEGACY.items() if k in old and v not in old})
+            old.reindex(columns=RESUMEN_COLS).to_csv(p, index=False)
     with open(p, "a", newline="") as fh:
         wr = csv.DictWriter(fh, fieldnames=RESUMEN_COLS, extrasaction="ignore")
         if new:
@@ -660,55 +761,74 @@ def _jsonable(o):
 
 
 def write_run(out, res, R, cls, cov):
-    """metrics.json, confusion_real_val_{none,em}.csv y pred_real_val.csv."""
+    """metrics.json, confusion_{none,em}_{rep,sel,val}.csv (filas = verdadera) y pred_real_val.csv (con la columna
+    subset, el mismo formato que lee nnclf.experimentos.compare)."""
     out.mkdir(parents=True, exist_ok=True)
     (out / "metrics.json").write_text(json.dumps(_jsonable({**res, "cobertura": cov}), indent=1))
     for tag in ("none", "em"):
-        r = res.get(f"real_{tag}")
-        if r:
-            pd.DataFrame(r["confusion"], index=[f"true_{c}" for c in cls],
-                         columns=[f"pred_{c}" for c in cls]).to_csv(out / f"confusion_real_val_{tag}.csv")
+        for s, r in (res.get(f"real_{tag}") or {}).items():
+            if r.get("confusion") is not None:
+                pd.DataFrame(r["confusion"], index=[f"true_{c}" for c in cls],
+                             columns=[f"pred_{c}" for c in cls]).to_csv(out / f"confusion_{tag}_{SUFFIX[s]}.csv")
     if "_P" in res and len(R):
         P, Q = res["_P"], res["_Q"]
-        pd.DataFrame({"oid": R.oid, "sn_type": R.sn_type, "y_true": R.cls, "tiene_r": R.tiene_r,
-                      "y_pred": [cls[i] for i in P.argmax(1)], "y_pred_em": [cls[i] for i in Q.argmax(1)],
-                      **{f"p_{c}": P[:, i] for i, c in enumerate(cls)},
+        pd.DataFrame({"oid": R.oid, "subset": R["subset"], "sn_type": R.sn_type, "y_true": R.cls,
+                      "tiene_r": R.tiene_r, "y_pred": [cls[i] for i in P.argmax(1)],
+                      "y_pred_em": [cls[i] for i in Q.argmax(1)], **{f"p_{c}": P[:, i] for i, c in enumerate(cls)},
                       **{f"p_em_{c}": Q[:, i] for i, c in enumerate(cls)}}).to_csv(out / "pred_real_val.csv",
                                                                                    index=False)
 
 
+def importances(model, R, cols, cls, seed=SEED):
+    """perm_importance en val_rep y val_sel (columna subset)."""
+    parts = [perm_importance(model, R[R["subset"] == s].reset_index(drop=True), cols, cls, seed=seed).assign(subset=s)
+             for s in ("val_rep", "val_sel") if (R["subset"] == s).any()]
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+
 def _print_res(tag, res):
     cv = res.get("cv_sims") or {}
+    nan = float("nan")
     a, b = res.get("real_none") or {}, res.get("real_em") or {}
-    print(f"[clf_villar] {tag}: cv sims bal {cv.get('bal_acc', float('nan')):.3f} | reales n={a.get('n')} "
-          f"acc {a.get('acc', float('nan')):.3f} bal {a.get('bal_acc', float('nan')):.3f} "
-          f"f1 {a.get('f1_macro', float('nan')):.3f} IC95 bal {a.get('bal_acc_ic95')} | em: acc {b.get('acc', float('nan')):.3f} "
-          f"bal {b.get('bal_acc', float('nan')):.3f}", flush=True)
+    txt = " | ".join(f"{SUFFIX[s]} n={(a.get(s) or {}).get('n')} bal {(a.get(s) or {}).get('bal_acc', nan):.3f}"
+                     for s in SUBSETS)
+    rep = a.get("val_rep") or {}
+    print(f"[clf_villar] {tag}: cv sims bal {cv.get('bal_acc', nan):.3f} | {txt} | rep acc {rep.get('acc', nan):.3f} "
+          f"IC95 bal {rep.get('bal_acc_ic95')} | em rep bal {(b.get('val_rep') or {}).get('bal_acc', nan):.3f}",
+          flush=True)
 
 
 # ------------------------------------------------------------------------------------------------ comandos
-def cmd_train(a):
-    cls = classes(a.cuatro_clases)
-    S, R, v = prepare(a.features_sims, a.run_dir, a.features_real, a.real_dir, a.cuatro_clases, not a.obs_frame,
-                      a.requiere)
-    cfg = {"model": a.model, "fset": a.fset, "use_z": not a.no_z, "peso": a.peso, "balance": not a.sin_balance}
-    res = run_config(S, R, cfg, cls, a.folds, a.seed, keep_model=True)
-    cov = coverage(R, v, cls)
-    out = Path(a.out_root) / a.name
+def finish_run(out, res, R, cls, cov, a, cfg):
+    """Salidas de una corrida con modelo: metrics.json, confusiones, predicciones, model.joblib e importancias."""
+    res["features_real"] = str(features_csv(a.features_real))
+    res["nn_preds"] = str(a.nn_preds) if a.nn_preds else None
     write_run(out, res, R, cls, cov)
     joblib.dump({"model": res["_model"], "temperatura": res["temperatura"], "config": cfg, "cols": res["cols"],
                  "classes": cls, "obs_frame": a.obs_frame, "requiere": a.requiere,
                  "prior_train": res["prior_train"]}, out / "model.joblib")
     if len(R):
-        perm_importance(res["_model"], R, res["cols"], cls, seed=a.seed).to_csv(out / "importancias_real_val.csv",
-                                                                                index=False)
-    append_resumen(resumen_rows(res, a.name, a.features_sims, cov), a.out_root)
+        importances(res["_model"], R, res["cols"], cls, seed=a.seed).to_csv(out / "importancias_real_val.csv",
+                                                                            index=False)
+
+
+def cmd_train(a):
+    cls = classes(a.cuatro_clases)
+    S, R, v = prepare(a.features_sims, a.run_dir, a.features_real, a.real_dir, a.cuatro_clases, not a.obs_frame,
+                      a.requiere)
+    nn = read_nn_oids(a.nn_preds, R) if a.nn_preds else None
+    cfg = {"model": a.model, "fset": a.fset, "use_z": not a.no_z, "peso": a.peso, "balance": not a.sin_balance}
+    res = run_config(S, R, cfg, cls, a.folds, a.seed, keep_model=True, nn_oids=nn)
+    cov = coverage(R, v, cls, nn)
+    finish_run(Path(a.out_root) / a.name, res, R, cls, cov, a, cfg)
+    append_resumen(resumen_rows(res, a.name, a.features_sims, cov, features_csv(a.features_real)), a.out_root)
     _print_res(a.name, res)
     return res
 
 
 def cmd_eval(a):
-    """Carga model.joblib de <out_root>/<name> y lo evalua sobre las reales val (p. ej. tras re-extraer)."""
+    """Carga model.joblib de <out_root>/<name> y lo evalua sobre las reales val (p. ej. tras re-extraer). El prior
+    EM se reajusta sin etiquetas en val_sel."""
     out = Path(a.out_root) / a.name
     bundle = joblib.load(out / "model.joblib")     # pickle propio, escrito por cmd_train en RUNS local: confiable
     cls = bundle["classes"]
@@ -717,18 +837,69 @@ def cmd_eval(a):
     if bundle["requiere"] == "r":
         R = R[R.tiene_r].reset_index(drop=True)
     R["y"] = R.cls.map({c: i for i, c in enumerate(cls)}).astype(int)
-    model, K = bundle["model"], len(cls)
-    P = temper(model.predict_proba(R), bundle["temperatura"])
-    Q, pi = em_prior(P, bundle["prior_train"])
+    nn = read_nn_oids(a.nn_preds, R) if a.nn_preds else None
+    P = temper(bundle["model"].predict_proba(R), bundle["temperatura"])
+    sel, pt = sel_mask(R), np.asarray(bundle["prior_train"], float)
+    pi = em_prior(P[sel], pt)[1] if sel.any() else pt
+    Q = apply_prior(P, pi, pt)
+    ev = evaluate_real(R, P, Q, cls, 1000, a.seed, nn)
     res = {"config": bundle["config"], "cols": bundle["cols"], "temperatura": bundle["temperatura"],
-           "n_sims": None, "_P": P, "_Q": Q, "prior_em": {c: float(pi[i]) for i, c in enumerate(cls)}}
-    for tag, M in (("none", P), ("em", Q)):
-        res[f"real_{tag}"] = {**metrics(R.y, M.argmax(1), cls), **calib_metrics(M, R.y.to_numpy()),
-                              **bootstrap_ci(R.y, M.argmax(1), cls)}
-    cov = coverage(R, v, cls)
+           "n_sims": None, "_P": P, "_Q": Q, "prior_em": {c: float(pi[i]) for i, c in enumerate(cls)},
+           "prior_em_ajustado_en": "val_sel", "real_none": ev["none"], "real_em": ev["em"],
+           "features_real": str(features_csv(a.features_real)), "nn_preds": str(a.nn_preds) if a.nn_preds else None}
+    cov = coverage(R, v, cls, nn)
     write_run(out / "eval", res, R, cls, cov)
     _print_res(f"{a.name} (eval)", res)
     return res
+
+
+CRITERIO = {"particion": f"pipeline78.splits.val_split (semilla {splits.SEED})",
+            "prefiltro": "CV en sims por plantilla: quedan fuera las configuraciones bajo la mediana del barrido",
+            "orden": "exactitud balanceada en val_sel, prior none (val_rep no entra)",
+            "base": BASELINE,
+            "regla": "bootstrap pareado estratificado por clase (nnclf.experimentos.paired_bootstrap) de la candidata "
+                     f"contra la base sobre val_sel; la candidata queda solo si P(delta > 0) >= {P_MIN}",
+            "n_boot": N_BOOT_PAREADO, "semilla_bootstrap": BOOT_SEED, "empate": "se queda la base",
+            "nota": "elegido solo con val_sel; las cifras honestas son las _rep"}
+
+
+def same_cfg(c, d):
+    return (all(c.get(k) == d.get(k) for k in ("model", "fset", "use_z", "peso"))
+            and c.get("balance", True) == d.get("balance", True))
+
+
+def select_nested(cfgs, cv, yp, R, cls, base_i, p_min=P_MIN, n_boot=N_BOOT_PAREADO, seed=BOOT_SEED):
+    """Regla de eleccion del barrido (regla 7). cfgs: configuraciones; cv: exactitud balanceada de la CV en sims de
+    cada una (NaN sin CV); yp: argmax (prior none) sobre las filas de R, None si la corrida fallo; base_i: indice de
+    BASELINE en cfgs. Solo mira las filas de val_sel de R."""
+    sel = sel_mask(R)
+    if not sel.any():
+        raise SystemExit("sin reales de val_sel con features: no se puede elegir")
+    y = R.y.to_numpy(int)[sel]
+    ok = [i for i, p in enumerate(yp) if p is not None]
+    if base_i not in ok:
+        raise SystemExit(f"la base {BASELINE} fallo: no hay incumbente")
+    bal = {i: metrics(y, np.asarray(yp[i])[sel], cls)["bal_acc"] for i in ok}
+    cvv = np.array([cv[i] for i in ok], float)
+    med = float(np.median(cvv)) if len(ok) > 1 and np.isfinite(cvv).all() else None
+    pasa = {i: bool(med is None or cv[i] >= med) for i in ok}
+    cand = sorted((i for i in ok if pasa[i]), key=lambda i: (-bal[i], -np.nan_to_num(cv[i], nan=-1.0), i))
+    top, comp = cand[0], None
+    if top == base_i:
+        eleg, motivo = base_i, "la primera en val_sel entre las que pasan el pre-filtro es la base"
+    else:
+        delta, p, ci = paired_bootstrap(y, np.asarray(yp[top])[sel] == y, np.asarray(yp[base_i])[sel] == y,
+                                        n_boot, seed)
+        comp = {"subconjunto": "val_sel", "n": int(sel.sum()), "bal_acc_cand_sel": bal[top],
+                "bal_acc_base_sel": bal[base_i], "delta": delta, "p_mejora": p, "ic90_delta": list(ci),
+                "n_boot": n_boot, "p_min": p_min, "gana": bool(p >= p_min)}
+        eleg = top if comp["gana"] else base_i
+        motivo = (f"la candidata gana a la base (P(delta > 0) = {p:.3f})" if comp["gana"]
+                  else f"la candidata no gana a la base (P(delta > 0) = {p:.3f} < {p_min}); queda la base")
+    return {"criterio": CRITERIO, "prefiltro_cv": {"mediana": med, "n_total": len(ok), "n_pasan": sum(pasa.values())},
+            "ranking_sel": [{**cfgs[i], "cv_bal_acc": cv[i], "bal_acc_sel": bal[i]} for i in cand[:10]],
+            "candidata": cfgs[top], "base": cfgs[base_i], "comparacion": comp, "elegida": cfgs[eleg],
+            "motivo": motivo, "i_elegida": eleg, "_pasa": pasa, "_bal_sel": bal}
 
 
 GRIDS = {
@@ -740,12 +911,12 @@ GRIDS = {
 }
 
 
-def _one(S, R, cfg, cls, folds, seed):
+def _one(S, R, cfg, cls, folds, seed, nn_oids=None):
     t0 = time.time()
     _silenciar_matmul()
     try:
         with threadpool_limits(N_JOBS):                               # tambien en los workers de joblib
-            r = run_config(S, R, cfg, cls, folds, seed)
+            r = run_config(S, R, cfg, cls, folds, seed, nn_oids=nn_oids)
     except Exception as e:                                           # una configuracion rota no tumba el barrido
         return {"config": cfg, "error": repr(e)[:300]}
     r["segundos"] = round(time.time() - t0, 1)
@@ -756,52 +927,69 @@ def cmd_sweep(a):
     cls = classes(a.cuatro_clases)
     S, R, v = prepare(a.features_sims, a.run_dir, a.features_real, a.real_dir, a.cuatro_clases, not a.obs_frame,
                       a.requiere)
-    cov = coverage(R, v, cls)
+    nn = read_nn_oids(a.nn_preds, R) if a.nn_preds else None
+    cov = coverage(R, v, cls, nn)
     g = GRIDS[a.grid]
     models = a.models.split(",") if a.models else g["model"]
     fsets = a.fsets.split(",") if a.fsets else g["fset"]
     cfgs = [{"model": m, "fset": f, "use_z": z, "peso": p, "balance": True}
             for f in fsets for m in models for z in g["use_z"] for p in g["peso"]]
+    base_i = next((i for i, c in enumerate(cfgs) if same_cfg(c, BASELINE)), None)
+    if base_i is None:                                               # la base siempre se corre: es la incumbente
+        cfgs.append(dict(BASELINE))
+        base_i = len(cfgs) - 1
     out = Path(a.out_root) / a.name
     out.mkdir(parents=True, exist_ok=True)
     print(f"[clf_villar] sweep {a.name}: {len(cfgs)} configuraciones, sims {len(S)}, reales val con features "
-          f"{len(R)}/{len(v)}", flush=True)
+          f"{len(R)}/{len(v)} (val_sel {int(sel_mask(R).sum())}, val_rep {int((R['subset'] == 'val_rep').sum())})",
+          flush=True)
     if a.jobs > 1:
-        results = joblib.Parallel(n_jobs=a.jobs, verbose=10)(joblib.delayed(_one)(S, R, c, cls, a.folds, a.seed) for c in cfgs)
+        results = joblib.Parallel(n_jobs=a.jobs, verbose=10)(
+            joblib.delayed(_one)(S, R, c, cls, a.folds, a.seed, nn) for c in cfgs)
     else:
         results = []
         for i, c in enumerate(cfgs):
-            results.append(_one(S, R, c, cls, a.folds, a.seed))
+            results.append(_one(S, R, c, cls, a.folds, a.seed, nn))
             if "error" not in results[-1]:
                 _print_res(f"{i + 1}/{len(cfgs)} {c}", results[-1])
             else:
                 print(f"[clf_villar] {i + 1}/{len(cfgs)} {c}: ERROR {results[-1]['error']}", flush=True)
     rows = []
-    for r in results:
+    for i, r in enumerate(results):
         if "error" in r:
-            rows.append({**r["config"], "error": r["error"]})
+            rows.append({**r["config"], "i_cfg": i, "error": r["error"]})
             continue
-        for row in resumen_rows(r, a.name, a.features_sims, cov):
-            rows.append({**row, "segundos": r["segundos"]})
+        for row in resumen_rows(r, a.name, a.features_sims, cov, features_csv(a.features_real)):
+            rows.append({**row, "i_cfg": i, "segundos": r["segundos"]})
     tab = pd.DataFrame(rows)
-    ok = tab[tab.get("bal_acc").notna()] if "bal_acc" in tab else tab.iloc[:0]
-    ok = ok.sort_values([a.rank_by, "cv_bal_acc"], ascending=False)
     tab.to_csv(out / "sweep.csv", index=False)
     append_resumen([r for r in rows if "error" not in r], a.out_root)
     (out / "sweep_full.json").write_text(json.dumps(_jsonable([r for r in results]), indent=1))
-    if len(ok):
-        best = ok.iloc[0]
-        cfg = {"model": best.model, "fset": best.fset, "use_z": bool(best.use_z), "peso": best.peso,
-               "balance": True}
-        res = run_config(S, R, cfg, cls, a.folds, a.seed, keep_model=True)
-        write_run(out / "mejor", res, R, cls, cov)
-        perm_importance(res["_model"], R, res["cols"], cls, seed=a.seed).to_csv(
-            out / "mejor" / "importancias_real_val.csv", index=False)
-        (out / "mejor.json").write_text(json.dumps(_jsonable({"rank_by": a.rank_by, "prior": best.prior,
-                                                              "config": cfg, "top10": ok.head(10).to_dict("records")}),
-                                                   indent=1))
-        print(ok.head(10)[["model", "fset", "use_z", "peso", "prior", "cv_bal_acc", "acc", "bal_acc",
-                           "f1_macro"]].round(3).to_string(index=False), flush=True)
+    # eleccion anidada (regla 7): solo val_sel
+    cv = [np.nan if "error" in r else (r.get("cv_sims") or {}).get("bal_acc", np.nan) for r in results]
+    yp = [None if "error" in r else r["_yp"]["none"] for r in results]
+    el = select_nested(cfgs, cv, yp, R, cls, base_i)
+    tab["pasa_cv"] = tab.i_cfg.map(el["_pasa"])
+    tab["es_base"], tab["elegida"] = tab.i_cfg == base_i, tab.i_cfg == el["i_elegida"]
+    tab.to_csv(out / "sweep.csv", index=False)
+    cfg = el["elegida"]
+    res = run_config(S, R, cfg, cls, a.folds, a.seed, keep_model=True, nn_oids=nn)
+    finish_run(out / "mejor", res, R, cls, cov, a, cfg)
+    honest = {SUFFIX[s]: {k: (res["real_none"].get(s) or {}).get(k) for k in ("n", "acc", "bal_acc", "f1_macro",
+                                                                             "acc_ic95", "bal_acc_ic95")}
+              for s in SUBSETS}
+    (out / "mejor.json").write_text(json.dumps(_jsonable({**el, "metricas_elegida_none": honest,
+                                                          "cobertura": cov}), indent=1))
+    top = tab[(tab.prior == "none") & tab.pasa_cv.fillna(False).astype(bool)].sort_values(
+        ["bal_acc_sel", "cv_bal_acc"], ascending=False)
+    print(top.head(10)[["model", "fset", "use_z", "peso", "cv_bal_acc", "bal_acc_sel", "bal_acc_rep",
+                        "bal_acc_val"]].round(3).to_string(index=False), flush=True)
+    c = el["comparacion"]
+    print(f"[clf_villar] pre-filtro CV: {el['prefiltro_cv']['n_pasan']}/{el['prefiltro_cv']['n_total']} "
+          f"(mediana {el['prefiltro_cv']['mediana']}). Candidata {el['candidata']}"
+          + (f": delta {c['delta']:+.3f}, P(delta > 0) = {c['p_mejora']:.3f}" if c else "") + f". {el['motivo']}",
+          flush=True)
+    _print_res(f"{a.name} elegida {cfg}", res)
     return tab
 
 
@@ -813,8 +1001,8 @@ def cmd_gap(a):
                       a.requiere)
     cols = [c for c in GAP_COLS if (a.no_z is False or not c.startswith("M_pk"))]
     w = S.w_z.to_numpy(float)
-    if a.peso == "wz_S":
-        w = w * selection_weight(S.m_sel, w, R.m_sel)[0]
+    if a.peso == "wz_S":                                             # S(m) solo de val_sel, como en el barrido
+        w = w * selection_weight(S.m_sel, w, R.m_sel[sel_mask(R)])[0]
     Xs, Xr = S[cols].to_numpy(float), R[cols].to_numpy(float)
     X = np.vstack([Xs, Xr])
     d = np.r_[np.zeros(len(Xs), int), np.ones(len(Xr), int)]
@@ -885,14 +1073,17 @@ def parser():
     ap.add_argument("--features-sims", type=Path, help="RUNS/features_<proyeccion> (con features/features.csv)")
     ap.add_argument("--name", required=True)
     ap.add_argument("--run-dir", type=Path, default=None, help="por defecto RUNS/<proyeccion>")
-    ap.add_argument("--features-real", type=Path, default=REAL_FEAT)
-    ap.add_argument("--real-dir", type=Path, default=REAL_DIR)
+    ap.add_argument("--features-real", type=Path, default=REAL_FEAT,
+                    help="features.csv de las reales (o su directorio features_<x>); por defecto las post-logfix")
+    ap.add_argument("--real-dir", type=Path, default=REAL_DIR, help="directorio con meta_real_ztf.csv")
+    ap.add_argument("--nn-preds", type=Path, default=None,
+                    help="pred_real_val.csv (o directorio) de una corrida de nnclf: metricas tambien sobre sus oids")
     ap.add_argument("--out-root", type=Path, default=OUT_ROOT)
     ap.add_argument("--model", default="hgb", choices=tuple(MODELS))
     ap.add_argument("--fset", default="rg", choices=FSETS)
     ap.add_argument("--no-z", action="store_true", help="sin magnitud absoluta (los tiempos siguen en reposo)")
     ap.add_argument("--obs-frame", action="store_true", help="tiempos en el marco observado (sin 1/(1+z))")
-    ap.add_argument("--peso", default="wz_S", choices=("wz", "wz_S", "wz_dr"))
+    ap.add_argument("--peso", default="wz", choices=("wz", "wz_S", "wz_dr"))
     ap.add_argument("--sin-balance", action="store_true", help="sin balance de clases (prior = w_z * seleccion)")
     ap.add_argument("--requiere", default="any", choices=("any", "r"))
     ap.add_argument("--cuatro-clases", action="store_true")
@@ -901,7 +1092,6 @@ def parser():
     ap.add_argument("--grid", default="rapido", choices=tuple(GRIDS))
     ap.add_argument("--models", default=None, help="sweep: lista separada por comas (pisa la grilla)")
     ap.add_argument("--fsets", default=None, help="sweep: lista separada por comas (pisa la grilla)")
-    ap.add_argument("--rank-by", default="bal_acc", choices=("bal_acc", "acc", "f1_macro", "cv_bal_acc"))
     ap.add_argument("--jobs", type=int, default=1)
     return ap
 
