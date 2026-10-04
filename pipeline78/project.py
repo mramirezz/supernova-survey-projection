@@ -5,6 +5,8 @@ import pandas as pd
 from scipy.special import expit
 from pipeline78.lcclean import clean_lc
 
+ALERCE_PRV_DAYS = 30        # d: ALeRCE guarda una no deteccion solo si hay una alerta en los 30 d siguientes (prv_candidates)
+
 
 def _span(epochs):
     lo = min(m.min() for m, _ in epochs.values())
@@ -16,6 +18,8 @@ def anchor_time(cfg, rng, k, n, epochs):
     lo, hi = _span(epochs)
     if cfg["anchor"] == "pivot":                       # ZTF: pivote deterministico (tesis cap. 3)
         return lo + (hi - lo) / n * (k + 0.5)
+    if cfg["anchor"] == "uniform":                     # ZTF (Fix H): fecha al azar en el log del campo, sin fechas fijas
+        return float(rng.uniform(lo, hi))
     if cfg["anchor"] == "uniform_window":              # SUDARE: [t0 - 365, tK] como la ec. 3 de SUDARE I
         return float(rng.uniform(lo - cfg["window_pre"], hi))
     raise ValueError(cfg["anchor"])
@@ -68,7 +72,10 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
     det_model "hard" (default) o "logistic" (_det): los uniformes van despues de todo el ruido, en el mismo orden, asi
     las filas comunes conservan ruido y uniforme. lc_clean True: clean_lc con t_ref = primera deteccion en g o r
     (equivale al descubrimiento). ul_after_last False: fuera los UL despues de la ultima deteccion de cualquier banda
-    (alertas), aplicado despues de limpiar."""
+    (alertas), aplicado despues de limpiar.
+    pre_ul_mode "window" (default): quedan todos los UL. "alerce": un UL queda solo si hay una deteccion de cualquier
+    banda en (t, t + ALERCE_PRV_DAYS], como los prv_candidates de ALeRCE (no quedan UL tras la ultima deteccion). Va
+    despues de decidir la deteccion y antes de clean_lc; la ventana pre_ul_days tiene que cubrir esos 30 d."""
     t = t_anchor + t_rel
     t0, t1 = float(t[0]), float(t[-1])
     pre, edge_pre, edge_post = cfg["pre_ul_days"], cfg.get("edge_pre", "window"), cfg.get("edge_post", "none")
@@ -76,6 +83,8 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
         raise ValueError(f"edge_pre={edge_pre!r} edge_post={edge_post!r}")
     if cfg.get("det_model", "hard") not in ("hard", "logistic"):
         raise ValueError(f"det_model={cfg['det_model']!r}")
+    if cfg.get("pre_ul_mode", "window") not in ("window", "alerce"):
+        raise ValueError(f"pre_ul_mode={cfg['pre_ul_mode']!r}")
     if edge_post == "tail" and z is None:
         raise ValueError("edge_post='tail' necesita z")
     t_exp = t_anchor + t_exp_rel if edge_pre in ("texp", "fireball") and t_exp_rel is not None else None
@@ -129,6 +138,10 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
     if not frames:
         return None
     df = pd.concat(frames, ignore_index=True)
+    if cfg.get("pre_ul_mode", "window") == "alerce":   # UL solo con una det (cualquier banda) en (t, t + 30 d]
+        dm, t_ul = np.sort(df.loc[df["upperlimit"] == "F", "mjd"].to_numpy(float)), df["mjd"].to_numpy(float)
+        nxt = np.append(dm, np.inf)[np.searchsorted(dm, t_ul, side="right")]     # primera det despues de cada fila
+        df = df[(df["upperlimit"] == "F").to_numpy() | (nxt <= t_ul + ALERCE_PRV_DAYS)].reset_index(drop=True)
     gr = (df["upperlimit"] == "F") & df["filter"].isin(["g", "r"])
     if cfg.get("lc_clean", False) and gr.any():            # t_ref = primera det en g o r (las reales no tienen i)
         df = clean_lc(df, float(df.loc[gr, "mjd"].min()))[0]

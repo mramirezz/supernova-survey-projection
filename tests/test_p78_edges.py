@@ -292,6 +292,85 @@ def test_f_no_ul_after_last_and_clean():
     assert c.mjd.min() >= first - 50.0 and c.mjd.max() <= first + 400.0
 
 
+def _ftpl(sn, span, subtype=None):
+    """Plantilla falsa de span d de reposo desde la primera epoca (la explosion en las II)."""
+    return dict(sn=sn, clf_class="X", subtype=subtype, M_ref=-17.0, ref_band="r", t_peak=10.0, t_Bmax=10.0, dm15_B=1.1,
+                time=np.arange(0.0, span + 0.5, 1.0))
+
+
+def _fake_sim(monkeypatch, cfg, tpls):
+    """run.simulate con plantillas falsas: el motor devuelve curvas lineales en g y r sobre el eje de la plantilla."""
+    import pipeline78.run as r
+    from pipeline78 import engine, sampling
+    for k, v in dict(cfg=cfg, seed=5, bands=None, z=sampling.z_sampler(cfg), tpl=tpls).items():
+        monkeypatch.setitem(r._W, k, v)
+    monkeypatch.setattr(engine, "observed_lightcurves", lambda tpl, z, e, rv, mw, b, dmag=0.0: (
+        (tpl["time"] - tpl["t_peak"]) * (1 + z), {"g": 17.0 + 0.01 * tpl["time"], "r": 17.2 + 0.01 * tpl["time"]}))
+    return r
+
+
+SIMCFG = dict(TAIL, z_mode="fixed", z_fixed=Z, anchor="pivot", n_by_class={"Ia": 2, "II": 2})
+MJD = np.arange(58000.0, 60000.0, 1.0)
+DEEP = {"g": (MJD, np.full(MJD.size, 30.0)), "r": (MJD + 0.1, np.full(MJD.size, 30.0))}   # todo se detecta
+
+
+def test_g_anchor_uniform(monkeypatch):
+    """uniform: determinista por sim, dentro de [lo, hi] del log y distinta entre campos con el mismo k. pivot repite
+    la fecha en todos los campos."""
+    from pipeline78.project import anchor_time, _span
+    from pipeline78.run import sim_rng
+    lo, hi = _span(DEEP)
+    one = lambda a, f: anchor_time(dict(anchor=a), sim_rng(7, f, "IIb", 0), 0, 2, DEEP)
+    fs = [f"F{i}" for i in range(400)]
+    u = np.array([one("uniform", f) for f in fs])
+    assert (u == [one("uniform", f) for f in fs]).all() and ((u >= lo) & (u <= hi)).all() and len(set(u)) == len(fs)
+    assert 0.18 < np.mean(u < lo + (hi - lo) / 4) < 0.32                # no se amontona en el primer trimestre
+    assert len({one("pivot", f) for f in fs}) == 1
+    r = _fake_sim(monkeypatch, dict(SIMCFG, anchor="uniform"), {"Ia": [_ftpl("A", 80.0)]})
+    a = [r.simulate(f, "Ia", 0, DEEP, 0.02) for f in fs[:20]]
+    b = [r.simulate(f, "Ia", 0, DEEP, 0.02) for f in fs[:20]]
+    ta = [s["t_anchor"] for s, _ in a]
+    assert ta == [s["t_anchor"] for s, _ in b] and len(set(ta)) == 20 and all(lo <= x <= hi for x in ta)
+    for (_, d0), (_, d1) in zip(a, b):
+        pd.testing.assert_frame_equal(d0, d1)
+
+
+def test_h_pre_ul_alerce():
+    """UL solo si hay una deteccion (cualquier banda) en (t, t + 30]: con det en 100, 105 (g) y 140 (r) y UL en 60, 80,
+    90, 120 y 150 (g) quedan 80, 90 y 120; 60 y 150 no. Las filas que quedan son las mismas que sin la regla."""
+    t0 = 70.0
+    tt = np.arange(0.0, 91.0, 1.0)                           # plantilla de 70 a 160
+    m = np.full(tt.size, 25.0)
+    m[np.isin(tt + t0, (100.0, 105.0, 140.0))] = 18.0
+    ep = {"g": (np.array([60.0, 80.0, 90.0, 100.0, 105.0, 120.0, 150.0]), np.full(7, 20.0)),
+          "r": (np.array([140.0]), np.full(1, 20.0))}
+    cfg = dict(CFG, bands=["g", "r"], pre_ul_days=30.0)
+    run = lambda **k: project_one(tt, {"g": m, "r": m}, ep, t0, np.random.default_rng(3), dict(cfg, **k))
+    w, x = run(), run(pre_ul_mode="alerce")
+    assert sorted(w[w.upperlimit == "F"].mjd) == [100.0, 105.0, 140.0]
+    assert sorted(w[w.upperlimit == "T"].mjd) == [60.0, 80.0, 90.0, 120.0, 150.0]
+    assert sorted(x[x.upperlimit == "T"].mjd) == [80.0, 90.0, 120.0]
+    pd.testing.assert_frame_equal(x, w[~w.mjd.isin([60.0, 150.0])].reset_index(drop=True))
+    with pytest.raises(ValueError):
+        run(pre_ul_mode="ztf")
+
+
+def test_i_tail_min_span(monkeypatch):
+    """tail_min_span {"II": 120}: una II de 80 d no recibe cola, una de 150 d si, una Ia de 80 d si. Sin cola, las
+    filas hasta t1 son las mismas que con cola."""
+    cfg = dict(SIMCFG, tail_min_span={"II": 120.0})
+    for cls, span, cola in (("II", 80.0, False), ("II", 150.0, True), ("Ia", 80.0, True)):
+        tp = [_ftpl("P", span, "IIP"), _ftpl("L", span, "IIL")] if cls == "II" else [_ftpl("A", span)]
+        r = _fake_sim(monkeypatch, cfg, {cls: tp})
+        s, d = r.simulate("F1", cls, 0, DEEP, 0.02)
+        t1 = s["t_anchor"] + (span - 10.0) * (1 + Z)
+        assert s["status"] == "ok" and (d.mjd > t1).any() == cola, (cls, span)
+        r = _fake_sim(monkeypatch, dict(SIMCFG), {cls: tp})       # sin tail_min_span: siempre cola
+        s0, d0 = r.simulate("F1", cls, 0, DEEP, 0.02)
+        assert s0["t_anchor"] == s["t_anchor"] and (d0.mjd > t1).any()
+        pd.testing.assert_frame_equal(d, d0 if cola else d0[d0.mjd <= t1].reset_index(drop=True))
+
+
 def _real_tpls(cls):
     from pipeline78.paths import STORE
     from pipeline78.store import load_template
@@ -325,12 +404,17 @@ def test_d_variants_same_physics(monkeypatch):
         for v in ("ztf_v78_tail", "ztf_v78_texp", "ztf_v78_t9_det0.5"):
             s, d = out[v][key]
             for f in ("template", "z", "ebmv_host", "m_peak_abs", "t_anchor"):
-                assert s[f] == s0[f], (v, key, f)
-        s, d = out["ztf_v78_t9_det0.5"][key]                 # deteccion logistica + sin UL tras la ultima + limpieza
+                if not (v == "ztf_v78_t9_det0.5" and f == "t_anchor"):     # t9: ancla uniforme (Fix H)
+                    assert s[f] == s0[f], (v, key, f)
+        s, d = out["ztf_v78_t9_det0.5"][key]                 # deteccion logistica + UL como ALeRCE + limpieza
+        assert mjd.min() <= s["t_anchor"] <= mjd.max() + 0.2 and s["t_anchor"] != s0["t_anchor"]
         if s["found"]:
             dt = d[d.upperlimit == "F"]
             assert d.mjd.max() == dt.mjd.max() and d.mjd.between(dt.mjd.min() - 50, dt.mjd.min() + 400).all()
             assert s["n_det_r"] == ((d["filter"] == "r") & d.detected).sum() and s["n_rows"] == len(d)
+            dm = np.sort(dt.mjd.to_numpy())                    # cada UL tiene una det en los 30 d siguientes
+            for t in d[d.upperlimit == "T"].mjd:
+                assert ((dm > t) & (dm <= t + 30.0)).any()
         d = out["ztf_v78_tail"][key][1]
         assert (d.mjd > t1).any()
         pd.testing.assert_frame_equal(d[d.mjd <= t1].reset_index(drop=True), d0)

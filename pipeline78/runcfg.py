@@ -21,8 +21,12 @@ RUNS_CFG["ztf_v78_fireball"] = dict(RUNS_CFG["ztf_v78"], edge_pre="fireball",
                                     rise_Ia_days=18.9)   # Miller+2020: alfa_r=2.01, rise 18.9 d; mismo supuesto (t-texpl)^2 que cap 3 para las otras clases
 # Bordes de la Tarea 9: cola + borde fireball en Ia, elegidos en la puerta de realismo 2026-10-03
 # (t_rise Ia: base -1.5 sigma, texp +2.6, fireball +0.9; cola acerca t_fall en 4/5 clases)
+# Fix H (Mauricio 2026-10-03): ancla al azar en el log del campo (pivot dejaba todas las sims en las mismas fechas),
+# UL previos como ALeRCE (solo con una deteccion en los 30 d siguientes) y sin cola en las II de menos de 120 d de
+# reposo (SN2024ggi, SN2016esw terminan en el plateau). Lo heredan la grilla det* y ztf_v78_t9.
 RUNS_CFG["ztf_v78_t9_bordes"] = dict(RUNS_CFG["ztf_v78"], edge_pre="fireball", rise_Ia_days=18.9, edge_post="tail",
-                                     tail_days=150, tail_fit_days=20, tail_min_slope=0.005)
+                                     tail_days=150, tail_fit_days=20, tail_min_slope=0.005,
+                                     anchor="uniform", pre_ul_mode="alerce", pre_ul_days=30, tail_min_span={"II": 120.0})
 
 # Calibracion de la eficiencia de deteccion (Fix G, 2026-10-03): logistica sobre el S/N medido, sin UL tras la ultima
 # deteccion y la misma limpieza que las reales.
