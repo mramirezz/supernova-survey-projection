@@ -8,6 +8,9 @@ si pasaron por esa seleccion.
 EARLY STOPPING: perdida ponderada sobre la validacion interna (plantillas fuera, data.split_templates). Cada curva
 de validacion entra completa y en una copia raleada fija (el mismo aumento con rng seed + 1). Las reales nunca entran
 al entrenamiento ni a la eleccion de la epoca.
+
+VARIANTES DE LA LITERATURA (nn-lit-brief, todas por flag y apagadas por defecto): band_enc "lambda" (data, regla 11),
+time_enc "atat" (models, TimeModulator de ATAT), gru_pool "attn" y bidir (models, ORACLE-2), trunc (data, regla 12).
 """
 import json
 import time
@@ -46,6 +49,14 @@ class Config:
     sim_run: str = str(D.SIM_RUN)
     real_dir: str = str(D.REAL_DIR)
     out_root: str = str(D.OUT_ROOT)
+    band_enc: str = "onehot"            # onehot | lambda
+    time_enc: str = "sin"               # sin | atat
+    tm_harmonics: int = 64              # ATAT: H
+    tm_tmax: float = 1500.0             # ATAT: T_max en dias
+    gru_pool: str = "last"              # last | attn (ORACLE-2)
+    bidir: bool = False                 # GRU bidireccional (ORACLE-2)
+    trunc: str = "none"                 # none | pow2 | frac | both (ORACLE-2)
+    p_trunc: float = 1.0                # prob. de truncar cada curva en cada epoca (ORACLE-2 trunca todas)
 
     @property
     def out(self):
@@ -58,19 +69,26 @@ def pick_device(name):
     return name
 
 
+def model_opts(cfg):
+    return {"time_enc": cfg.time_enc, "tm_harmonics": cfg.tm_harmonics, "tm_tmax": cfg.tm_tmax,
+            "gru_pool": cfg.gru_pool, "bidir": cfg.bidir}
+
+
 def collate(items):
-    """items: lista de (x, dt, g) de data.tokenize. Padding a la derecha, mask True = token valido."""
+    """items: lista de (x, dt, g, b) de data.tokenize. Padding a la derecha, mask True = token valido."""
     B, L = len(items), max(len(it[0]) for it in items)
-    x = torch.zeros(B, L, D.N_FEAT)
+    x = torch.zeros(B, L, items[0][0].shape[1])
     t = torch.zeros(B, L)
+    b = torch.zeros(B, L, dtype=torch.long)
     mask = torch.zeros(B, L, dtype=torch.bool)
-    for j, (xi, ti, _) in enumerate(items):
+    for j, (xi, ti, _, bi) in enumerate(items):
         n = len(xi)
         x[j, :n] = torch.from_numpy(xi)
         t[j, :n] = torch.from_numpy(ti)
+        b[j, :n] = torch.from_numpy(bi)
         mask[j, :n] = True
     g = torch.from_numpy(np.stack([it[2] for it in items]))
-    return x, t, mask, g
+    return x, t, mask, g, b
 
 
 def encode(curves, cfg, rng=None):
@@ -78,8 +96,8 @@ def encode(curves, cfg, rng=None):
     out = []
     for c in curves:
         if rng is not None:
-            c = D.augment(c, rng, cfg.p_thin, cfg.p_ronly)
-        out.append(D.tokenize(c, cfg.max_len, cfg.use_magerr, cfg.use_z))
+            c = D.augment(c, rng, cfg.p_thin, cfg.p_ronly, trunc=cfg.trunc, p_trunc=cfg.p_trunc)
+        out.append(D.tokenize(c, cfg.max_len, cfg.use_magerr, cfg.use_z, cfg.band_enc))
     return out
 
 
@@ -92,8 +110,8 @@ def logits_of(model, enc, device, bs=256):
     out = []
     with torch.no_grad():
         for i in range(0, len(enc), bs):
-            x, t, m, g = (a.to(device) for a in collate(enc[i:i + bs]))
-            out.append(model(x, t, m, g).float().cpu())
+            x, t, m, g, b = (a.to(device) for a in collate(enc[i:i + bs]))
+            out.append(model(x, t, m, g, b).float().cpu())
     return torch.cat(out) if out else torch.zeros(0, 0)
 
 
@@ -105,8 +123,10 @@ def weighted_loss(logits, y, w):
 def load_model(out_dir, device="cpu"):
     ck = torch.load(Path(out_dir) / "model.pt", map_location="cpu", weights_only=True)
     cfg = Config(**ck["config"])
-    model = build_model(cfg.model, D.N_FEAT, D.n_glob(cfg.use_z), len(ck["classes"]))
-    model.load_state_dict(ck["state_dict"])
+    model = build_model(cfg.model, D.n_feat(cfg.band_enc), D.n_glob(cfg.use_z), len(ck["classes"]), **model_opts(cfg))
+    # checkpoints de 0e50a0f: inp y temb vivian en la raiz del modelo, ahora en emb
+    sd = {("emb." + k if k.split(".")[0] in ("inp", "temb") else k): v for k, v in ck["state_dict"].items()}
+    model.load_state_dict(sd)
     return model.to(device).eval(), cfg, ck
 
 
@@ -140,7 +160,7 @@ def train(cfg):
     y_va = torch.tensor([c.y for c in va] * 2)
     w_va = torch.tensor(np.concatenate([sw_va, sw_va]), dtype=torch.float32)
 
-    model = build_model(cfg.model, D.N_FEAT, D.n_glob(cfg.use_z), len(cls)).to(device)
+    model = build_model(cfg.model, D.n_feat(cfg.band_enc), D.n_glob(cfg.use_z), len(cls), **model_opts(cfg)).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     best_loss, best_ep, best_state, bad, hist = np.inf, 0, None, 0, []
     for ep in range(1, cfg.max_epochs + 1):
@@ -150,9 +170,9 @@ def train(cfg):
         tot = wsum = 0.0
         for i in range(0, len(tr), cfg.batch_size):
             b = perm[i:i + cfg.batch_size]
-            x, t, m, g = (a.to(device) for a in collate(encode([tr[j] for j in b], cfg, rng)))
+            x, t, m, g, bb = (a.to(device) for a in collate(encode([tr[j] for j in b], cfg, rng)))
             w = torch.tensor(sw_tr[b], dtype=torch.float32, device=device)
-            loss = weighted_loss(model(x, t, m, g), y_tr[torch.from_numpy(b)].to(device), w)
+            loss = weighted_loss(model(x, t, m, g, bb), y_tr[torch.from_numpy(b)].to(device), w)
             opt.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -180,7 +200,8 @@ def train(cfg):
     model.load_state_dict(best_state)
     torch.save({"state_dict": best_state, "config": asdict(cfg), "classes": cls, "best_epoch": best_ep}, out / "model.pt")
     pd.DataFrame(hist).to_csv(out / "history.csv", index=False)
-    (out / "config.json").write_text(json.dumps(asdict(cfg), indent=1))
+    (out / "config.json").write_text(json.dumps({**asdict(cfg), "versions": {"torch": torch.__version__,
+                                                                             "numpy": np.__version__}}, indent=1))
     (out / "split.json").write_text(json.dumps({
         "val_templates": sorted(val_tpl), "val_keys": [c.key for c in va],
         "n_train": _count(tr, cls), "n_val": _count(va, cls), "best_epoch": best_ep, "best_val_loss": best_loss,

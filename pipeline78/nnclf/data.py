@@ -25,7 +25,20 @@ REGLAS
 10. Split interno de las sims por PLANTILLA, estratificado por sn_type (II e IIb por separado): por tipo, plantillas
    ordenadas, permutadas con default_rng(seed + indice del tipo) y repartidas en n_folds grupos. El grupo `fold`
    es la validacion interna. La 3 y la 4 clases comparten la particion de los tipos comunes.
+11. Banda (band_enc): "onehot" = [g, r] (N_FEAT = 6). "lambda" = un escalar (lambda_p - 5500 A) / 1000 A con la
+   longitud de onda PIVOTE de la curva de transmision de data/filters, lambda_p = sqrt(int l T dl / int T/l dl)
+   (N_FEAT = 5). La banda como longitud de onda en un solo canal es la entrada de Gupta et al. 2025
+   (2025MNRAS.542L.132G, "median wavelength of the passband") y de ORACLE-2 (Shah et al. 2026, 2026arXiv260700228S,
+   "mean channel wavelength"). Aca se usa la pivote calculada de nuestras curvas, no un valor de tabla.
+   tokenize devuelve ademas el indice de banda por token (0 = g, 1 = r) para el TimeModulator de ATAT.
+12. Truncamiento ORACLE-2 (aumento, trunc != "none"): "pow2" corta en t_cut = t_primera + 2^n dias con n ~ U(0, 10)
+   continuo, re-sorteado por curva y por epoca (Shah et al. 2026, Sec. IV.1; el codigo del repo usa U(0, 11)).
+   "frac" conserva las primeras floor(f n_det) detecciones con f ~ U(0.1, 1) (preset ZTF_Sims-lite del repo
+   dev-ved30/Oracle, truncate_ZTF_SIM_light_curve_fractionally, que cuenta filas y no detecciones). "both" elige uno
+   de los dos al azar. Adaptacion propia: el corte nunca deja menos de MIN_DET detecciones, y se aplica despues del
+   modo solo r y antes del raleo.
 """
+import zlib
 from dataclasses import dataclass, replace
 from pathlib import Path
 import numpy as np
@@ -34,7 +47,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
-from pipeline78.paths import RUNS
+from pipeline78.paths import RUNS, FILTERS
 
 SIM_RUN = RUNS / "ztf_v78_t9_final"
 REAL_DIR = RUNS / "real_ztf"
@@ -45,7 +58,31 @@ BAND_ID = {"g": 0, "r": 1}
 MIN_DET = 3
 MAX_LEN = 128
 PRE_UL_DAYS = 60.0
-N_FEAT = 6
+N_FEAT = 6                                   # band_enc "onehot"; con "lambda" son 5 (n_feat)
+BAND_ENCODINGS = ("onehot", "lambda")
+TRUNC_MODES = ("none", "pow2", "frac", "both")
+LAM0, LAM_SCALE = 5500.0, 1000.0
+
+
+def pivot_wavelength(path):
+    """Longitud de onda pivote (A) de una curva de transmision de dos columnas (lambda en A, T)."""
+    lam, T = np.loadtxt(path, unpack=True)
+    return float(np.sqrt(np.trapezoid(lam * T, lam) / np.trapezoid(T / lam, lam)))
+
+
+LAMBDA_PIVOT = {b: pivot_wavelength(FILTERS / f"ZTF_{b}.dat") for b in BANDS}     # g 4783.5, r 6417.1 A
+LAMBDA_TOKEN = np.array([(LAMBDA_PIVOT[b] - LAM0) / LAM_SCALE for b in BANDS], np.float32)
+
+
+def n_feat(band_enc="onehot"):
+    if band_enc not in BAND_ENCODINGS:
+        raise ValueError(f"band_enc desconocido: {band_enc}")
+    return 6 if band_enc == "onehot" else 5
+
+
+def curve_rng(seed, key, *salt):
+    """rng propio de una curva: los sorteos de la degradacion no dependen de la lista ni del metodo (rev. B2)."""
+    return np.random.default_rng([int(seed), zlib.crc32(str(key).encode()), *[int(s) for s in salt]])
 SN_TYPES = ("Ia", "II", "IIb", "Ibc", "IIn")          # orden fijo: indice para el rng del split
 SN_TYPE_CLASS = {"Ia": "Ia", "II": "II", "IIb": "II", "Ibc": "Ibc", "IIn": "IIn"}
 _COLS = ["mjd", "filter", "magnitud_proyectada", "magerr", "upperlimit"]
@@ -197,8 +234,8 @@ def _even(idx, n):
     return idx[np.round(np.linspace(0, len(idx) - 1, n)).astype(int)]
 
 
-def tokenize(c, max_len=MAX_LEN, use_magerr=True, use_z=False):
-    """Curve -> (x [L, N_FEAT], dt [L] en dias, g [n_glob]). Reglas 4 a 7."""
+def token_idx(c, max_len=MAX_LEN):
+    """Indices de las observaciones que entran como token (reglas 5 y 6). Los usa tambien el export de SuperNNova."""
     det = ~c.ul
     if not det.any():
         raise ValueError(f"{c.key}: sin detecciones")
@@ -208,29 +245,63 @@ def tokenize(c, max_len=MAX_LEN, use_magerr=True, use_z=False):
         d_idx, u_idx = idx[det[idx]], idx[~det[idx]]
         n_ul = min(len(u_idx), max(max_len - len(d_idx), max_len // 8))
         idx = np.sort(np.concatenate([_even(d_idx, max_len - n_ul), _even(u_idx, n_ul)]))
+    return idx
+
+
+def tokenize(c, max_len=MAX_LEN, use_magerr=True, use_z=False, band_enc="onehot"):
+    """Curve -> (x [L, n_feat], dt [L] en dias, g [n_glob], b [L] indice de banda). Reglas 4 a 7 y 11."""
+    nf = n_feat(band_enc)
+    idx = token_idx(c, max_len)
+    det = ~c.ul
+    t0 = c.t[det].min()
     m_ref = float(np.median(c.mag[det]))
     ul = c.ul[idx]
+    b = c.band[idx].astype(np.int64)
     dt = (c.t[idx] - t0).astype(np.float32)
-    x = np.zeros((len(idx), N_FEAT), np.float32)
+    x = np.zeros((len(idx), nf), np.float32)
     x[:, 0] = dt / 100.0
     x[:, 1] = np.clip(c.mag[idx] - m_ref, -10, 10)
     if use_magerr:
         x[:, 2] = np.where(ul, 0.0, np.nan_to_num(c.err[idx]) * 10.0)
     x[:, 3] = ul
-    x[:, 4] = c.band[idx] == 0
-    x[:, 5] = c.band[idx] == 1
+    if band_enc == "onehot":
+        x[:, 4] = b == 0
+        x[:, 5] = b == 1
+    else:
+        x[:, 4] = LAMBDA_TOKEN[b]
     g = [(m_ref - 19.0) / 2.0]
     if use_z:
         if not np.isfinite(c.z) or c.z <= 0:
             raise ValueError(f"{c.key}: z no valido ({c.z})")
         g += [10.0 * c.z, (m_ref - float(distmod(c.z)[0]) + 18.0) / 2.0]
-    return x, dt, np.asarray(g, np.float32)
+    return x, dt, np.asarray(g, np.float32), b
 
 
-def augment(c, rng, p_thin=0.8, p_ronly=0.5, min_det=MIN_DET):
-    """Regla 8. Si la curva de entrada trae >= min_det detecciones, la salida tambien."""
+def truncate(c, rng, mode, min_det=MIN_DET):
+    """Regla 12. Corta la curva en t_cut desde la primera deteccion. Nunca deja menos de min_det detecciones."""
+    if mode == "none":
+        return c
+    if mode not in TRUNC_MODES:
+        raise ValueError(f"trunc desconocido: {mode}")
+    td = c.t[~c.ul]
+    if len(td) <= min_det:
+        return c
+    if mode == "both":
+        mode = "pow2" if rng.random() < 0.5 else "frac"
+    if mode == "pow2":
+        t_cut = td[0] + 2.0 ** rng.uniform(0.0, 10.0)
+    else:
+        t_cut = td[max(min_det, int(len(td) * rng.uniform(0.1, 1.0))) - 1]
+    return c.subset(c.t <= max(t_cut, td[min_det - 1]))
+
+
+def augment(c, rng, p_thin=0.8, p_ronly=0.5, min_det=MIN_DET, trunc="none", p_trunc=1.0):
+    """Reglas 8 y 12 (solo r, truncamiento, raleo). Si la curva de entrada trae >= min_det detecciones, la salida
+    tambien."""
     if p_ronly > 0 and rng.random() < p_ronly and c.n_det((1,)) >= min_det:
         c = c.subset(c.band == 1)
+    if trunc != "none" and p_trunc > 0 and rng.random() < p_trunc:
+        c = truncate(c, rng, trunc, min_det)
     det = np.flatnonzero(~c.ul)
     if len(det) > min_det and p_thin > 0 and rng.random() < p_thin:
         k = int(rng.integers(min_det, len(det) + 1))
