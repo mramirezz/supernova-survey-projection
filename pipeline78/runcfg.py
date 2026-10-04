@@ -61,6 +61,9 @@ for m0 in (0.0, 0.25, 0.5, 0.75, 0.9, 1.0, 1.25, 1.5, 2.0):
 # (ultima det r - pico: II 70.9/70.8, IIb 53.0/50.0, Ibc 49.1/47.4, Ia 36.8/42.0 d; IIn 113.8/79.9 por plantillas
 # longevas), procedimiento de Kessler+2019. Calibracion efectiva (host, filtros de alertas), no medicion de ZTF.
 RUNS_CFG["ztf_v78_t9"] = dict(RUNS_CFG["ztf_v78_t9_det1.25"])
+# el doble de sims por campo y clase: con la misma semilla las k < n de ztf_v78_t9 salen identicas (rng por
+# (semilla, campo, clase, k) y ancla uniforme que no depende de n), asi que solo hay que extraer las nuevas
+RUNS_CFG["ztf_v78_t9_x2"] = dict(RUNS_CFG["ztf_v78_t9"], n_by_class={c: 2 * n for c, n in RUNS_CFG["ztf_v78_t9"]["n_by_class"].items()})
 
 RUNS_CFG["ztf_v78_t9_iidust"] = dict(RUNS_CFG["ztf_v78_t9"], ii_dust="sudare")   # variante de sistematico: polvo de SUDARE I en II
 
