@@ -23,6 +23,8 @@ data/*
 # alertas ALeRCE (magpsf, sigmapsf, diffmaglim, isdiffpos) de las viejas val_viejo, entrada de pipeline78/calib_obs.py (2026-10-04)
 !data/ruido_alerce_viejas.csv
 !data/alertas_viejas.csv
+!data/api_completar_det.csv
+!data/api_completar_nodet.csv
 
 # Python cache
 __pycache__/
