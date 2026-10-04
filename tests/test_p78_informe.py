@@ -193,3 +193,79 @@ def test_actual_faltante_queda_pendiente(tmp_path):
     page = (tmp_path / "pagina/index.html").read_text()
     assert "PRUEBA" in page and "pendiente" in page.lower()
     assert any("nnclf_no_existe" in p for p in J["pendientes"])
+
+
+def _forzar(J, sel_red, sel_vil, rep_d, rep_ic, hib_sel=0.5, hib_ic=(-0.02, 0.05)):
+    """Pone a mano las comparaciones pareadas de la respuesta y rehace decision y conclusiones."""
+    R = J["actual"]["respuesta"]
+    R["val_sel"]["mismos_objetos"]["red_menos_villar"].update(p_mejora=sel_red, gana=sel_red >= 0.9)
+    R["val_sel"]["mismos_objetos"]["villar_menos_red"].update(p_mejora=sel_vil, gana=sel_vil >= 0.9)
+    R["val_rep"]["mismos_objetos"]["red_menos_villar"].update(delta=rep_d, ic90_delta=list(rep_ic))
+    R["val_sel"]["hibrido_menos_red"].update(p_mejora=hib_sel, gana=hib_sel >= 0.9)
+    R["val_sel"]["red_menos_hibrido"].update(p_mejora=1 - hib_sel, gana=1 - hib_sel >= 0.9)
+    R["val_rep"]["hibrido_menos_red"].update(delta=sum(hib_ic) / 2, ic90_delta=list(hib_ic))
+    J["decision"] = D = I.decidir(J["actual"], J["meta_bal_acc"])
+    return D, " ".join(I.conclusiones(J, J["meta_bal_acc"]))
+
+
+def test_val_rep_contra_val_sel(tmp_path):
+    _arbol(tmp_path)
+    J, _ = I.construir(tmp_path / "cfg.json", atlas=False)
+    A, meta = J["actual"], J["meta_bal_acc"]
+    # meta: las tres en orden fijo con las cifras de numeros.json, sin max sobre val_rep
+    D = J["decision"]
+    assert [x["metodo"] for x in D["meta"]] == ["villar", "red", "hibrido"]
+    assert [x["bal_acc"] for x in D["meta"]] == [A["villar"]["val_rep"]["bal_acc"], A["red"]["val_rep"]["bal_acc"],
+                                                 A["respuesta"]["val_rep"]["hibrido"]["bal_acc"]]
+    assert not any("mejor exactitud balanceada en val_rep" in c for c in J["conclusiones"])
+    # caso de la prueba con x2 (2026-10-04): val_sel no decide (0.28 / 0.72), val_rep favorece a Villar (IC excluye 0)
+    D, txt = _forzar(J, 0.278, 0.721, -0.111, (-0.198, -0.028), hib_sel=0.817, hib_ic=(0.020, 0.113))
+    rv = D["red_vs_villar"]
+    assert rv["val_sel"] is None and rv["val_rep"] == "villar" and rv["acuerdo"] == "val_sel no decide"
+    assert D["hibrido_vs_red"]["val_rep"] == "hibrido" and D["recomendado"] is None
+    assert "favorece a Villar por 0.111" in txt and "favorece al h&iacute;brido" in txt
+    assert "diferencia pr&aacute;ctica es la cobertura" not in txt and "no hay cifra titular" in txt
+    for k in ("Villar 0.", "Red 0.", "H&iacute;brido 0."):                  # las tres contra la meta
+        assert k in txt
+    # val_sel elige la red y val_rep lo contradice: la recomendacion lleva la advertencia
+    D, txt = _forzar(J, 0.95, 0.05, -0.111, (-0.198, -0.028))
+    assert D["red_vs_villar"]["acuerdo"] == "contradice" and D["recomendado"] == "red"
+    assert "val_rep lo contradice" in txt and "No usarla sin revisar" in txt
+    assert "El m&eacute;todo que recomienda la regla es la red" in txt
+    # val_sel elige Villar y val_rep lo confirma
+    D, txt = _forzar(J, 0.05, 0.95, -0.111, (-0.198, -0.028))
+    assert D["red_vs_villar"]["acuerdo"] == "confirma" and "val_rep lo confirma" in txt
+    # val_sel elige Villar y val_rep incluye 0 con el signo contrario
+    D, txt = _forzar(J, 0.05, 0.95, 0.01, (-0.05, 0.07))
+    assert D["red_vs_villar"]["acuerdo"] == "no confirma" and "signo contrario" in txt
+
+
+def test_calib_piloto_distinto_de_produccion(tmp_path):
+    import os
+    runs, *_ = _arbol(tmp_path)
+    pil = _sims(runs / "calib_obs", "ztf_piloto", 20, True)              # piloto con k 0.56 / 0.57
+    m = json.loads((pil / "run_manifest.json").read_text())
+    m["cfg"]["noise_draw_scale"] = {"g": 0.56, "r": 0.57}
+    (pil / "run_manifest.json").write_text(json.dumps(m))
+    cm = json.loads((runs / "calib_obs/confirm_meta.json").read_text())
+    (runs / "calib_obs/confirm_meta.json").write_text(json.dumps({**cm, "piloto": str(pil)}))
+    t = (runs / "calib_obs/confirm_blancos.csv").stat().st_mtime
+    os.utime(tmp_path / "calib_obs.png", (t - 3600, t - 3600))             # figura anterior a las tablas
+    # el bloque actual apunta a otra cosa (como en la prueba con runs viejos): igual se compara con las esperadas
+    J, _ = I.construir(tmp_path / "cfg.json", actual_nn="nnclf_no_existe", actual_villar="sw_no_existe", atlas=False)
+    c = J["simulacion"]["calib"]
+    assert c["piloto_como_produccion"] is False and c["figura_vieja"] is True
+    assert c["produccion"] == ["ztf_nuevo_x4", "ztf_nuevo_x2"]
+    assert {x["campo"] for x in c["diferencias_produccion"]} == {"noise_draw_scale"}
+    assert c["etiqueta_despues"] == "piloto ztf_piloto (k g 0.56 / r 0.57)"
+    txt = " ".join(J["conclusiones"])
+    assert "Con el piloto ztf_piloto (k g 0.56 / r 0.57)" in txt and "falta confirmar con la config final" in txt
+    assert any("repetir confirm" in p for p in J["pendientes"])
+    page = (tmp_path / "pagina/index.html").read_text()
+    assert "figura vieja" in page and "modelo recalibrado" not in page
+    assert "despu&eacute;s (piloto ztf_piloto (k g 0.56 / r 0.57))" in page
+    # mismo piloto que la produccion: sin advertencia
+    (runs / "calib_obs/confirm_meta.json").write_text(json.dumps(cm))
+    J, _ = I.construir(tmp_path / "cfg.json", atlas=False)
+    c = J["simulacion"]["calib"]
+    assert c["piloto_como_produccion"] is True and not any("repetir confirm" in p for p in J["pendientes"])

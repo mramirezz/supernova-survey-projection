@@ -21,8 +21,14 @@ REGLAS
    supernnova) la de mayor exactitud balanceada en val_sel contra la incumbente simple (nn_incumbente, gru_base) con el
    bootstrap pareado de nnclf (experimentos.paired_bootstrap, P >= 0.9 en val_sel); si no gana, queda la incumbente.
 4. Mismos objetos: oids de val_rep que Villar clasifica. Hibrido fijo a priori: Villar si cubre, si no la mejor red.
-   Las decisiones (que metodo conviene) se leen en val_sel con la misma regla; val_rep solo informa.
+   Las decisiones (que metodo conviene) se leen en val_sel con la misma regla. val_rep no decide, pero cada decision
+   dice si val_rep la confirma, la contradice o no la confirma (signo del delta y si su IC 90 % excluye 0), y si
+   val_rep separa a dos metodos que val_sel no separa. La meta se mira solo para el metodo que recomienda val_sel; las
+   tres cifras se listan en orden fijo con su cobertura, sin elegir la mayor de val_rep.
 5. Detecciones: n_det de la mejor red (detecciones g + r de la curva limpia); sin prediccion de la red = menos de 3.
+6. Calibracion: el piloto de calib_obs se compara campo a campo con las sims de produccion que espera la config
+   (sims_nn, sims_villar). Si difieren, la columna y la conclusion dicen "piloto" con sus valores y piden repetir
+   confirm. La figura anterior a las tablas se marca como vieja.
 
 USO (desde la raiz del repo)
     PYTHONPATH=. $PY -m pipeline78.informe_clasificadores
@@ -324,7 +330,7 @@ def comparar(vi, nn, V):
                                      "red_menos_villar": pareado(pnc, pvc), "villar_menos_red": pareado(pvc, pnc)},
                   "hibrido": {**met(h, n_tot), "n_villar": int(h.oid.isin(pv.oid).sum()),
                               "n_red": int((~h.oid.isin(pv.oid)).sum())},
-                  "hibrido_menos_red": pareado(hn, pn)}
+                  "hibrido_menos_red": pareado(hn, pn), "red_menos_hibrido": pareado(pn, hn)}
     return out
 
 
@@ -437,7 +443,21 @@ def aprendizaje(bloques):
 
 
 # ------------------------------------------------------------------------------------------------ simulacion
-def calib(cfg):
+CAMPOS_OBS = {"det_m0": "det_m0", "det_w": "det_w", "det_eps": "det_eps", "noise_draw_scale": "k",
+              "alertas": "stream de alertas", "tail_min_slope": "piso de la cola"}
+
+
+def _gr(x):
+    """Valor de un campo del modelo de observacion en texto (bandas g y r de ZTF)."""
+    if isinstance(x, dict):
+        return " / ".join(f"{b} {x[b]}" for b in ("g", "r") if b in x) or str(x)
+    if isinstance(x, bool):
+        return "s&iacute;" if x else "no"
+    return "&mdash;" if x is None else str(x)
+
+
+def calib(cfg, esperadas=()):
+    """Tablas confirm_* de calib_obs y su piloto comparado con las sims de produccion esperadas (regla 6)."""
     c = cfg.get("calib_obs") or {}
     d = _p(c.get("dir", "calib_obs"), cfg["_runs"])
     fig = _p(c.get("figura"), PHD)
@@ -449,11 +469,27 @@ def calib(cfg):
     out["estado"] = "ok"
     out["tablas_fecha"] = datetime.datetime.fromtimestamp((d / "confirm_blancos.csv").stat().st_mtime).strftime(
         "%Y-%m-%d %H:%M")
+    out["figura_vieja"] = bool(out.get("figura_fecha") and out["figura_fecha"] < out["tablas_fecha"])
     meta = json.loads((d / "confirm_meta.json").read_text()) if (d / "confirm_meta.json").exists() else {}
     out.update(split=meta.get("split"), piloto=meta.get("piloto"), base=meta.get("base"), puntaje=meta.get("puntaje"),
                n_real=_get(meta, "real", "n_usable"))
-    out["piloto_modelo"] = modelo_obs(meta.get("piloto")) if meta.get("piloto") else None
+    pm = out["piloto_modelo"] = modelo_obs(meta.get("piloto")) if meta.get("piloto") else None
     out["base_modelo"] = modelo_obs(meta.get("base")) if meta.get("base") else None
+    prod = [m for m in esperadas if m]
+    out["produccion"] = [m["run"] for m in prod]
+    if pm and prod:
+        out["diferencias_produccion"] = [{"campo": k, "piloto": pm.get(k), "produccion": m.get(k), "run": m["run"]}
+                                         for m in prod for k in CAMPOS_OBS if pm.get(k) != m.get(k)]
+        out["piloto_como_produccion"] = not out["diferencias_produccion"]
+    else:
+        out["piloto_como_produccion"] = None                 # sin piloto o sin run_manifest de produccion: no se sabe
+    nom = Path(str(meta.get("piloto"))).name
+    if out["piloto_como_produccion"] is True:
+        out["etiqueta_despues"] = f"{nom} (misma config que {', '.join(out['produccion'])})"
+    else:
+        cs = list(dict.fromkeys(x["campo"] for x in out.get("diferencias_produccion") or [])) or ["noise_draw_scale"]
+        out["etiqueta_despues"] = (f"piloto {nom} (" + ", ".join(f"{CAMPOS_OBS[k]} {_gr((pm or {}).get(k))}" for k in cs)
+                                   + ")")
     t = pd.read_csv(d / "confirm_blancos.csv")
     out["blancos"] = [{"banda": r.band, "blanco": r.blanco, "real": r.real, "antes": r.sim_base, "despues": r.sim,
                        "e_real": r.e_real} for r in t.itertuples()]
@@ -636,6 +672,81 @@ def fig_aprendizaje(pts, out, plt):
 
 
 # ------------------------------------------------------------------------------------------------ conclusiones
+NOM = {"red": "la red", "villar": "Villar", "hibrido": "el h&iacute;brido"}
+A_NOM = {"red": "a la red", "villar": "a Villar", "hibrido": "al h&iacute;brido"}
+CORTO = {"red": "red", "villar": "Villar", "hibrido": "h&iacute;brido"}
+MAY = {"red": "Red", "villar": "Villar", "hibrido": "H&iacute;brido"}
+
+
+def _dir_rep(c):
+    """Ganador en val_rep segun el IC 90 % del delta (pos - neg): +1 si queda sobre 0, -1 bajo 0, 0 si incluye 0."""
+    ic = (c or {}).get("ic90_delta")
+    if not ic or None in ic:
+        return 0
+    return 1 if ic[0] > 0 else -1 if ic[1] < 0 else 0
+
+
+def _par(sp, sn, rp, pos, neg):
+    """Decision de la regla en val_sel (sp = pos - neg, sn = neg - pos) y lo que dice val_rep (rp = pos - neg)."""
+    ps, pn = (sp or {}).get("p_mejora"), (sn or {}).get("p_mejora")
+    sel = 1 if ps is not None and ps >= P_MIN else -1 if pn is not None and pn >= P_MIN else 0
+    rep, g = _dir_rep(rp), {1: pos, -1: neg, 0: None}
+    acuerdo = ("confirma" if sel and rep == sel else "contradice" if sel and rep == -sel else "no confirma" if sel else
+               "val_sel no decide" if rep else "ninguno decide")
+    return {"pos": pos, "neg": neg, "p_sel_pos": ps, "p_sel_neg": pn, "val_sel": g[sel], "val_rep": g[rep],
+            "n_rep": (rp or {}).get("n"), "delta_rep": (rp or {}).get("delta"), "ic90_rep": (rp or {}).get("ic90_delta"),
+            "acuerdo": acuerdo}
+
+
+def decidir(A, meta):
+    """Decisiones de val_sel (regla 4) con su contraste en val_rep, metodo recomendado y la meta (sin max en val_rep)."""
+    S, R = A["respuesta"]["val_sel"], A["respuesta"]["val_rep"]
+    rv = _par(S["mismos_objetos"]["red_menos_villar"], S["mismos_objetos"]["villar_menos_red"],
+              R["mismos_objetos"]["red_menos_villar"], "red", "villar")
+    hr = _par(S["hibrido_menos_red"], S.get("red_menos_hibrido"), R["hibrido_menos_red"], "hibrido", "red")
+    rec = ("red" if rv["val_sel"] == "red" else
+           "hibrido" if rv["val_sel"] == "villar" and hr["val_sel"] == "hibrido" else None)
+    M = (("villar", A["villar"]["val_rep"]), ("red", A["red"]["val_rep"]), ("hibrido", R["hibrido"]))
+    lm = []
+    for k, m in M:                                           # orden fijo: no se elige la mayor
+        b, ic = m.get("bal_acc"), m.get("bal_acc_ic95") or [None, None]
+        lm.append({"metodo": k, "bal_acc": b, "ic95": ic, "cobertura": m.get("cobertura"), "n": m.get("n"),
+                   "alcanza": None if b is None else bool(b >= meta),
+                   "ic_incluye_meta": None if None in ic else bool(ic[0] <= meta <= ic[1])})
+    return {"red_vs_villar": rv, "hibrido_vs_red": hr, "recomendado": rec, "meta_bal_acc": meta, "meta": lm}
+
+
+def txt_rep(c):
+    """Frase de val_rep para una decision de val_sel (salida de _par)."""
+    if c.get("delta_rep") is None or not c.get("ic90_rep"):
+        return "En val_rep no hay objetos suficientes para contrastarlo."
+    (lo, hi), d = c["ic90_rep"], c["delta_rep"]
+    cifra = f"{c['n_rep']} objetos, {CORTO[c['pos']]} &minus; {CORTO[c['neg']]} = {d:+.3f}, IC 90 % [{lo:.3f}, {hi:.3f}]"
+    a, s, r = c["acuerdo"], c["val_sel"], c["val_rep"]
+    if a == "confirma":
+        return f"val_rep lo confirma ({cifra}, excluye 0)."
+    if a == "contradice":
+        return (f"OJO: val_rep lo contradice ({cifra}, excluye 0 a favor de {NOM[r]}). La elecci&oacute;n de val_sel "
+                "no es robusta: revisarla antes de usarla.")
+    if a == "no confirma":
+        return (f"val_rep no lo confirma ({cifra}, incluye 0" + (", con el signo contrario)." if (d > 0) != (s == c["pos"])
+                                                                 else ")."))
+    if a == "val_sel no decide":
+        return (f"Pero val_rep s&iacute; los separa y favorece {A_NOM[r]} por {abs(d):.3f} ({cifra}, excluye 0). val_rep "
+                "no se usa para elegir, as&iacute; que queda como se&ntilde;al y no como decisi&oacute;n.")
+    return f"Tampoco val_rep los separa ({cifra}, incluye 0)."
+
+
+def txt_meta(x, meta):
+    """Una cifra contra la meta, con su cobertura (las poblaciones de Villar y la red no son las mismas)."""
+    lo, hi = x["ic95"]
+    est = "por encima de" if x["alcanza"] else "por debajo de"
+    ic = ("pero el IC 95 % la incluye" if x["ic_incluye_meta"] else
+          f"con todo el IC 95 % por {'encima' if lo > meta else 'debajo'}")
+    return (f"{MAY[x['metodo']]} {f3(x['bal_acc'])} [{lo:.3f}, {hi:.3f}] en el {pc(x['cobertura'])} que clasifica: "
+            f"{est} la meta, {ic}")
+
+
 def conclusiones(J, meta_bal):
     """Plantillas con condiciones explicitas, llenadas solo con numeros.json (J)."""
     A, out = J["actual"], []
@@ -652,22 +763,15 @@ def conclusiones(J, meta_bal):
         out.append(f"En val_rep, Villar acierta el {pc(vr['acc'])} de las SNe que puede clasificar y cubre el "
                    f"{pc(vr['cobertura'])} del total. La red ({r['name']}) acierta el {pc(rr['acc'])} y cubre el "
                    f"{pc(rr['cobertura'])}.")
-        S, Rp = A["respuesta"]["val_sel"], A["respuesta"]["val_rep"]
-        p_r, p_v = S["mismos_objetos"]["red_menos_villar"].get("p_mejora"), S["mismos_objetos"]["villar_menos_red"].get("p_mejora")
-        d_rep = Rp["mismos_objetos"]["red_menos_villar"].get("delta")
-        n_m = Rp["mismos_objetos"]["n"]
-        red_gana, vil_gana = p_r is not None and p_r >= P_MIN, p_v is not None and p_v >= P_MIN
-        if red_gana:
-            out.append(f"En los mismos objetos la red es mejor que Villar: en val_sel P(red mejor) = {f3(p_r, 2)} "
-                       f"&ge; {P_MIN}. En val_rep ({n_m} objetos) la diferencia de exactitud balanceada (red &minus; "
-                       f"Villar) es {d_rep:+.3f}.")
-        elif vil_gana:
-            out.append(f"En los mismos objetos Villar es mejor que la red: en val_sel P(Villar mejor) = {f3(p_v, 2)} "
-                       f"&ge; {P_MIN}. En val_rep ({n_m} objetos) la diferencia (red &minus; Villar) es {d_rep:+.3f}.")
-        else:
-            out.append(f"En los mismos objetos no hay ganador claro: en val_sel P(red mejor) = {f3(p_r, 2)} y "
-                       f"P(Villar mejor) = {f3(p_v, 2)}, las dos bajo {P_MIN}. En val_rep ({n_m} objetos) la "
-                       f"diferencia (red &minus; Villar) es {d_rep:+.3f}.")
+        D = J.get("decision") or decidir(A, meta_bal)
+        rv, hr, h = D["red_vs_villar"], D["hibrido_vs_red"], A["respuesta"]["val_rep"]["hibrido"]
+        p_r, p_v = rv["p_sel_pos"], rv["p_sel_neg"]
+        sel = {"red": f"En los mismos objetos la regla elige la red: en val_sel P(red mejor) = {f3(p_r, 2)} &ge; {P_MIN}.",
+               "villar": (f"En los mismos objetos la regla elige Villar: en val_sel P(Villar mejor) = {f3(p_v, 2)} "
+                          f"&ge; {P_MIN}."),
+               None: (f"En los mismos objetos la regla no elige: en val_sel P(red mejor) = {f3(p_r, 2)} y P(Villar "
+                      f"mejor) = {f3(p_v, 2)}, las dos bajo {P_MIN}.")}[rv["val_sel"]]
+        out.append(sel + " " + txt_rep(rv))
         nd = [x for x in A.get("ndet") or [] if x["n"]]
         if len(nd) >= 3:
             lo, hi = nd[1], nd[-1]
@@ -675,36 +779,44 @@ def conclusiones(J, meta_bal):
                        f"detecciones cubre el {pc(lo['cobertura_villar'])} y con {html.unescape(hi['bin'])} el "
                        f"{pc(hi['cobertura_villar'])}. La red deja fuera el {pc(1 - rr['cobertura'])} (las de menos de "
                        "3 detecciones).")
-        h, hs = Rp["hibrido"], S["hibrido_menos_red"]
-        hg = hs.get("p_mejora") is not None and hs["p_mejora"] >= P_MIN
+        hsel = {"hibrido": f"La regla en val_sel lo prefiere a la red sola (P = {f3(hr['p_sel_pos'], 2)} &ge; {P_MIN}).",
+                "red": f"La regla en val_sel prefiere la red sola (P(red mejor) = {f3(hr['p_sel_neg'], 2)} &ge; {P_MIN}).",
+                None: (f"La regla en val_sel no lo separa de la red sola (P(h&iacute;brido mejor) = "
+                       f"{f3(hr['p_sel_pos'], 2)} &lt; {P_MIN}).")}[hr["val_sel"]]
         out.append(f"El h&iacute;brido (Villar donde ajusta, la red en el resto) cubre el {pc(h['cobertura'])} con "
-                   f"exactitud balanceada {f3(h['bal_acc'])}{ci(h.get('bal_acc_ic95'))}. "
-                   + (f"Mejora a la red sola en val_sel (P = {f3(hs['p_mejora'], 2)})." if hg else
-                      f"No mejora a la red sola de forma clara en val_sel (P = {f3(hs.get('p_mejora'), 2)} &lt; {P_MIN})."))
-        if red_gana:
-            rec = (f"Para las tasas conviene la red: es mejor en los mismos objetos y cubre el {pc(rr['cobertura'])}.")
-        elif vil_gana and hg:
-            rec = (f"Para las tasas conviene el h&iacute;brido: Villar es mejor donde ajusta y la red completa la "
-                   f"cobertura hasta el {pc(h['cobertura'])}.")
-        elif vil_gana:
-            rec = ("Villar es mejor donde ajusta, pero el h&iacute;brido no pasa la regla contra la red sola. Con Villar "
-                   f"solo, el {pc(1 - vr['cobertura'])} sin clasificar entra a las tasas como correcci&oacute;n de "
-                   "eficiencia; el h&iacute;brido evita esa correcci&oacute;n a costa de usar la red en las de pocas "
-                   "detecciones.")
+                   f"exactitud balanceada {f3(h['bal_acc'])}{ci(h.get('bal_acc_ic95'))}. {hsel} {txt_rep(hr)}")
+        rec = D["recomendado"]
+        cob = (f"Villar clasifica el {pc(vr['cobertura'])}, la red el {pc(rr['cobertura'])} y el h&iacute;brido el "
+               f"{pc(h['cobertura'])}. En las tasas cada SN sin clasificar entra como correcci&oacute;n de eficiencia.")
+        if rec == "red":
+            t = ("Para las tasas la regla recomienda la red: es mejor en los mismos objetos (val_sel) y cubre el "
+                 f"{pc(rr['cobertura'])}.")
+        elif rec == "hibrido":
+            t = ("Para las tasas la regla recomienda el h&iacute;brido: Villar es mejor donde ajusta y el h&iacute;brido "
+                 f"le gana a la red sola en val_sel. Cubre el {pc(h['cobertura'])}.")
+        elif rv["val_sel"] == "villar":
+            t = ("Villar es mejor donde ajusta, pero el h&iacute;brido no pasa la regla contra la red sola, as&iacute; "
+                 f"que la regla no recomienda un m&eacute;todo. {cob} El h&iacute;brido evita esa correcci&oacute;n a "
+                 "costa de usar la red en las de pocas detecciones.")
         else:
-            rec = ("Como no hay ganador en los mismos objetos, la diferencia pr&aacute;ctica es la cobertura: la red "
-                   f"(o el h&iacute;brido) clasifica el {pc(max(rr['cobertura'], h['cobertura']))} y Villar el "
-                   f"{pc(vr['cobertura'])}. En las tasas cada SN sin clasificar entra como correcci&oacute;n de "
-                   "eficiencia.")
-        out.append(rec + " Villar sigue siendo el baseline oficial (decisi&oacute;n de Mauricio). La decisi&oacute;n "
+            t = ("La regla en val_sel no recomienda un m&eacute;todo: no separa a Villar de la red en los mismos objetos. "
+                 + (f"val_rep, que no elige, favorece {A_NOM[rv['val_rep']]} en esos objetos (ver arriba). "
+                    if rv["val_rep"] else "Tampoco val_rep los separa. ") + f"Adem&aacute;s difieren en cobertura. {cob}")
+        base = [rv] + ([hr] if rec == "hibrido" else []) if rec else []
+        if any(x["acuerdo"] == "contradice" for x in base):
+            t += " OJO: val_rep contradice esta elecci&oacute;n (ver arriba). No usarla sin revisar."
+        elif any(x["acuerdo"] == "no confirma" for x in base):
+            t += " val_rep no la confirma con un IC 90 % que excluya 0."
+        out.append(t + " Villar sigue siendo el baseline oficial (decisi&oacute;n de Mauricio). La decisi&oacute;n "
                    "final es de Mauricio.")
-        cands = [("Villar", vr), (f"red {r['name']}", rr), ("h&iacute;brido", h)]
-        q, m = max(cands, key=lambda x: x[1]["bal_acc"])
-        lo_, hi_ = m["bal_acc_ic95"]
-        out.append(f"La mejor exactitud balanceada en val_rep es {f3(m['bal_acc'])} ({q}, sobre el {pc(m['cobertura'])} "
-                   f"que clasifica, IC 95 % [{lo_:.3f}, {hi_:.3f}]). "
-                   + ("Alcanza" if m["bal_acc"] >= meta_bal else "No alcanza") + f" la meta de {meta_bal}"
-                   + ("; con el IC no se distingue de la meta." if lo_ < meta_bal < hi_ else "."))
+        lm = {x["metodo"]: x for x in D["meta"]}
+        out.append((f"El m&eacute;todo que recomienda la regla es {NOM[rec]}. Contra la meta de exactitud balanceada "
+                    f"{meta_bal} en val_rep: {txt_meta(lm[rec], meta_bal)}." if rec else
+                    f"Meta de exactitud balanceada {meta_bal}: la regla no recomienda un m&eacute;todo, as&iacute; que no "
+                    "hay cifra titular contra la meta (no se elige la mayor de val_rep).")
+                   + f" Las tres cifras contra la meta, en orden fijo y cada una sobre su propia cobertura (poblaciones "
+                     "distintas, no se comparan entre s&iacute;). " + ". ".join(txt_meta(x, meta_bal) for x in D["meta"])
+                   + ".")
         fv = {c: vr[f"f1_{c}"] for c in CLS}
         fr = {c: rr[f"f1_{c}"] for c in CLS}
         cv_, cr_ = min(fv, key=fv.get), min(fr, key=fr.get)
@@ -730,9 +842,20 @@ def conclusiones(J, meta_bal):
     c = (J.get("simulacion") or {}).get("calib") or {}
     if c.get("estado") == "ok" and c.get("puntaje"):
         pg, pr = c["puntaje"].get("g"), c["puntaje"].get("r")
-        out.append(f"La calibraci&oacute;n del modelo de observaci&oacute;n baj&oacute; el puntaje (0 = calce "
-                   f"perfecto) de {pg[1]:.0f} a {pg[0]:.1f} en g y de {pr[1]:.0f} a {pr[0]:.1f} en r, contra las "
-                   f"alertas de {c.get('split')}.")
+        cifra = (f"el puntaje (0 = calce perfecto) baj&oacute; de {pg[1]:.0f} a {pg[0]:.1f} en g y de {pr[1]:.0f} a "
+                 f"{pr[0]:.1f} en r, contra las alertas de {c.get('split')}")
+        cp, prod = c.get("piloto_como_produccion"), ", ".join(c.get("produccion") or [])
+        if cp is True:
+            out.append(f"Con la calibraci&oacute;n del modelo de observaci&oacute;n {cifra}. El piloto "
+                       f"({c['etiqueta_despues']}) tiene la misma config que la producci&oacute;n.")
+        elif cp is False:
+            dp = list(dict.fromkeys(f"{CAMPOS_OBS[x['campo']]} {_gr(x['produccion'])}"
+                                    for x in c["diferencias_produccion"]))
+            out.append(f"Con el {c['etiqueta_despues']} {cifra}. La producci&oacute;n ({prod}) usa {', '.join(dp)}: "
+                       "falta confirmar con la config final (repetir confirm). Hasta entonces la cifra es del piloto.")
+        else:
+            out.append(f"Con el {c.get('etiqueta_despues')} de calib_obs {cifra}. Falta compararlo con las sims "
+                       "de producci&oacute;n (no est&aacute; su run_manifest.json).")
     return out
 
 
@@ -754,14 +877,17 @@ def pendientes(J, cfg):
         if mo and esp and mo.get("run") != esp:
             out.append(f"Las sims de {tag} del bloque actual son {mo.get('run')}, la config espera {esp}.")
     c = (J.get("simulacion") or {}).get("calib") or {}
-    if c.get("figura_fecha") and c.get("tablas_fecha") and c["figura_fecha"] < c["tablas_fecha"]:
+    if c.get("figura_vieja"):
         out.append(f"La figura calib_obs ({c['figura_fecha']}) es anterior a las tablas confirm_* ({c['tablas_fecha']}): "
                    "rehacerla con el piloto de las tablas (python -m pipeline78.calib_obs fig).")
-    k_p = _get(c, "piloto_modelo", "noise_draw_scale")
-    k_a = (A.get("sims_red") or A.get("sims_villar") or {}).get("noise_draw_scale")
-    if k_p and k_a and k_p != k_a:
-        out.append(f"La confirmaci&oacute;n de calib_obs us&oacute; k = {k_p} y la producci&oacute;n k = {k_a}: repetir "
-                   "confirm con la config final.")
+    if c.get("piloto_como_produccion") is False:
+        d = c["diferencias_produccion"]
+        dp = list(dict.fromkeys(f"{CAMPOS_OBS[x['campo']]} {_gr(x['produccion'])}" for x in d))
+        out.append(f"La confirmaci&oacute;n de calib_obs us&oacute; el {c['etiqueta_despues']} y la producci&oacute;n "
+                   f"({', '.join(c.get('produccion') or [])}) usa {', '.join(dp)}: repetir confirm con la config final.")
+    elif c.get("estado") == "ok" and c.get("piloto_como_produccion") is None:
+        out.append("No se pudo comparar el piloto de calib_obs con las sims de producci&oacute;n de la config (falta el "
+                   "piloto o el run_manifest.json de sims_nn / sims_villar).")
     for B in [A] + list(J.get("historia") or []):
         for r in [B.get("villar") or {}] + list(B.get("redes") or []):
             if r.get("fuera_de_val"):
@@ -821,11 +947,11 @@ def tabla_modelos(B):
     return tabla(HEAD_MOD, rows)
 
 
-def _fmt_obs(mo):
+def _fmt_obs(mo, pre=""):
     if not mo:
         return ["&mdash;"] * 6
     f = lambda x: " / ".join(f"{k} {v}" for k, v in x.items()) if isinstance(x, dict) else str(x)
-    return [f"{Path(mo['dir']).name} (config {mo['run']}, {mo['n_sims']} sims)", f(mo["det_m0"]), f(mo["det_w"]), f(mo["noise_draw_scale"] or 1.0),
+    return [f"{pre}{Path(mo['dir']).name} (config {mo['run']}, {mo['n_sims']} sims)", f(mo["det_m0"]), f(mo["det_w"]), f(mo["noise_draw_scale"] or 1.0),
             "s&iacute;" if mo["alertas"] else "no", f(mo["tail_min_slope"])]
 
 
@@ -861,14 +987,19 @@ def pagina(J, figs, out):
             row("Red, mismos objetos", "la red sobre esas mismas SNe", mo["red"]),
             row("<b>H&iacute;brido fijo</b>", f"Villar donde ajusta ({R['hibrido']['n_villar']}), la red en el resto "
                 f"({R['hibrido']['n_red']}). Regla fijada antes de mirar", R["hibrido"])]))
-        d, ds = mo["red_menos_villar"], Ssel["mismos_objetos"]
+        d, ds, D = mo["red_menos_villar"], Ssel["mismos_objetos"], J["decision"]
+        rv, hr = D["red_vs_villar"], D["hibrido_vs_red"]
         s.append(f"<ul><li>En los mismos {mo['n']} objetos la diferencia de exactitud balanceada red &minus; Villar es "
                  f"<b>{d.get('delta', float('nan')):+.3f}</b> (intervalo 90 % {ci(d.get('ic90_delta'))}).</li>"
                  f"<li>Para decidir se mira val_sel ({ds['n']} objetos comunes): P(red mejor) = "
                  f"{f3(ds['red_menos_villar'].get('p_mejora'), 3)}, P(Villar mejor) = "
-                 f"{f3(ds['villar_menos_red'].get('p_mejora'), 3)}. Gana el que pase {P_MIN}.</li>"
+                 f"{f3(ds['villar_menos_red'].get('p_mejora'), 3)}. Gana el que pase {P_MIN}: "
+                 f"<b>{NOM[rv['val_sel']] if rv['val_sel'] else 'ninguno'}</b>. {txt_rep(rv)}</li>"
                  f"<li>H&iacute;brido contra la red sola (val_sel, objetos de la red): P(h&iacute;brido mejor) = "
-                 f"{f3(Ssel['hibrido_menos_red'].get('p_mejora'), 3)}.</li></ul>")
+                 f"{f3(hr['p_sel_pos'], 3)}, P(red mejor) = {f3(hr['p_sel_neg'], 3)}: "
+                 f"<b>{NOM[hr['val_sel']] if hr['val_sel'] else 'ninguno'}</b>. {txt_rep(hr)}</li>"
+                 f"<li>M&eacute;todo que recomienda la regla: <b>{NOM[D['recomendado']] if D['recomendado'] else 'ninguno'}"
+                 "</b> (detalle en las conclusiones).</li></ul>")
         if figs.get("respuesta"):
             s.append(f"<img src='{figs['respuesta']}' width='520'>")
     else:
@@ -964,34 +1095,50 @@ def pagina(J, figs, out):
              "l&iacute;mite), sorteaba el ruido al doble del real y no imitaba el stream de alertas de ALeRCE. Un "
              "clasificador &laquo;sim contra real&raquo; lo encontr&oacute;. Se recalibr&oacute; por &eacute;poca con "
              "SNe que no son del holdout (val_viejo).</p>")
-    s.append(tabla(["proyecci&oacute;n", "det_m0 [mag]", "det_w [mag]", "escala del ruido k", "stream de alertas",
-                    "piso de la cola [mag/d]"],
-                   [_fmt_obs(mo) for mo in S.get("modelos_obs") or []]))
     c = S.get("calib") or {}
+    filas = [_fmt_obs(mo) for mo in S.get("modelos_obs") or []]
+    pm = c.get("piloto_modelo")
+    if pm and pm["dir"] not in {m["dir"] for m in S.get("modelos_obs") or []}:
+        filas.append(_fmt_obs(pm, "piloto de calib_obs: "))
+    s.append(tabla(["proyecci&oacute;n", "det_m0 [mag]", "det_w [mag]", "escala del ruido k", "stream de alertas",
+                    "piso de la cola [mag/d]"], filas))
     if c.get("estado") == "ok":
+        pil, cp = c["etiqueta_despues"], c.get("piloto_como_produccion")
+        mu = {Path(str(c.get("piloto"))).name: pil, Path(str(c.get("base"))).name: "antes"}   # nombres de las muestras
         if figs.get("calib"):
-            s.append(f"<img src='{figs['calib']}' width='1000'><p class='nota'>Figura de calib_obs (generada "
-                     f"{c.get('figura_fecha')}). Gris: alertas reales; color: modelo recalibrado; guiones: modelo "
-                     "viejo.</p>")
+            s.append(f"<img src='{figs['calib']}' width='1000'>" + (
+                f"<p class='nota pend'>OJO, figura vieja: generada {c.get('figura_fecha')}, antes de las tablas "
+                f"confirm_* ({c.get('tablas_fecha')}). Puede mostrar otro piloto, no el de las tablas de abajo. Gris: "
+                "alertas reales. Color: el piloto con que se hizo la figura. Guiones: modelo viejo.</p>"
+                if c.get("figura_vieja") else
+                f"<p class='nota'>Figura de calib_obs (generada {c.get('figura_fecha')}). Gris: alertas reales. Color: "
+                f"{pil}. Guiones: modelo viejo.</p>"))
+        if cp is False:
+            s.append(f"<p class='aviso'><b>Ojo.</b> &laquo;Despu&eacute;s&raquo; es el {pil}, no la producci&oacute;n "
+                     f"({', '.join(c.get('produccion') or [])}), que usa " + ", ".join(dict.fromkeys(
+                         f"{CAMPOS_OBS[x['campo']]} {_gr(x['produccion'])}" for x in c["diferencias_produccion"]))
+                     + ". Falta repetir confirm con la config final.</p>")
+        elif cp is None:
+            s.append("<p class='aviso'>No se pudo comparar el piloto con las sims de producci&oacute;n de la config.</p>")
         s.append(f"<p>Blancos de la calibraci&oacute;n contra {c.get('n_real')} SNe {c.get('split')} (tablas del "
-                 f"{c.get('tablas_fecha')}; antes = {html.escape(Path(str(c.get('base'))).name)}, despu&eacute;s = "
-                 f"{html.escape(Path(str(c.get('piloto'))).name)}). dm = m_lim &minus; m: qu&eacute; tan cerca del "
-                 "l&iacute;mite se detecta.</p>")
-        s.append(tabla(["banda", "blanco", "real", "antes", "despu&eacute;s"],
+                 f"{c.get('tablas_fecha')}. Antes = {html.escape(Path(str(c.get('base'))).name)}, despu&eacute;s = "
+                 f"{pil}). dm = m_lim &minus; m: qu&eacute; tan cerca del l&iacute;mite se detecta.</p>")
+        s.append(tabla(["banda", "blanco", "real", "antes", f"despu&eacute;s ({pil})"],
                        [[b["banda"], b["blanco"].replace("<", "&lt;"), f3(b["real"]), f3(b["antes"]), f3(b["despues"])]
                         for b in c.get("blancos") or []]))
         if c.get("puntaje"):
-            s.append(f"<p>Puntaje (suma de |sim &minus; real| / error, 0 = calce perfecto): g {c['puntaje']['g'][1]:.1f} "
-                     f"&rarr; {c['puntaje']['g'][0]:.1f}, r {c['puntaje']['r'][1]:.1f} &rarr; {c['puntaje']['r'][0]:.1f}.</p>")
+            s.append(f"<p>Puntaje (suma de |sim &minus; real| / error, 0 = calce perfecto), antes &rarr; {pil}: g "
+                     f"{c['puntaje']['g'][1]:.1f} &rarr; {c['puntaje']['g'][0]:.1f}, r {c['puntaje']['r'][1]:.1f} "
+                     f"&rarr; {c['puntaje']['r'][0]:.1f}.</p>")
         if c.get("tripletes"):
             s.append("<p>Ruido: dispersi&oacute;n de tres detecciones seguidas en unidades del error reportado (las "
                      "reales dan ~0.55: el error de ZTF sobreestima el ruido).</p>" +
                      tabla(["banda", "muestra", "dispersi&oacute;n", "error", "n"],
-                           [[t["banda"], html.escape(str(t["muestra"])), f3(t["rstd"]), f3(t["err"]), str(t["n"])]
-                            for t in c["tripletes"]]))
+                           [[t["banda"], mu.get(str(t["muestra"]), html.escape(str(t["muestra"]))), f3(t["rstd"]),
+                             f3(t["err"]), str(t["n"])] for t in c["tripletes"]]))
         if c.get("chequeos"):
             cols = c["chequeos_cols"]
-            s.append(tabla(["chequeo", "real"] + [html.escape(x) for x in cols],
+            s.append(tabla(["chequeo", "real"] + [mu.get(x, html.escape(x)) for x in cols],
                            [[x["chequeo"], fnum(x["real"])] + [fnum(x[k]) for k in cols] for x in c["chequeos"]]))
     else:
         s.append("<p class='pend'>Calibraci&oacute;n: pendiente.</p>")
@@ -1030,6 +1177,7 @@ def construir(cfg_path=CFG, actual_nn=None, actual_villar=None, actual_gap=None,
     pts, pares = aprendizaje([("actual", A)] + [(f"historia {i + 1}", B) for i, B in enumerate(H)])
     mos, vistos = [], set()
     esperadas = [modelo_obs(_p(act.get(k), cfg["_runs"])) for k in ("sims_nn", "sims_villar") if act.get(k)]
+    esperadas = list({m["dir"]: m for m in esperadas if m}.values())
     for B in H + [A] + [{"sims_red": m} for m in esperadas]:
         for mo in (B.get("sims_red"), B.get("sims_villar")):
             if mo and mo["dir"] not in vistos:
@@ -1043,9 +1191,10 @@ def construir(cfg_path=CFG, actual_nn=None, actual_villar=None, actual_gap=None,
                        "n_val_rep": int((V.subset == "val_rep").sum()), "por_clase": V.cls.value_counts().to_dict(),
                        "n_boot_ic": N_BOOT_IC, "n_boot_pareado": N_BOOT, "p_min": P_MIN, "semilla_pareado": BOOT_SEED},
          "actual": A, "historia": H, "aprendizaje": pts, "aprendizaje_pares": pares,
-         "simulacion": {"calib": calib(cfg), "modelos_obs": mos, "gap_antes": gap_antes},
+         "simulacion": {"calib": calib(cfg, esperadas), "modelos_obs": mos, "gap_antes": gap_antes},
          "verificacion": [x for B in [A] + H for x in verificar(B)], "meta_bal_acc": cfg.get("meta_bal_acc", 0.75)}
     J = _js(N)
+    J["decision"] = decidir(J["actual"], J["meta_bal_acc"]) if J["actual"].get("respuesta") else None
     J["conclusiones"] = conclusiones(J, J["meta_bal_acc"])
     J["pendientes"] = pendientes(J, cfg)
     out = _p(cfg["pagina"], PHD)
