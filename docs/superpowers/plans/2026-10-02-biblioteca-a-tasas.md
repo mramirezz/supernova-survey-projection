@@ -1731,9 +1731,9 @@ git commit -m "pipeline78: reporte de piloto para el atlas"
 
 > **Enmienda 2026-10-03.** Bloqueada hasta cumplir §2b puntos 1 a 4. Tiempo medido en el piloto: 1000 campos × 40 sims ≈ 8 min con 2 workers.
 
-- [ ] **Step 1: ORDEN.** Pedirle a Mauricio la orden de lanzar. Darle el tiempo estimado, que es el del piloto multiplicado por 20.
+- [x] **Step 1: ORDEN.** Pedirle a Mauricio la orden de lanzar. Darle el tiempo estimado, que es el del piloto multiplicado por 20.
 
-- [ ] **Step 2: Repo limpio y lanzamiento**
+- [x] **Step 2: Repo limpio y lanzamiento**
 
 ```bash
 cd "$REPO" && git status --short --untracked-files=no      # debe salir vacio
@@ -1741,7 +1741,7 @@ nohup $PY -m pipeline78.run --run ztf_v78 --out ~/thesis_runs/ztf_v78 \
   --fields-file ~/thesis_store/ztf_fields_1000.txt --seed 20261002 --workers 4 > ~/thesis_runs/ztf_v78.log 2>&1 &
 ```
 
-- [ ] **Step 3: Verificar**
+- [x] **Step 3: Verificar**
 
 ```bash
 tail -20 ~/thesis_runs/ztf_v78.log
@@ -1753,7 +1753,7 @@ print('con >=7 det en r:', (s.n_det_r>=7).sum())"
 
 Expected: 30 000 sims (1000 campos × 30) y unas 15 000 con 7 o más detecciones en r.
 
-- [ ] **Step 4: Espejo en Drive (copiar y verificar, sin mover)**
+- [x] **Step 4: Espejo en Drive (copiar y verificar, sin mover)**
 
 ```bash
 D="$PHD/paper2_ZTF/runs"; mkdir -p "$D"
