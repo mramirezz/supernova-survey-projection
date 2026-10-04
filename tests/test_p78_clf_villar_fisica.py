@@ -3,7 +3,10 @@ hombro de r en los residuos contra el SPM y evolucion del color g - r de los SPM
 
 python -m pytest tests/test_p78_clf_villar_fisica.py -q
 """
+import contextlib
+import io
 import json
+import os
 
 import numpy as np
 import pandas as pd
@@ -12,7 +15,8 @@ from threadpoolctl import threadpool_limits
 
 from pipeline78 import clf_villar as C
 
-FEAT = ["sn_name", "filter_band"] + C.SPM + [f"{p}_err" for p in C.PARS] + C.QUAL + ["sn_type", "oid", "part_index"]
+FEAT = (["sn_name", "filter_band"] + C.SPM + [f"{p}_err" for p in C.PARS] + C.QUAL + ["mad", "sn_type", "oid",
+                                                                                      "part_index"])
 P_R = [1e-7, 0.4, 8.0, 3.0, 30.0, 12.0]          # A, f, t0, t_rise, t_fall, gamma en la fase de r
 DG = 1.5                                         # g empieza 1.5 d despues que r: otro origen de fase
 
@@ -137,13 +141,33 @@ PROTO = {"Ia": dict(f=0.4, t_fall=30.0, gamma=12.0, hombro=0.35, tf_g=22.0),    
          "IIb": dict(f=0.3, t_fall=40.0, gamma=20.0, hombro=0.0, tf_g=30.0)}
 
 
-def _feat_rows(oid, part, st, par):
-    out = []
+def _stats(lc, par):
+    """{banda: (n_points, mad)} como los escribe run_parquet del extractor: prepare_lightcurve y extract_features con
+    model_flux = modelo de los parametros sobre todas las fases (mcmc_fitter.fit_mcmc). Camino aparte de C.calza."""
+    Rd, FE, M = C._zlf("reader"), C._zlf("feature_extractor"), C._zlf("model")
+    cfg = C._zlf("config").DATA_FILTER_CONFIG
+    out = {}
+    for b, d in C.bandas_lc(lc).items():
+        if par.get(b) is None:
+            continue
+        with contextlib.redirect_stdout(io.StringIO()), np.errstate(all="ignore"):
+            x = Rd.prepare_lightcurve(d, b, max_days_after_peak=cfg["max_days_after_peak"],
+                                      max_days_before_peak=cfg["max_days_before_peak"],
+                                      max_days_before_first_obs=cfg["max_days_before_first_obs"])
+            f = FE.extract_features({"params": list(par[b]), "params_err": [0.0] * 6,
+                                     "model_flux": M.alerce_model(x["phase"], *par[b])}, x["phase"], x["flux"],
+                                    x["flux_err"], "sn", b, is_upper_limit=x["is_upper_limit"])
+        out[b] = (f["n_points"], f["mad"])
+    return out
+
+
+def _feat_rows(oid, part, st, par, lc):
+    out, chk = [], _stats(lc, par)
     for b, p in par.items():
         if p is None:
             continue
-        r = {"sn_name": f"{oid}_{st}_p{part:02d}", "filter_band": b, **dict(zip(C.SPM, p)), "n_points": 60,
-             "time_span": 118.0, "rms": 1e-9, "sn_type": st, "oid": oid, "part_index": part}
+        r = {"sn_name": f"{oid}_{st}_p{part:02d}", "filter_band": b, **dict(zip(C.SPM, p)), "n_points": chk[b][0],
+             "mad": chk[b][1], "time_span": 118.0, "rms": 1e-9, "sn_type": st, "oid": oid, "part_index": part}
         r.update({f"{q}_err": abs(r[q]) * 0.1 for q in C.PARS})
         out.append(r)
     return out
@@ -170,7 +194,7 @@ def _escribir(root, sims, reales):
     for s in sims:
         lc = s["lc"].assign(oid=s["field"], part_index=np.int32(s["part"]), sn_type=s["st"])
         filas.setdefault(s["field"], []).append(lc[C.LC_COLS])
-        feats += _feat_rows(s["field"], s["part"], s["st"], s["par"])
+        feats += _feat_rows(s["field"], s["part"], s["st"], s["par"], s["lc"])
         meta.append({"field": s["field"], "part_index": s["part"], "sn_type": s["st"], "template": s["template"],
                      "subtype": s["st"], "z": s["z"], "w_z": s["w"]})
     for fld, ls in filas.items():
@@ -181,7 +205,7 @@ def _escribir(root, sims, reales):
     for r in reales:
         filas.setdefault(r["st"], []).append(r["lc"].assign(oid=r["oid"], part_index=np.int32(0),
                                                             sn_type=r["st"])[C.LC_COLS])
-        feats += _feat_rows(r["oid"], 0, r["st"], r["par"])
+        feats += _feat_rows(r["oid"], 0, r["st"], r["par"], r["lc"])
         meta.append({"oid": r["oid"], "sn_type": r["st"], "subtipo": r["st"], "z": r["z"], "split": r["split"],
                      "origen": "holdout", "part_index": 0, "excluir": False})
     for st, ls in filas.items():
@@ -240,6 +264,11 @@ def test_mismo_camino_sims_y_reales(tmp_path, monkeypatch):
     assert a.index.equals(b.index) and len(a) == len(objs)
     assert np.allclose(a.to_numpy(float), b.to_numpy(float), rtol=1e-9, atol=1e-12, equal_nan=True)
     assert np.isfinite(a.res_r_15_40).all()
+    # control de calce: calza reproduce el n_points y el mad de extract_features en todas las bandas con ajuste
+    for X in (S, R):
+        assert (X.calce_r == 1).all() and set(X.calce_g.dropna()) == {1.0}
+        assert X.calce_g.isna().sum() == X.m_pk_g.isna().sum()
+        assert (X.n_res_r_15_40 >= 2).all()
     ia = a.xs("Ia", level="sn_type").res_r_15_40
     otras = a.drop("Ia", level="sn_type").res_r_15_40
     assert ia.min() > 0.1 > otras.abs().max()                      # el hombro de las Ia se ve en los residuos
@@ -274,11 +303,14 @@ def test_fisica_no_depende_de_la_etiqueta():
     rng = np.random.default_rng(0)
     par, h, z = _objeto(rng, "Ia")
     lc = _curva(par["r"], par["g"], z, h).assign(oid="o", part_index=0, sn_type="Ia")
+    chk = _stats(lc, par)
     T = pd.DataFrame([{"oid": "o", "part_index": 0, "sn_type": "Ia", "z": z,
-                       **{f"{p}_{b}": v for b in C.BANDS for p, v in zip(C.SPM, par[b])}}])
+                       **{f"{p}_{b}": v for b in C.BANDS for p, v in zip(C.SPM, par[b])},
+                       **{f"{q}_{b}": chk[b][i] for b in C.BANDS for i, q in enumerate(C.CHK)}}])
     a = C.fisica_filas(lc, T)
     b = C.fisica_filas(lc.assign(sn_type="Ibc"), T.assign(sn_type="Ibc"))
-    pd.testing.assert_frame_equal(a[C.FIS], b[C.FIS])
+    pd.testing.assert_frame_equal(a[C.FIS_TAB], b[C.FIS_TAB])
+    assert a.calce_r[0] == 1 and np.isfinite(a.res_r_15_40[0])
 
 
 def test_rg_sin_cambios_con_fisica(tmp_path):
@@ -293,7 +325,7 @@ def test_rg_sin_cambios_con_fisica(tmp_path):
     S0, R0, _ = C.prepare(fd, rd, fr, real)
     S1, R1, _ = C.prepare(fd, rd, fr, real, fisica=True)
     for a, b in ((S0, S1), (R0, R1)):
-        assert [c for c in b.columns if c not in C.FIS] == list(a.columns) and set(C.FIS) <= set(b.columns)
+        assert [c for c in b.columns if c not in C.FIS_TAB] == list(a.columns) and set(C.FIS_TAB) <= set(b.columns)
     pd.testing.assert_frame_equal(S1[list(S0.columns)], S0)
     pd.testing.assert_frame_equal(R1[list(R0.columns)], R0)
     cfg = {"model": "hgb", "fset": "rg", "use_z": True, "peso": "wz", "balance": True}
@@ -337,3 +369,62 @@ def test_cli_fisica_train_eval_sweep(tmp_path):
     assert set(tab[tab.es_base].fset) == {"rg"}
     assert json.loads((out / "fs" / "mejor.json").read_text())["base"] == C.BASELINE
     assert (fd / "features" / "fisica_rest.csv").exists() and (fr / "features" / "fisica_val_rest.csv").exists()
+
+
+def test_parametros_de_otra_curva_quedan_nan(tmp_path, capsys):
+    """Revision de rg_fisica: features.csv de una version vieja de las curvas (real_ztf reconstruido despues de
+    extraer, como features_real_ztf2 contra las curvas de las 13:21). La banda cuya curva actual no reproduce el
+    n_points y el mad de su ajuste se descarta: sin r todas las FIS NaN, sin g los colores NaN, y el AVISO las cuenta.
+    El resto, rg incluido, no cambia. Sin n_points o mad en features.csv no hay control: error."""
+    fd, rd, fr, real = _mundo(tmp_path, n_sim=4, n_real=4)
+    S0, R0, _ = C.prepare(fd, rd, fr, real, fisica=True)
+    a = R0.oid[R0.m_pk_g.notna()].iloc[0]
+    b = R0.oid[R0.m_pk_g.notna() & (R0.oid != a)].iloc[0]
+    st = dict(zip(R0.oid, R0.sn_type))
+    for o, banda, cambio in ((a, "r", "corta"), (b, "g", "corre")):          # curvas nuevas de dos reales val
+        f = real / f"{st[o]}.parquet"
+        df = pd.read_parquet(f)
+        k = df.index[(df.oid == o) & (df["filter"] == banda) & (df.upperlimit == "F")]
+        if cambio == "corta":
+            df = df.drop(k[-5:])                                               # 5 detecciones r menos
+        else:
+            df.loc[k[:10], "magnitud_proyectada"] += 0.05                       # 10 g con otra fotometria
+        df.to_parquet(f, index=False)
+    m = real / "meta_real_ztf.csv"
+    m.write_text(m.read_text())                                                # el rebuild reescribe meta
+    os.utime(m, (m.stat().st_atime, m.stat().st_mtime + 5))
+    capsys.readouterr()
+    S1, R1, _ = C.prepare(fd, rd, fr, real, fisica=True)
+    out = capsys.readouterr().out
+    assert "AVISO 2 bandas (r 1, g 1)" in out and "cache" in out
+    x, y = R1.set_index("oid"), R0.set_index("oid")
+    assert x.loc[a, "calce_r"] == 0 and x.loc[a, C.FIS].isna().all()
+    assert x.loc[b, "calce_r"] == 1 and x.loc[b, "calce_g"] == 0
+    assert x.loc[b, [c for c in C.FIS if "color" in c]].isna().all()
+    assert np.allclose(x.loc[b, list(C.VENTANAS)].to_numpy(float), y.loc[b, list(C.VENTANAS)].to_numpy(float))
+    otras = [o for o in x.index if o not in (a, b)]
+    pd.testing.assert_frame_equal(x.loc[otras, C.FIS_TAB], y.loc[otras, C.FIS_TAB])
+    pd.testing.assert_frame_equal(R1.drop(columns=C.FIS_TAB), R0.drop(columns=C.FIS_TAB))
+    pd.testing.assert_frame_equal(S1, S0)
+    f = pd.read_csv(fd / "features" / "features.csv").drop(columns="mad")
+    f.to_csv(fd / "features" / "features.csv", index=False)
+    with pytest.raises(ValueError, match="no se puede verificar"):
+        C.prepare(fd, rd, fr, real, fisica=True)
+
+
+def test_gap_fisica(tmp_path):
+    """gap --fisica agrega las FIS, las detecciones r por ventana y las banderas de NaN, y resume los faltantes en
+    gap.json. Sin --fisica el gap no cambia de columnas."""
+    fd, rd, fr, real = _mundo(tmp_path, n_sim=12, n_real=8)
+    out = tmp_path / "out"
+    common = ["--features-sims", str(fd), "--run-dir", str(rd), "--features-real", str(fr), "--real-dir", str(real),
+              "--out-root", str(out), "--folds", "3"]
+    g0 = C.main(["gap", "--name", "g0"] + common)
+    g1 = C.main(["gap", "--name", "g1", "--fisica"] + common)
+    c0 = set(pd.read_csv(out / "g0" / "gap_importancias.csv").feature)
+    c1 = set(pd.read_csv(out / "g1" / "gap_importancias.csv").feature)
+    assert c0 == set(C.GAP_COLS) and not g0["fisica"] and "faltan_fis" not in g0
+    assert c1 == set(C.GAP_COLS + C.FIS + C.FIS_N + [f"falta_{c}" for c in C.GAP_FALTA])
+    assert g1["fisica"] and set(g1["faltan_fis"]) == set(C.FIS)
+    assert all(0 <= v[k] <= 1 for v in g1["faltan_fis"].values() for k in ("sim", "real", "sim_con_r", "real_con_r"))
+    assert set(pd.read_csv(out / "g1" / "gap_medianas_por_clase.csv").feature) >= set(C.FIS)

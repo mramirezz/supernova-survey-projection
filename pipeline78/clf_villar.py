@@ -8,10 +8,10 @@ REGLAS
    y el color salia de otro tipo (bug H4: 13 063 filas pasaban a 26 082). Aca un duplicado de llave es un error.
 2. Reales. Solo origen == holdout & split == val & ~excluir. meta_real_ztf.csv (pipeline78.splits.read_val_meta) y
    el features.csv real se leen con csv linea a linea y solo las filas val llegan a pandas: la mitad final no se
-   carga nunca (test que lo vigila). Por defecto las features reales son las re-extraidas tras el logfix
-   (RUNS/features_real_ztf2, --features-real). Seleccion anidada (revision B, mismo protocolo que nnclf): la mitad
-   val se parte con pipeline78.splits.val_split en val_sel (elegir y ajustar todo lo que mira reales: S(m), wz_dr,
-   prior EM) y val_rep (solo reportar). Columna subset de las reales.
+   carga nunca (test que lo vigila). Por defecto las features reales son las re-extraidas sobre real_ztf
+   reconstruido (RUNS/features_real_ztf3, 2026-10-04 13:25, --features-real). Seleccion anidada (revision B, mismo
+   protocolo que nnclf): la mitad val se parte con pipeline78.splits.val_split en val_sel (elegir y ajustar todo lo
+   que mira reales: S(m), wz_dr, prior EM) y val_rep (solo reportar). Columna subset de las reales.
 3. Clases. Ia, II (= II + IIb), Ibc. IIn fuera de la metrica principal (--cuatro-clases la agrega).
 4. Features por banda b (r, g): m_pk_b = -2.5 log10(A_b) (pico aparente desde A), M_pk_b = m_pk_b - mu(z) (solo
    con z, LCDM plano H0 = 70, Om = 0.3 como core.utils.DL_calculator), f_b, t_rise_b, t_fall_b, gamma_b en reposo
@@ -88,7 +88,9 @@ from pipeline78.nnclf.experimentos import BOOT_SEED, N_BOOT as N_BOOT_PAREADO, P
 from pipeline78.paths import RUNS, ZLF
 
 REAL_DIR = RUNS / "real_ztf"
-REAL_FEAT = RUNS / "features_real_ztf2" / "features" / "features.csv"   # re-extraidas tras el logfix (bfcedc2)
+# re-extraidas sobre real_ztf reconstruido a las 13:21 (c477078). features_real_ztf2 (logfix, bfcedc2) es anterior:
+# 6 de 530 bandas val ya no reproducen su n_points y mad con las curvas actuales (revision de rg_fisica)
+REAL_FEAT = RUNS / "features_real_ztf3" / "features" / "features.csv"
 OUT_ROOT = RUNS / "clf_villar"
 SUBSETS = ("val_rep", "val_sel", "val")                 # val = val completo (referencia)
 SUFFIX = {"val_rep": "rep", "val_sel": "sel", "val": "val"}
@@ -310,6 +312,7 @@ def cols_solo_r(cols):
 
 GAP_COLS = (_forma("r") + _forma("g") + COLOR + ["M_pk_r", "M_pk_g", "m_pk_r", "m_pk_g"] + REL
             + [f"{q}_{b}" for b in BANDS for q in QUAL])
+GAP_FALTA = ["res_r_15_40", "res_r_40_70", "color_gr_0"]   # gap --fisica: banderas de NaN (los colores faltan juntos)
 
 
 # ------------------------------------------------------------------------------------------------ fisica
@@ -328,11 +331,25 @@ GAP_COLS = (_forma("r") + _forma("g") + COLOR + ["M_pk_r", "M_pk_g", "m_pk_r", "
 # require_upper_limits=False: la eleccion de UL no cambia ni el origen ni las detecciones (una curva con features ya
 # paso ese filtro). Pico del SPM = argmax del modelo en una grilla de 0.05 d. Reposo con (1 + z) como derive; sin z
 # (o con --obs-frame), marco observado. Cache csv por corrida al lado de features.csv (fisica_<marco>.csv las sims,
-# fisica_val_<marco>.csv las reales val), solo se agrega: una fila sirve si su llave, z y parametros coinciden.
+# fisica_val_<marco>.csv las reales val), solo se agrega: una fila sirve si su llave, z, parametros y control coinciden.
+# Control de calce (revision 2026-10-04): los parametros tienen que venir de ESTA curva. Cada banda con ajuste se
+# verifica contra el n_points y el mad de features.csv: feature_extractor.calculate_fit_statistics sobre las
+# detecciones de la curva preparada con el modelo de esos parametros (lo que hace extract_features con model_flux de
+# fit_mcmc). n_points exacto y mad con rtol 1e-6 (sims t11_x2 y reales val ztf3: 1e-14). Banda que no calza (features
+# de otra version de las curvas, como features_real_ztf2 contra real_ztf de las 13:21) = banda descartada: sin r todo
+# NaN, sin g colores NaN. Se cuentan en un AVISO. Diagnostico (FIS_DIAG, no entra a ningun fset):
+#   n_res_r_15_40, n_res_r_40_70  detecciones r en cada ventana (NaN sin r): el gap mira por que faltan los residuos.
+#   calce_r, calce_g              1 calza, 0 no calza, NaN banda sin ajuste.
 SPM = ["A", "f", "t0", "t_rise", "t_fall", "gamma"]             # orden de alerce_model
 SPM_W = [f"{p}_{b}" for b in BANDS for p in SPM]
+CHK = ["n_points", "mad"]                                       # estadisticas del ajuste que la curva reproduce
+CHK_W = [f"{q}_{b}" for b in BANDS for q in CHK]
+FIS_N = [f"n_{c}" for c in VENTANAS]
+CALCE = [f"calce_{b}" for b in BANDS]
+FIS_DIAG = FIS_N + CALCE
+FIS_TAB = FIS + FIS_DIAG                                        # columnas de la tabla fisica (cache y con_fisica)
 LC_COLS = ["oid", "part_index", "sn_type", "mjd", "filter", "magnitud_proyectada", "magerr", "upperlimit"]
-CACHE_COLS = KEYS + ["z"] + SPM_W + FIS
+CACHE_COLS = KEYS + ["z"] + SPM_W + CHK_W + FIS_TAB
 
 
 def _zlf(nombre):
@@ -374,20 +391,39 @@ def pico_spm(p):
     return float(t[np.argmax(_zlf("model").alerce_model(t, *p))])
 
 
-def fisica_curva(bandas, par, z, rest_frame=True):
-    """FIS de UNA curva. bandas: salida de bandas_lc; par: {banda: [A, f, t0, t_rise, t_fall, gamma]} (NaN = banda
-    sin ajuste); z (NaN = marco observado)."""
+def calza(d, p, n_points, mad):
+    """La curva preparada d (prepare_lightcurve) reproduce el n_points y el mad que el extractor guardo con los
+    parametros p: calculate_fit_statistics sobre las detecciones, como extract_features."""
+    det = ~np.asarray(d["is_upper_limit"], bool)
+    ph = np.asarray(d["phase"], float)[det]
+    with contextlib.redirect_stdout(io.StringIO()):                    # avisa puntos invalidos por stdout
+        st = _zlf("feature_extractor").calculate_fit_statistics(
+            ph, np.asarray(d["flux"], float)[det], np.asarray(d["flux_err"], float)[det],
+            _zlf("model").alerce_model(ph, *p))
+    return bool(st["n_points"] == n_points and np.isclose(st["mad"], mad, rtol=1e-6, atol=0))
+
+
+def fisica_curva(bandas, par, z, rest_frame=True, chk=None):
+    """FIS + FIS_DIAG de UNA curva. bandas: salida de bandas_lc; par: {banda: [A, f, t0, t_rise, t_fall, gamma]}
+    (NaN = banda sin ajuste); z (NaN = marco observado). chk: {banda: (n_points, mad)} de features.csv; la banda que no
+    calza se descarta (calce 0). chk None: sin control y calce NaN (solo los tests de la fisica de una curva)."""
     M, cfg = _zlf("model"), _zlf("config").DATA_FILTER_CONFIG
-    out, lc = dict.fromkeys(FIS, np.nan), {}
+    out, lc = dict.fromkeys(FIS_TAB, np.nan), {}
     for b, p in par.items():
-        if b in bandas and np.all(np.isfinite(p)):
+        if not np.all(np.isfinite(p)):
+            continue
+        d = None
+        if b in bandas:
             with contextlib.redirect_stdout(io.StringIO()):            # prepare_lightcurve imprime avisos de UL
                 d = _zlf("reader").prepare_lightcurve(
                     bandas[b], b, max_days_after_peak=cfg["max_days_after_peak"],
                     max_days_before_peak=cfg["max_days_before_peak"],
                     max_days_before_first_obs=cfg["max_days_before_first_obs"], require_upper_limits=False)
-            if d is not None:
-                lc[b] = d
+        ok = d is not None and (chk is None or calza(d, p, *chk[b]))
+        if chk is not None:
+            out[f"calce_{b}"] = float(ok)
+        if ok:
+            lc[b] = d
     if "r" not in lc:
         return out
     fac = 1.0 + z if rest_frame and np.isfinite(z) and z >= 0 else 1.0
@@ -398,6 +434,7 @@ def fisica_curva(bandas, par, z, rest_frame=True):
     fase = (ph - pk) / fac
     for c, (lo, hi) in VENTANAS.items():
         k = (fase >= lo) & (fase < hi)
+        out[f"n_{c}"] = float(k.sum())
         if k.sum() >= 2:
             out[c] = float(np.median(res[k]))
     if "g" in lc:
@@ -410,36 +447,42 @@ def fisica_curva(bandas, par, z, rest_frame=True):
 
 
 def fisica_filas(rows, T, rest_frame=True):
-    """FIS por llave: el camino comun de sims y reales. rows: filas LC_COLS de las curvas; T: KEYS + z + SPM_W, una
-    fila por llave. La llave solo encuentra la curva (sn_type no entra al calculo). Llave sin curva = error."""
+    """FIS + FIS_DIAG por llave: el camino comun de sims y reales. rows: filas LC_COLS de las curvas; T: KEYS + z +
+    SPM_W + CHK_W, una fila por llave. La llave solo encuentra la curva (sn_type no entra al calculo). Llave sin curva
+    = error."""
     rows = rows.assign(oid=rows.oid.astype(str), part_index=rows.part_index.astype(int))
     grupos = dict(tuple(rows.groupby(KEYS, sort=False))) if len(rows) else {}
     out = []
     with np.errstate(all="ignore"):
-        for t in T[KEYS + ["z"] + SPM_W].itertuples(index=False):
+        for t in T[KEYS + ["z"] + SPM_W + CHK_W].itertuples(index=False):
             k = (str(t.oid), int(t.part_index), t.sn_type)
             if k not in grupos:
                 raise ValueError(f"llave con features y sin curva: {k}")
             par = {b: np.array([getattr(t, f"{p}_{b}") for p in SPM], float) for b in BANDS}
+            chk = {b: tuple(float(getattr(t, f"{q}_{b}")) for q in CHK) for b in BANDS}
             out.append({"oid": k[0], "part_index": k[1], "sn_type": k[2],
-                        **fisica_curva(bandas_lc(grupos[k]), par, float(t.z), rest_frame)})
-    return pd.DataFrame(out, columns=KEYS + FIS)
+                        **fisica_curva(bandas_lc(grupos[k]), par, float(t.z), rest_frame, chk)})
+    return pd.DataFrame(out, columns=KEYS + FIS_TAB)
 
 
 def _tabla_spm(raw, X):
-    """Parametros SPM anchos (SPM_W) de las llaves de X, con su z. raw: filas de features.csv por banda."""
-    W = widen(raw.assign(part_index=raw.part_index.astype(int)), SPM)
-    W = W.reindex(columns=KEYS + SPM_W)
+    """Parametros SPM y control anchos (SPM_W + CHK_W) de las llaves de X, con su z. raw: filas de features.csv por
+    banda. Sin las columnas n_points o mad no hay control: error."""
+    if not set(CHK) <= set(raw.columns):
+        raise ValueError(f"features.csv sin {CHK}: no se puede verificar que los parametros sean de estas curvas")
+    W = widen(raw.assign(part_index=raw.part_index.astype(int)), SPM + CHK)
+    W = W.reindex(columns=KEYS + SPM_W + CHK_W)
     k = X[KEYS + ["z"]].assign(oid=X.oid.astype(str), part_index=X.part_index.astype(int),
                                z=pd.to_numeric(X.z, errors="coerce"))
     return k.merge(W, on=KEYS, how="left", validate="one_to_one")
 
 
 def _con_cache(T, cache, fuente, calcular):
-    """FIS de las llaves de T (KEYS + z + SPM_W) con cache csv que solo se agrega. Sirve la ultima fila de cada llave
-    si su z y sus parametros coinciden con T (rtol 1e-10: ida y vuelta por csv); el resto se calcula con calcular(T')
-    y se agrega. Un cache de otras columnas o anterior a la fuente de las curvas se descarta entero. Se lee con
-    read_rows_for_oids: solo las oids de T llegan a pandas."""
+    """FIS_TAB de las llaves de T (KEYS + z + SPM_W + CHK_W) con cache csv que solo se agrega. Sirve la ultima fila de
+    cada llave si su z, sus parametros y su control coinciden con T (rtol 1e-10: ida y vuelta por csv); el resto se
+    calcula con calcular(T') y se agrega. Un cache de otras columnas (los de antes del control de calce) o anterior a
+    la fuente de las curvas se descarta entero. Se lee con read_rows_for_oids: solo las oids de T llegan a pandas.
+    Avisa cuantas bandas no calzan (servidas del cache o calculadas)."""
     cache, T = Path(cache), T.reset_index(drop=True)
     if cache.exists():
         with open(cache, newline="") as fh:
@@ -453,19 +496,26 @@ def _con_cache(T, cache, fuente, calcular):
         Cc = read_rows_for_oids(cache, set(T.oid.astype(str)))
         if len(Cc):
             Cc = Cc.assign(part_index=Cc.part_index.astype(int)).drop_duplicates(KEYS, keep="last")
-            ren = {c: f"{c}__c" for c in ["z"] + SPM_W}
+            ren = {c: f"{c}__c" for c in ["z"] + SPM_W + CHK_W}
             m = T.merge(Cc[CACHE_COLS].rename(columns=ren), on=KEYS, how="left", indicator=True, validate="one_to_one")
             hit = (m._merge == "both").to_numpy()
             for c, cc in ren.items():
                 hit &= np.isclose(m[c].to_numpy(float), m[cc].to_numpy(float), rtol=1e-10, atol=0, equal_nan=True)
-    N = calcular(T[~hit]) if (~hit).any() else pd.DataFrame(columns=KEYS + FIS)
+    N = calcular(T[~hit]) if (~hit).any() else pd.DataFrame(columns=KEYS + FIS_TAB)
     if len(N):
         nuevo = T[~hit].merge(N, on=KEYS, how="left", validate="one_to_one")[CACHE_COLS]
         cache.parent.mkdir(parents=True, exist_ok=True)
         nuevo.to_csv(cache, mode="a", header=not cache.exists(), index=False)
     print(f"[clf_villar] fisica: {int(hit.sum())} llaves del cache, {len(N)} calculadas ({cache.name})", flush=True)
-    partes = ([m.loc[hit, KEYS + FIS]] if hit.any() else []) + ([N[KEYS + FIS]] if len(N) else [])
-    return pd.concat(partes, ignore_index=True) if partes else pd.DataFrame(columns=KEYS + FIS)
+    partes = ([m.loc[hit, KEYS + FIS_TAB]] if hit.any() else []) + ([N[KEYS + FIS_TAB]] if len(N) else [])
+    out = pd.concat(partes, ignore_index=True) if partes else pd.DataFrame(columns=KEYS + FIS_TAB)
+    malas = {b: int((pd.to_numeric(out[f"calce_{b}"]) == 0).sum()) for b in BANDS}
+    if sum(malas.values()):
+        txt = ", ".join(f"{b} {n}" for b, n in malas.items())
+        print(f"[clf_villar] fisica: AVISO {sum(malas.values())} bandas ({txt}) no reproducen el n_points y el mad de"
+              f" su ajuste con la curva actual ({cache.name}): parametros de otra version de las curvas, sus FIS"
+              f" quedan NaN", flush=True)
+    return out
 
 
 def _fisica_campo(files, T, rest_frame):
@@ -478,9 +528,9 @@ def _fisica_campo(files, T, rest_frame):
 def fisica_sims(S, features_sims, run_dir=None, rest_frame=True, cache=None, n_jobs=None):
     """FIS de las sims de S (KEYS + z). Curvas de RUNS/<proy>/<field>__*.parquet, en paralelo por campo (N_JOBS)."""
     if not len(S):
-        return pd.DataFrame(columns=KEYS + FIS)
+        return pd.DataFrame(columns=KEYS + FIS_TAB)
     feat, run_dir = features_csv(features_sims), Path(run_dir or run_dir_for(features_sims))
-    T = _tabla_spm(pd.read_csv(feat, usecols=lambda c: c in KEYS + ["filter_band"] + SPM), S)
+    T = _tabla_spm(pd.read_csv(feat, usecols=lambda c: c in KEYS + ["filter_band"] + SPM + CHK), S)
     cache = cache or feat.parent / f"fisica_{'rest' if rest_frame else 'obs'}.csv"
 
     def calcular(Tn):
@@ -511,21 +561,21 @@ def fisica_reales(R, v, features_real=REAL_FEAT, real_dir=REAL_DIR, rest_frame=T
     if not oids <= set(v.oid.astype(str)):
         raise AssertionError("se colo una oid fuera de la mitad val")
     if not oids:
-        return pd.DataFrame(columns=KEYS + FIS)
+        return pd.DataFrame(columns=KEYS + FIS_TAB)
     feat = features_csv(features_real)
     raw = read_rows_for_oids(feat, oids)
-    T = _tabla_spm(raw[[c for c in raw.columns if c in KEYS + ["filter_band"] + SPM]], R)
+    T = _tabla_spm(raw[[c for c in raw.columns if c in KEYS + ["filter_band"] + SPM + CHK]], R)
     cache = cache or feat.parent / f"fisica_val_{'rest' if rest_frame else 'obs'}.csv"
     return _con_cache(T, cache, Path(real_dir) / "meta_real_ztf.csv",
                       lambda Tn: fisica_filas(filas_reales(real_dir, set(Tn.oid)), Tn, rest_frame))
 
 
 def con_fisica(F, X):
-    """F (tabla derivada) con las columnas FIS de X (KEYS + FIS) por llave."""
-    F = F.assign(oid=F.oid.astype(str), part_index=F.part_index.astype(int)).drop(columns=FIS, errors="ignore")
+    """F (tabla derivada) con las columnas FIS_TAB de X (KEYS + FIS_TAB) por llave."""
+    F = F.assign(oid=F.oid.astype(str), part_index=F.part_index.astype(int)).drop(columns=FIS_TAB, errors="ignore")
     X = X.assign(oid=X.oid.astype(str), part_index=X.part_index.astype(int))
-    out = F.merge(X[KEYS + FIS], on=KEYS, how="left", validate="one_to_one")
-    for c in FIS:
+    out = F.merge(X[KEYS + FIS_TAB], on=KEYS, how="left", validate="one_to_one")
+    for c in FIS_TAB:
         out[c] = out[c].astype(float)
     return out
 
@@ -1303,11 +1353,18 @@ def cmd_sweep(a):
 
 def cmd_gap(a):
     """Clasificador sim contra real sin etiquetas (regla 5 del brief): AUC fuera de fold, importancia por
-    permutacion (caida de AUC en el fold de prueba) y AUC univariado de cada feature."""
+    permutacion (caida de AUC en el fold de prueba) y AUC univariado de cada feature. --fisica (revision de
+    rg_fisica): ademas las FIS, las detecciones r por ventana (FIS_N) y banderas falta_<c> (1 = NaN) de GAP_FALTA. Si
+    las FIS faltan distinto en sims y reales, HGB aprende de las sims hacia donde mandar los NaN (el modo de falla de g
+    faltante, regla 4): mirarlo antes de confiar en el barrido fisica. faltan_fis en gap.json: fraccion NaN (sims con
+    w) en todos y entre los que tienen r."""
     cls = classes(a.cuatro_clases)
     S, R, v = prepare(a.features_sims, a.run_dir, a.features_real, a.real_dir, a.cuatro_clases, not a.obs_frame,
-                      a.requiere)
+                      a.requiere, fisica=a.fisica)
     cols = [c for c in GAP_COLS if (a.no_z is False or not c.startswith("M_pk"))]
+    if a.fisica:
+        S, R = (X.assign(**{f"falta_{c}": X[c].isna().astype(float) for c in GAP_FALTA}) for X in (S, R))
+        cols += FIS + FIS_N + [f"falta_{c}" for c in GAP_FALTA]
     w = S.w_z.to_numpy(float)
     if a.peso == "wz_S":                                             # S(m) solo de val_sel, como en el barrido
         w = w * selection_weight(S.m_sel, w, R.m_sel[sel_mask(R)])[0]
@@ -1349,7 +1406,7 @@ def cmd_gap(a):
     # diagnostico extra con etiquetas de la mitad val (declarado): medianas por clase de las features principales
     por_clase = []
     for c in cls:
-        for f in _forma("r") + ["M_pk_r", "color_gr", "n_points_r"]:
+        for f in _forma("r") + ["M_pk_r", "color_gr", "n_points_r"] + (FIS if a.fisica else []):
             xs, xr = S.loc[S.cls == c, f].to_numpy(float), R.loc[R.cls == c, f].to_numpy(float)
             ws = w[(S.cls == c).to_numpy()]
             por_clase.append({"clase": c, "feature": f, "mediana_sim": _wmedian(xs[np.isfinite(xs)],
@@ -1362,8 +1419,14 @@ def cmd_gap(a):
     # ponytail: usa val completo (sel + rep). Es diagnostico de la simulacion: no elige configuraciones ni ajusta nada.
     # Restringirlo a val_sel rompe la invariancia a etiquetas (val_split estratifica por clase).
     res = {"auc_sim_vs_real": auc, "n_sims": int(len(S)), "n_real": int(len(R)), "peso": a.peso,
-           "reales": "val completo (val_sel + val_rep), solo diagnostico",
+           "reales": "val completo (val_sel + val_rep), solo diagnostico", "fisica": a.fisica,
            "top": imp.head(10).to_dict("records")}
+    if a.fisica:
+        rs, rr = S.tiene_r.to_numpy(bool), R.tiene_r.to_numpy(bool)
+        res["faltan_fis"] = {c: {"sim": float(np.average(S[c].isna(), weights=w)),
+                                 "real": float(R[c].isna().mean()),
+                                 "sim_con_r": float(np.average(S[c].isna()[rs], weights=w[rs])) if rs.any() else None,
+                                 "real_con_r": float(R[c].isna()[rr].mean()) if rr.any() else None} for c in FIS}
     (out / "gap.json").write_text(json.dumps(_jsonable(res), indent=1))
     print(f"[clf_villar] gap {a.name}: AUC sim contra real {auc:.3f} (0.5 = indistinguibles)", flush=True)
     print(imp.head(12).round(3).to_string(index=False), flush=True)
@@ -1406,6 +1469,8 @@ def parser():
     ap.add_argument("--models", default=None, help="sweep: lista separada por comas (pisa la grilla)")
     ap.add_argument("--fsets", default=None, help="sweep: lista separada por comas (pisa la grilla)")
     ap.add_argument("--jobs", type=int, default=1)
+    ap.add_argument("--fisica", action="store_true",
+                    help="gap: agrega las FIS, las detecciones r por ventana y banderas de NaN (revision de rg_fisica)")
     return ap
 
 
