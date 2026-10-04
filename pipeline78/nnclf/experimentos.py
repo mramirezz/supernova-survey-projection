@@ -20,8 +20,13 @@ FASES
    gru_base, tf_base, gru_lambda, tf_lambda (banda por lambda pivote), gru_bidir (control de gru_attnpool),
    gru_attnpool (BiGRU + attention pooling, ORACLE-2), tf_timemod (TimeModulator de ATAT), gru_trunc y tf_trunc
    (truncamiento ORACLE-2, modo "both", p_trunc = 1), gru_trunc05 y tf_trunc05 (lo mismo con p_trunc = 0.5, revision
-   H4), snn_noz, snn_z y snn_var_noz (SuperNNova estandar y variational), villar_noz y villar_z (si estan las
-   features de las sims).
+   H4), gru_jer y tf_jer (cabeza jerarquica, Ia contra CC y despues la subclase, models.HierHead), snn_noz, snn_z y
+   snn_var_noz (SuperNNova estandar y variational), villar_noz y villar_z (si estan las features de las sims).
+   Bloque de 4 clases FASE1_4C (Ia, II, Ibc, IIn; --four-classes), al final de la fase 1: gru_base_4c,
+   gru_attnpool_4c y gru_jer_4c. IIn es una de las 4 clases de las tasas de SUDARE (Cappellaro et al. 2015,
+   2015A&A...584A..62C: Ia 67, II 22, Ib/c 17, IIn 11), y la metrica principal es de 3 clases. El bloque no entra
+   en las fases 2 y 3 (no compite con las de 3 clases). Solo ese bloque:
+       python -m pipeline78.nnclf.experimentos run --fase 1 --only gru_base_4c gru_attnpool_4c gru_jer_4c
 2. Mejor configuracion sin z:
    a. Cada ablacion se compara con <arq>_base (la incumbente). Pasa si gana con la regla. Las ablaciones de un mismo
       slot son excluyentes (trunc y trunc05 tocan los mismos flags): si pasan las dos, queda la de mayor exactitud
@@ -69,21 +74,31 @@ FASE1 = [
     ("tf_trunc", "nn", ["--model", "transformer", "--trunc", "both"]),
     ("gru_trunc05", "nn", ["--model", "gru", "--trunc", "both", "--p-trunc", "0.5"]),
     ("tf_trunc05", "nn", ["--model", "transformer", "--trunc", "both", "--p-trunc", "0.5"]),
+    ("gru_jer", "nn", ["--model", "gru", "--jerarquica"]),
+    ("tf_jer", "nn", ["--model", "transformer", "--jerarquica"]),
     ("snn_noz", "snn", []),
     ("snn_z", "snn", ["--use-z"]),
     ("snn_var_noz", "snn", ["--snn-model", "variational"]),
     ("villar_noz", "villar", []),
     ("villar_z", "villar", ["--use-z"]),
 ]
+# 4 clases (con IIn): la base, la ablacion de ORACLE-2 y la jerarquica. Va al final de la fase 1 (--only para correrlo)
+FASE1_4C = [
+    ("gru_base_4c", "nn", ["--model", "gru", "--four-classes"]),
+    ("gru_attnpool_4c", "nn", ["--model", "gru", "--bidir", "--gru-pool", "attn", "--four-classes"]),
+    ("gru_jer_4c", "nn", ["--model", "gru", "--jerarquica", "--four-classes"]),
+]
 # ablaciones de la fase 2: arquitectura -> slot -> {corrida: flags}. Las variantes de un slot son excluyentes.
 # gru_bidir es solo el control de gru_attnpool y no compite.
 TRUNC1, TRUNC05 = ["--trunc", "both"], ["--trunc", "both", "--p-trunc", "0.5"]
 ABLACIONES = {"gru": {"lambda": {"gru_lambda": ["--band-enc", "lambda"]},
                       "attnpool": {"gru_attnpool": ["--bidir", "--gru-pool", "attn"]},
-                      "trunc": {"gru_trunc": TRUNC1, "gru_trunc05": TRUNC05}},
+                      "trunc": {"gru_trunc": TRUNC1, "gru_trunc05": TRUNC05},
+                      "jer": {"gru_jer": ["--jerarquica"]}},
               "tf": {"lambda": {"tf_lambda": ["--band-enc", "lambda"]},
                      "timemod": {"tf_timemod": ["--time-enc", "atat"]},
-                     "trunc": {"tf_trunc": TRUNC1, "tf_trunc05": TRUNC05}}}
+                     "trunc": {"tf_trunc": TRUNC1, "tf_trunc05": TRUNC05},
+                     "jer": {"tf_jer": ["--jerarquica"]}}}
 ARCH = {"gru": "gru", "tf": "transformer"}
 N_BOOT = 2000
 P_MIN = 0.9
@@ -174,7 +189,8 @@ def flags_from_config(cfg, use_z=None):
     use_z = cfg["use_z"] if use_z is None else use_z
     return (["--model", cfg["model"], "--band-enc", cfg["band_enc"], "--time-enc", cfg["time_enc"],
              "--gru-pool", cfg["gru_pool"], "--trunc", cfg["trunc"], "--p-trunc", str(cfg.get("p_trunc", 1.0))]
-            + (["--bidir"] if cfg["bidir"] else []) + (["--use-z"] if use_z else []))
+            + (["--bidir"] if cfg["bidir"] else []) + (["--jerarquica"] if cfg.get("jerarquica") else [])
+            + (["--four-classes"] if cfg.get("four_classes") else []) + (["--use-z"] if use_z else []))
 
 
 def n_params(out_root, prefix, name):
@@ -400,7 +416,7 @@ def main(argv=None):
         return jobs if a.only is None else [j for j in jobs if j[0] in a.only]
 
     if a.fase == 1:
-        run_jobs(only(FASE1), a, prefix)
+        run_jobs(only(FASE1 + FASE1_4C), a, prefix)
         return
     sel = sel_oids(a.real_dir)
     write = a.accion == "run"

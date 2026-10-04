@@ -465,7 +465,8 @@ def run_eval(out_dir, n_draws=5, device=None, threads=None):
                          subsets)
     extra = {"method": "nn", "model": cfg.model, "use_z": cfg.use_z, "band_enc": cfg.band_enc,
              "time_enc": cfg.time_enc, "gru_pool": cfg.gru_pool, "bidir": cfg.bidir, "trunc": cfg.trunc,
-             "p_trunc": cfg.p_trunc, "best_epoch": ck.get("best_epoch"), "real_sin_3_det_gr": skipped,
+             "p_trunc": cfg.p_trunc, "jerarquica": cfg.jerarquica, "best_epoch": ck.get("best_epoch"),
+             "real_sin_3_det_gr": skipped,
              "villar_oids_feat": _real_feat_path(), "domain": domain_check(sims, real)}
     res = write_outputs(out, tab, res, agg, classes, extra, subsets)
     print_summary(out.name, res, agg)

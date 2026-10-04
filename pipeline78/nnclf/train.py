@@ -11,6 +11,16 @@ al entrenamiento ni a la eleccion de la epoca.
 
 VARIANTES DE LA LITERATURA (nn-lit-brief, todas por flag y apagadas por defecto): band_enc "lambda" (data, regla 11),
 time_enc "atat" (models, TimeModulator de ATAT), gru_pool "attn" y bidir (models, ORACLE-2), trunc (data, regla 12).
+
+JERARQUICA (--jerarquica, apagada por defecto): cabeza models.HierHead, p(Ia) contra p(CC) y p(k | CC). Perdida
+hier_loss = entropia cruzada Ia contra CC (media ponderada sobre todos los objetos) + entropia cruzada de la subclase
+(media ponderada SOLO sobre los CC, los Ia no entran). Los pesos son los mismos de la plana (cada clase suma lo
+mismo): el nivel 1 ve Ia:CC = 1:(K - 1) y el nivel 2 clases balanceadas, asi que el prior efectivo de P combinada
+sigue uniforme sobre las K clases (lo que supone calib.prior_adjustment), como en el jerarquico de clf_villar. Con
+las dos medias sobre todos los objetos la suma seria la NLL plana de P. La media del segundo termino sobre los CC lo
+pesa sum w / sum w_CC veces mas (K / (K - 1) con los pesos balanceados). La epoca se elige con la NLL ponderada de P
+combinada (weighted_loss sobre log P), la misma cifra que en la plana. Sin el flag la ruta plana no cambia (mismos
+modulos, mismo orden de construccion, misma perdida).
 """
 import json
 import time
@@ -57,6 +67,7 @@ class Config:
     bidir: bool = False                 # GRU bidireccional (ORACLE-2)
     trunc: str = "none"                 # none | pow2 | frac | both (ORACLE-2)
     p_trunc: float = 1.0                # prob. de truncar cada curva en cada epoca (ORACLE-2 trunca todas)
+    jerarquica: bool = False            # cabezas Ia contra CC y k | CC (models.HierHead, hier_loss)
 
     @property
     def out(self):
@@ -71,7 +82,7 @@ def pick_device(name):
 
 def model_opts(cfg):
     return {"time_enc": cfg.time_enc, "tm_harmonics": cfg.tm_harmonics, "tm_tmax": cfg.tm_tmax,
-            "gru_pool": cfg.gru_pool, "bidir": cfg.bidir}
+            "gru_pool": cfg.gru_pool, "bidir": cfg.bidir, "jerarquica": cfg.jerarquica}
 
 
 def collate(items):
@@ -120,6 +131,25 @@ def weighted_loss(logits, y, w):
     return (ce * w).sum() / w.sum()
 
 
+def hier_terms(logp, y, w):
+    """(Ia contra CC, k | CC) a partir de log P combinada [B, K] (clase 0 = Ia). Cada termino es una media ponderada:
+    el primero sobre todos los objetos, el segundo solo sobre los CC (0 si el lote no trae CC)."""
+    lcc = torch.logsumexp(logp[:, 1:], -1)                                   # log p(CC)
+    cc = y > 0
+    top = -torch.where(cc, lcc, logp[:, 0])
+    sub = -(logp[cc].gather(1, y[cc].unsqueeze(1)).squeeze(1) - lcc[cc])    # -log p(k | CC)
+    return (top * w).sum() / w.sum(), (sub * w[cc]).sum() / w[cc].sum().clamp(min=1e-12)
+
+
+def hier_loss(logp, y, w):
+    top, sub = hier_terms(logp, y, w)
+    return top + sub
+
+
+def loss_fn(cfg):
+    return hier_loss if cfg.jerarquica else weighted_loss
+
+
 def load_model(out_dir, device="cpu"):
     ck = torch.load(Path(out_dir) / "model.pt", map_location="cpu", weights_only=True)
     cfg = Config(**ck["config"])
@@ -145,6 +175,7 @@ def train(cfg):
     rng = np.random.default_rng(cfg.seed)
     device = pick_device(cfg.device)
     cls = D.classes(cfg.four_classes)
+    assert not cfg.jerarquica or cls[0] == "Ia", "la cabeza jerarquica supone la clase 0 = Ia"
     out = cfg.out
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
@@ -167,6 +198,7 @@ def train(cfg):
 
     model = build_model(cfg.model, D.n_feat(cfg.band_enc), D.n_glob(cfg.use_z), len(cls), **model_opts(cfg)).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    crit = loss_fn(cfg)
     best_loss, best_ep, best_state, bad, hist = np.inf, 0, None, 0, []
     for ep in range(1, cfg.max_epochs + 1):
         te = time.time()
@@ -177,7 +209,7 @@ def train(cfg):
             b = perm[i:i + cfg.batch_size]
             x, t, m, g, bb = (a.to(device) for a in collate(encode([tr[j] for j in b], cfg, rng)))
             w = torch.tensor(sw_tr[b], dtype=torch.float32, device=device)
-            loss = weighted_loss(model(x, t, m, g, bb), y_tr[torch.from_numpy(b)].to(device), w)
+            loss = crit(model(x, t, m, g, bb), y_tr[torch.from_numpy(b)].to(device), w)
             opt.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)

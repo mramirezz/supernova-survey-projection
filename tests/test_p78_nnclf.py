@@ -220,7 +220,9 @@ def test_forward_modelos():
     torch.manual_seed(0)
     variantes = [("gru", {}), ("gru", {"gru_pool": "attn"}), ("gru", {"bidir": True}),
                  ("gru", {"bidir": True, "gru_pool": "attn"}), ("gru", {"time_enc": "atat"}),
-                 ("transformer", {}), ("transformer", {"time_enc": "atat"})]
+                 ("transformer", {}), ("transformer", {"time_enc": "atat"}), ("gru", {"jerarquica": True}),
+                 ("gru", {"bidir": True, "gru_pool": "attn", "jerarquica": True}),
+                 ("transformer", {"jerarquica": True})]
     for band_enc in ("onehot", "lambda"):
         items = [D.tokenize(_curve(n_det_g=a, n_det_r=b), use_z=True, band_enc=band_enc)
                  for a, b in ((3, 0), (10, 12), (2, 4))]
@@ -236,6 +238,153 @@ def test_forward_modelos():
                 with torch.no_grad():   # el padding no cambia la prediccion de una curva
                     solo = m(x[:1, :n0], t[:1, :n0], mask[:1, :n0], g[:1], bb[:1, :n0])
                     assert torch.allclose(solo, m(x, t, mask, g, bb)[:1], atol=1e-4), (kind, opts, band_enc)
+
+
+def _lote(use_z=True):
+    items = [D.tokenize(_curve(n_det_g=a, n_det_r=b), use_z=use_z) for a, b in ((3, 0), (10, 12), (2, 4), (6, 6))]
+    return collate(items)
+
+
+def test_cabeza_jerarquica_suma_1():
+    from pipeline78.nnclf.models import HierHead
+    from pipeline78.nnclf.train import Config
+    from pipeline78.nnclf.evaluate import nn_prob_fn
+    torch.manual_seed(2)
+    for n_cls in (3, 4):
+        hh = HierHead(10, 8, n_cls, 0.0).eval()
+        h = torch.randn(6, 10) * 5
+        with torch.no_grad():
+            lp = hh(h)
+            top, sub = hh.heads(h)
+        pt, ps, P = torch.softmax(top, -1), torch.softmax(sub, -1), lp.exp()
+        assert lp.shape == (6, n_cls) and torch.allclose(P.sum(1), torch.ones(6), atol=1e-6)
+        assert torch.allclose(P[:, 0], pt[:, 0], atol=1e-6)                     # P(Ia) = p(Ia)
+        assert torch.allclose(P[:, 1:], pt[:, 1:] * ps, atol=1e-6)              # P(k) = p(CC) p(k | CC)
+        assert torch.allclose(torch.softmax(lp, 1), P, atol=1e-6)               # evaluate y calib: logits = log P
+    x, t, mask, g, bb = _lote()
+    curvas = [_curve(n_det_g=a, n_det_r=b) for a, b in ((3, 2), (8, 9), (5, 0))]
+    for kind in ("gru", "transformer"):
+        for four in (False, True):
+            n_cls = len(D.classes(four))
+            m = build_model(kind, D.n_feat(), D.n_glob(True), n_cls, jerarquica=True).eval()
+            assert any(k.startswith("head.top.") for k in m.state_dict())
+            with torch.no_grad():
+                out = m(x, t, mask, g, bb)
+            assert out.shape == (4, n_cls) and torch.allclose(out.exp().sum(1), torch.ones(4), atol=1e-5)
+            # la tabla de predicciones de evaluate (softmax de la salida) da las probabilidades combinadas
+            cfg = Config(model=kind, four_classes=four, use_z=True, jerarquica=True)
+            p = nn_prob_fn(m, cfg, "cpu")(curvas)
+            assert p.shape == (3, n_cls) and np.allclose(p.sum(1), 1, atol=1e-5)
+
+
+def test_perdida_jerarquica():
+    from torch.nn import functional as F
+    from pipeline78.nnclf.models import combine_log_probs
+    from pipeline78.nnclf.train import hier_terms, hier_loss, weighted_loss
+    torch.manual_seed(3)
+    for K in (3, 4):
+        y = torch.tensor([0, 1, 2, 0, K - 1, 1, 0])
+        cc = y > 0
+        w = torch.rand(7) + 0.5
+        top = torch.randn(7, 2, requires_grad=True)
+        sub = torch.randn(7, K - 1, requires_grad=True)
+        l1, l2 = hier_terms(combine_log_probs(top, sub), y, w)
+        ce1 = F.cross_entropy(top, cc.long(), reduction="none")                 # Ia contra CC, todos
+        ce2 = F.cross_entropy(sub[cc], y[cc] - 1, reduction="none")            # k | CC, solo los CC
+        assert torch.allclose(l1, (ce1 * w).sum() / w.sum(), atol=1e-6)
+        assert torch.allclose(l2, (ce2 * w[cc]).sum() / w[cc].sum(), atol=1e-6)
+        # la segunda ignora las Ia: gradiente exactamente cero en la cabeza sub de las Ia, y no cambia si se cambian
+        # sus logits sub o su peso
+        l2.backward()
+        assert (sub.grad[~cc] == 0).all() and (sub.grad[cc] != 0).any()
+        sub2, w2 = sub.detach().clone(), w.clone()
+        sub2[~cc] = torch.randn(int((~cc).sum()), K - 1) * 10
+        w2[~cc] = 100.0
+        assert torch.allclose(hier_terms(combine_log_probs(top.detach(), sub2), y, w2)[1], l2.detach(), atol=1e-6)
+        top.grad = sub.grad = None
+        hier_loss(combine_log_probs(top, sub), y, w).backward()
+        assert (sub.grad[~cc] == 0).all()
+        # con las dos medias sobre todos los objetos la suma es la NLL plana de P (docstring de train)
+        lp = combine_log_probs(top, sub).detach()
+        a, b = hier_terms(lp, y, w)
+        assert torch.allclose(a + b * w[cc].sum() / w.sum(), weighted_loss(lp, y, w), atol=1e-5)
+    # lote solo de Ia: el segundo termino es 0 y el total finito
+    lp = combine_log_probs(torch.randn(3, 2), torch.randn(3, 2))
+    a, b = hier_terms(lp, torch.zeros(3, dtype=torch.long), torch.ones(3))
+    assert b == 0 and torch.isfinite(a)
+
+
+def test_ruta_plana_sin_cambios():
+    from dataclasses import asdict
+    from pipeline78.nnclf.train import Config, model_opts, loss_fn, weighted_loss, hier_loss, load_model
+    assert Config().jerarquica is False and loss_fn(Config()) is weighted_loss
+    assert loss_fn(Config(jerarquica=True)) is hier_loss
+    x, t, mask, g, bb = _lote()
+    for kind, opts in (("gru", {}), ("gru", {"bidir": True, "gru_pool": "attn"}), ("transformer", {}),
+                       ("transformer", {"time_enc": "atat"})):
+        torch.manual_seed(4)
+        a = build_model(kind, D.n_feat(), D.n_glob(True), 3, **opts).eval()
+        torch.manual_seed(4)
+        b = build_model(kind, D.n_feat(), D.n_glob(True), 3, **model_opts(Config(model=kind, **opts))).eval()
+        sa, sb = a.state_dict(), b.state_dict()
+        assert list(sa) == list(sb) and all(torch.equal(sa[k], sb[k]) for k in sa)
+        assert isinstance(b.head, torch.nn.Sequential) and not any(".top." in k or ".sub." in k for k in sb)
+        with torch.no_grad():
+            assert torch.equal(a(x, t, mask, g, bb), b(x, t, mask, g, bb))
+    # checkpoints: los anteriores al flag (sin la llave) cargan planos, los jerarquicos cargan jerarquicos
+    x, t, mask, g, bb = _lote(use_z=False)
+    root = Path(tempfile.mkdtemp())
+    for jer in (False, True):
+        cfg = Config(model="gru", jerarquica=jer)
+        m = build_model("gru", D.n_feat(), D.n_glob(False), 3, **model_opts(cfg)).eval()
+        c = asdict(cfg)
+        if not jer:
+            c.pop("jerarquica")
+        d = root / f"jer{int(jer)}"
+        d.mkdir()
+        torch.save({"state_dict": m.state_dict(), "config": c, "classes": D.classes(), "best_epoch": 1}, d / "model.pt")
+        m2, cfg2, _ = load_model(d)
+        assert cfg2.jerarquica is jer
+        with torch.no_grad():
+            assert torch.equal(m(x, t, mask, g, bb), m2(x, t, mask, g, bb))
+
+
+def test_cola_jerarquica_y_cuatro_clases():
+    import contextlib
+    import io
+    from pipeline78.nnclf import experimentos as X
+    fl = {n: f for n, _, f in X.FASE1}
+    assert fl["gru_jer"] == ["--model", "gru", "--jerarquica"] and fl["tf_jer"] == ["--model", "transformer",
+                                                                                     "--jerarquica"]
+    assert [n for n, _, _ in X.FASE1_4C] == ["gru_base_4c", "gru_attnpool_4c", "gru_jer_4c"]
+    assert all(k == "nn" and "--four-classes" in f for _, k, f in X.FASE1_4C)
+    assert X.ABLACIONES["gru"]["jer"] == {"gru_jer": ["--jerarquica"]}
+    assert X.ABLACIONES["tf"]["jer"] == {"tf_jer": ["--jerarquica"]}
+    base = {"model": "gru", "use_z": False, "band_enc": "onehot", "time_enc": "sin", "gru_pool": "last",
+            "trunc": "none", "bidir": False}
+    f0, f1 = X.flags_from_config(base), X.flags_from_config({**base, "jerarquica": True, "four_classes": True})
+    assert "--jerarquica" not in f0 and "--four-classes" not in f0
+    assert "--jerarquica" in f1 and "--four-classes" in f1
+    # --only corre solo el bloque de 4 clases
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        X.main(["plan", "--fase", "1", "--out-root", tempfile.mkdtemp(), "--only", "gru_base_4c", "gru_attnpool_4c",
+                "gru_jer_4c"])
+    lines = buf.getvalue().strip().splitlines()
+    assert len(lines) == 3 and all("--four-classes" in ln for ln in lines)
+    assert "--name gru_jer_4c" in lines[2] and "--jerarquica" in lines[2]
+    # la jerarquica compite como slot de la fase 2 y su flag pasa a la corrida con z
+    root = Path(tempfile.mkdtemp())
+    oids = [f"o{k:03d}" for k in range(600)]
+    y = [k % 3 for k in range(600)]
+    sel = set(oids[:300])
+    _fake_run(root, "gru_base", _preds(oids, y, 0.50, 0.90, sel, 1), 1000)
+    _fake_run(root, "gru_jer", _preds(oids, y, 0.70, 0.40, sel, 2), 1100, {"jerarquica": True})
+    _fake_run(root, "tf_base", _preds(oids, y, 0.50, 0.50, sel, 3), 5000, {"model": "transformer"})
+    info = X.fase2_select(root, "", sel)
+    assert info["gru"]["pasan"] == ["gru_jer"] and info["tf"]["pasan"] == [] and "tf_jer" in info["tf"]["faltan"]
+    jz = X.fase2_decide(root, "", sel, info, write=False)
+    assert jz[0][0] == "gru_jer_z" and "--jerarquica" in jz[0][2] and "--use-z" in jz[0][2]
 
 
 def test_time_modulator_atat():
@@ -427,7 +576,7 @@ def test_cola_seleccion_anidada():
     assert fl[:2] == ["--model", "gru"] and "lambda" in fl and "attn" in fl and fl.count("--trunc") == 1
     assert fl[fl.index("--p-trunc") + 1] == "0.5"
     assert info["tf"]["pasan"] == ["tf_timemod"] and info["tf"]["comb"] is None
-    assert info["tf"]["faltan"] == ["tf_trunc05"]
+    assert info["tf"]["faltan"] == ["tf_trunc05", "tf_jer"]
     # la combinacion no le gana a la mejor individual en val_sel (aunque en val_rep sea mucho mejor): queda trunc05
     _fake_run(root, "gru_comb_lambda_attnpool_trunc05", P(0.70, 1.00, 10), 1300,
               {"band_enc": "lambda", "bidir": True, "gru_pool": "attn", "trunc": "both", "p_trunc": 0.5})

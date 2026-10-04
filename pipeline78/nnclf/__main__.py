@@ -42,6 +42,7 @@ def main(argv=None):
     t.add_argument("--bidir", action="store_true", help="GRU bidireccional (ORACLE-2)")
     t.add_argument("--trunc", choices=D.TRUNC_MODES, default="none", help="truncamiento ORACLE-2")
     t.add_argument("--p-trunc", type=float, default=1.0)
+    t.add_argument("--jerarquica", action="store_true", help="cabezas Ia contra CC y subclase | CC (models.HierHead)")
     t.add_argument("--no-eval", action="store_true")
     t.add_argument("--n-draws", type=int, default=5, help="sorteos por celda de degradacion")
     _data_args(t)

@@ -1,7 +1,7 @@
 """Modelos chicos (16 GB): GRU tipo RAPID y transformer encoder con tiempo continuo.
 
 Entrada comun: x [B, L, n_feat], t [B, L] (dt en dias), mask [B, L] (True = token valido, padding a la derecha),
-g [B, n_glob] (globales), b [B, L] (indice de banda, 0 = g, 1 = r). Salida: logits [B, n_cls].
+g [B, n_glob] (globales), b [B, L] (indice de banda, 0 = g, 1 = r). Salida: logits [B, n_cls] (con jerarquica, log P).
 
 Tiempo (time_enc):
 - "sin" (default): embedding sinusoidal de dt con periodos geometricos entre 1 y 1000 dias, proyectado a d y SUMADO
@@ -26,6 +26,14 @@ Pooling de la GRU (gru_pool):
 - "attn": attention pooling de ORACLE-2 (Shah et al. 2026, 2026arXiv260700228S, ec. 1; repo dev-ved30/Oracle,
   GRU_Improved._attention_pool): e_t = v^T tanh(W h_t + b), a = softmax enmascarado, c = sum a_t h_t sobre las
   salidas de la capa superior. ORACLE-2 lo usa sobre una GRU bidireccional (bidir=True).
+
+Cabeza (jerarquica):
+- False (default): una cabeza, softmax plano sobre las clases. Ruta identica a la de antes del flag.
+- True (HierHead): dos cabezas sobre el mismo encoder, p(Ia) contra p(CC) y p(k | CC) sobre las demas clases (II,
+  Ibc y con four_classes IIn). La clase 0 tiene que ser Ia (data.classes). La salida es log P combinada,
+  log P(Ia) = log p(Ia) y log P(k) = log p(CC) + log p(k | CC). Como sum P = 1, softmax(log P) = P y evaluate, calib
+  y ensemble la usan como logits sin cambios. La perdida es train.hier_loss. Es la version de red del jerarquico Ia
+  contra CC de clf_villar (hier_*_Ia), con las dos cabezas entrenadas juntas.
 """
 import math
 import torch
@@ -93,17 +101,42 @@ def _head(d_in, d, n_cls, dropout):
     return nn.Sequential(nn.Linear(d_in, d), nn.GELU(), nn.Dropout(dropout), nn.Linear(d, n_cls))
 
 
+def combine_log_probs(top, sub):
+    """top [B, 2] logits de (Ia, CC), sub [B, K - 1] logits de k | CC -> log P [B, K] con la clase 0 = Ia."""
+    lt = torch.log_softmax(top, -1)
+    return torch.cat([lt[:, :1], lt[:, 1:] + torch.log_softmax(sub, -1)], -1)
+
+
+class HierHead(nn.Module):
+    """Ia contra CC y la subclase dentro de CC. forward da log P combinada (combine_log_probs)."""
+
+    def __init__(self, d_in, d, n_cls, dropout):
+        super().__init__()
+        self.top = _head(d_in, d, 2, dropout)
+        self.sub = _head(d_in, d, n_cls - 1, dropout)
+
+    def heads(self, h):
+        return self.top(h), self.sub(h)
+
+    def forward(self, h):
+        return combine_log_probs(*self.heads(h))
+
+
+def make_head(d_in, d, n_cls, dropout, jerarquica=False):
+    return HierHead(d_in, d, n_cls, dropout) if jerarquica else _head(d_in, d, n_cls, dropout)
+
+
 class TransformerClf(nn.Module):
     """3 capas, d = 64, 4 cabezas, pre-norm. Pooling = media enmascarada. Globales concatenados antes de la cabeza."""
 
     def __init__(self, n_feat, n_glob, n_cls, d=64, heads=4, layers=3, ff=128, dropout=0.1, time_enc="sin",
-                 tm_harmonics=64, tm_tmax=1500.0, **_):
+                 tm_harmonics=64, tm_tmax=1500.0, jerarquica=False, **_):
         super().__init__()
         self.emb = _Embed(n_feat, d, time_enc, tm_harmonics, tm_tmax)
         layer = nn.TransformerEncoderLayer(d, heads, ff, dropout, batch_first=True, norm_first=True)
         self.enc = nn.TransformerEncoder(layer, layers, enable_nested_tensor=False)
         self.norm = nn.LayerNorm(d)
-        self.head = _head(d + n_glob, d, n_cls, dropout)
+        self.head = make_head(d + n_glob, d, n_cls, dropout, jerarquica)
 
     def forward(self, x, t, mask, g, b=None):
         b = torch.zeros_like(t, dtype=torch.long) if b is None else b
@@ -118,7 +151,7 @@ class GRUClf(nn.Module):
     empaquetada (no se lee el padding). Pooling "last" o "attn" (ORACLE-2), opcionalmente bidireccional."""
 
     def __init__(self, n_feat, n_glob, n_cls, hidden=64, layers=2, d_in=64, dropout=0.1, time_enc="sin",
-                 tm_harmonics=64, tm_tmax=1500.0, gru_pool="last", bidir=False, **_):
+                 tm_harmonics=64, tm_tmax=1500.0, gru_pool="last", bidir=False, jerarquica=False, **_):
         super().__init__()
         if gru_pool not in ("last", "attn"):
             raise ValueError(f"gru_pool desconocido: {gru_pool}")
@@ -129,7 +162,7 @@ class GRUClf(nn.Module):
         if gru_pool == "attn":
             self.attn_W = nn.Linear(h_out, hidden)
             self.attn_v = nn.Linear(hidden, 1, bias=False)
-        self.head = _head(h_out + n_glob, hidden, n_cls, dropout)
+        self.head = make_head(h_out + n_glob, hidden, n_cls, dropout, jerarquica)
 
     def forward(self, x, t, mask, g, b=None):
         b = torch.zeros_like(t, dtype=torch.long) if b is None else b
