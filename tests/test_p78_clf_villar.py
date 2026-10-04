@@ -528,3 +528,160 @@ def test_resumen_viejo_se_alinea_como_val(tmp_path):
     v = r[r.name == "viejo"].iloc[0]
     assert v.bal_acc_val == 0.65 and v.acc_val == 0.7 and v.n_val == 309 and v.coverage_val == 0.67
     assert np.isnan(v.bal_acc_rep) and r[r.name == "nuevo"].iloc[0].bal_acc_rep == 0.6
+
+
+# ----------------------------------------------------------------------------- mitigaciones del gap (rg_cens, g_modo)
+CFG_MIT = {**CFG_HGB, "fset": "rg_cens", "g_modo": "separado"}
+NUEVAS = ["t_rise_piso_r", "t_rise_cens_r", "t_rise_piso_g", "t_rise_cens_g", "d_t_rise_cens_gr"]
+
+
+def test_censura_t_rise_en_marco_observado_igual_en_sims_y_reales(tmp_path):
+    """Se censura por el t_rise OBSERVADO: 1.0 d a z 0.5 (0.67 d en reposo) cae en el piso, 1.2 d a z 0.5 (0.8 d en
+    reposo, bajo 1.05) no. Sims y reales pasan por la misma derive: mismas filas crudas, mismas columnas."""
+    filas = [("a", 1.0, 1.2), ("b", 1.2, 5.0), ("c", 3.0, None)]          # oid, t_rise r, t_rise g (None: sin g)
+    rows = [_feat_row(o, 0, "Ia", b, t_rise=t) for o, tr, tg in filas for b, t in (("r", tr), ("g", tg))
+            if t is not None]
+    fd, rd = _write_sims(tmp_path, rows, [_sims_meta(o, 0, "Ia", z=0.5, template=f"T{o}") for o, _, _ in filas])
+    real = tmp_path / "real_ztf"
+    real.mkdir()
+    pd.DataFrame([{"oid": o, "sn_type": "Ia", "subtipo": "Ia", "z": 0.5, "split": "val", "origen": "holdout",
+                   "part_index": 0, "excluir": False} for o, _, _ in filas]).to_csv(real / "meta_real_ztf.csv",
+                                                                                     index=False)
+    fr = tmp_path / "features_real"
+    (fr / "features").mkdir(parents=True)
+    pd.DataFrame(rows, columns=FEAT_COLS).to_csv(fr / "features" / "features.csv", index=False)
+    S = C.derive(C.load_sims(fd, rd)).set_index("oid").sort_index()
+    R = C.derive(C.load_real_val(fr, real)[0]).set_index("oid").sort_index()
+    pd.testing.assert_frame_equal(S[NUEVAS + ["t_rise_r", "t_rise_g"]], R[NUEVAS + ["t_rise_r", "t_rise_g"]])
+    for F in (S, R):
+        a, b, c = F.loc["a"], F.loc["b"], F.loc["c"]
+        assert a.t_rise_piso_r == 1.0 and np.isnan(a.t_rise_cens_r) and np.isnan(a.d_t_rise_cens_gr)
+        assert b.t_rise_piso_r == 0.0 and np.isclose(b.t_rise_cens_r, 0.8) and np.isclose(b.t_rise_r, 0.8)
+        assert a.t_rise_piso_g == 0.0 and np.isclose(a.t_rise_cens_g, 0.8)
+        assert np.isclose(b.d_t_rise_cens_gr, (5.0 - 1.2) / 1.5)
+        assert c.t_rise_piso_r == 0.0 and np.isnan(c.t_rise_piso_g) and np.isnan(c.t_rise_cens_g)   # g sin ajuste
+    Fo = C.derive(C.load_sims(fd, rd), rest_frame=False).set_index("oid").sort_index()
+    assert Fo.t_rise_piso_r.tolist() == S.t_rise_piso_r.tolist() and np.isclose(Fo.loc["b", "t_rise_cens_r"], 1.2)
+
+
+def test_rg_sin_cambios_y_columnas_de_rg_cens():
+    """rg no cambia (lista y valores sin censurar) y las columnas nuevas de derive van al final, despues de las de
+    siempre. rg_cens cambia solo t_rise y d_t_rise_gr por sus censuradas y agrega las banderas."""
+    rg = ["f_r", "t_rise_r", "t_fall_r", "gamma_r", "f_g", "t_rise_g", "t_fall_g", "gamma_g", "color_gr",
+          "d_t_rise_gr", "d_t_fall_gr", "d_gamma_gr", "d_f_gr", "M_pk_r", "M_pk_g"]
+    assert C.fset_cols("rg", True) == (rg, rg)
+    cens = [{"t_rise_r": "t_rise_cens_r", "t_rise_g": "t_rise_cens_g", "d_t_rise_gr": "d_t_rise_cens_gr"}.get(c, c)
+            for c in rg] + ["t_rise_piso_r", "t_rise_piso_g"]
+    assert C.fset_cols("rg_cens", True) == (cens, cens)
+    assert C.fset_cols("rg_cens", False)[1] == [c for c in cens if not c.startswith("M_pk")]
+    W = C.widen(pd.DataFrame([_feat_row("a", 0, "Ia", "r", t_rise=1.0), _feat_row("a", 0, "Ia", "g", t_rise=1.2)]))
+    W["z"] = 0.5
+    F = C.derive(W).iloc[0]
+    assert np.isclose(F.t_rise_r, 1.0 / 1.5) and np.isclose(F.d_t_rise_gr, 0.2 / 1.5)     # rg: sin censura
+    assert np.isnan(F.t_rise_cens_r) and np.isnan(F.d_t_rise_cens_gr)
+    cols = list(C.derive(W).columns)
+    assert cols[-len(NUEVAS):] == NUEVAS and cols[-len(NUEVAS) - 1] == "tiene_r"
+    assert C.BASELINE == {"model": "hgb", "fset": "rg", "use_z": True, "peso": "wz", "balance": True,
+                          "g_modo": "nan"}
+    assert C.same_cfg({k: v for k, v in C.BASELINE.items() if k != "g_modo"}, C.BASELINE)   # sin clave = nan
+    assert not C.same_cfg({**C.BASELINE, "g_modo": "separado"}, C.BASELINE)
+    assert C.cols_solo_r(cens + ["M_pk_r"]) == ["f_r", "t_rise_cens_r", "t_fall_r", "gamma_r", "M_pk_r",
+                                                "t_rise_piso_r", "M_pk_r"]
+
+
+def test_g_separado_enruta_por_g_y_B_no_ve_g(tmp_path, monkeypatch):
+    """A se ajusta solo con las sims con g, B con todas y sin columnas de g ni de color; cada objeto se predice con
+    A si tiene g (m_pk_g finito) y con B si no. B no cambia si se alteran todas las columnas de g."""
+    fd, rd, fr, real = _fake_world(tmp_path)
+    S, R, _ = C.prepare(fd, rd, fr, real)
+    c1, c2 = C.fset_cols("rg_cens", True)
+    gS, y, w = S.m_pk_g.notna().to_numpy(), S.y.to_numpy(), S.w_z.to_numpy()
+    assert 0 < gS.sum() < len(S)
+    gcols = [c for c in S.columns if c.endswith("_g") or "_gr" in c]
+    vistos, fit0 = [], C.Model.fit
+
+    def fit(self, F, yy, ww):
+        vistos.append((self, len(F), bool(F.m_pk_g.notna().all())))
+        return fit0(self, F, yy, ww)
+
+    monkeypatch.setattr(C.Model, "fit", fit)
+    m = C.ModeloG("hgb", c1, c2, 3, seed=1).fit(S, y, w)
+    assert [v[0] for v in vistos] == [m.A, m.B]
+    assert vistos[0][1] == gS.sum() and vistos[0][2] and vistos[1][1] == len(S)
+    assert m.A.cols2 == c2 and m.B.cols1 == m.B.cols2 == C.cols_solo_r(c2)
+    assert not [c for c in m.B.cols2 if c in gcols] and {"M_pk_r", "t_rise_piso_r"} <= set(m.B.cols2)
+    assert m.B.ests_[0].n_features_in_ == len(m.B.cols2)
+    # B no ve g: alterar todas las columnas de g (los NaN siguen NaN) no cambia a B y si a A
+    m2 = C.ModeloG("hgb", c1, c2, 3, seed=1).fit(S.assign(**{c: S[c] * 1.7 + 3.0 for c in gcols}), y, w)
+    assert np.array_equal(m.B.predict_proba(R), m2.B.predict_proba(R))
+    assert not np.array_equal(m.A.predict_proba(R), m2.A.predict_proba(R))
+    # enrutamiento: A da [1, 0, 0] y B da [0, 1, 0]
+    sin = np.arange(len(R)) % 3 == 0
+    Rm = R.copy()
+    Rm.loc[sin, gcols] = np.nan
+
+    def pred(self, F):
+        P = np.zeros((len(F), self.K))
+        P[:, 0 if self is m.A else 1] = 1.0
+        return P
+
+    monkeypatch.setattr(C.Model, "predict_proba", pred)
+    P = m.predict_proba(Rm)
+    assert (P[~sin, 0] == 1).all() and (P[sin, 1] == 1).all()
+    Ps = m.predict_proba(S)
+    assert (Ps[gS, 0] == 1).all() and (Ps[~gS, 1] == 1).all()
+    with pytest.raises(ValueError):
+        C.make_model({**CFG_MIT, "g_modo": "otro"}, c1, c2, 3)
+
+
+def _mitig_world(root):
+    """_fake_world con sims en el piso de t_rise (1.0 d observado) y reales sin g o en el piso."""
+    fd, rd, fr, real = _fake_world(root)
+    rng = np.random.default_rng(7)
+    fs = pd.read_csv(fd / "features" / "features.csv")
+    fs.loc[rng.random(len(fs)) < 0.3, "t_rise"] = 1.0
+    fs.to_csv(fd / "features" / "features.csv", index=False)
+    ff = pd.read_csv(fr / "features" / "features.csv")
+    ff = ff[~(ff.oid.isin(ff.oid.unique()[::4]) & (ff.filter_band == "g"))].copy()
+    ff.loc[rng.random(len(ff)) < 0.15, "t_rise"] = 1.0
+    ff.to_csv(fr / "features" / "features.csv", index=False)
+    return fd, rd, fr, real
+
+
+def test_D1_mitig_etiquetas_val_no_entrenan_ni_calibran(tmp_path):
+    """Como D1, con rg_cens y g_modo separado: permutar las etiquetas de las reales val no cambia P, Q ni T."""
+    S, R, _ = C.prepare(*_mitig_world(tmp_path))
+    assert (S.t_rise_piso_r == 1).any() and (R.t_rise_piso_r == 1).any() and R.m_pk_g.isna().any()
+    perm = np.random.default_rng(0).permutation(len(R))
+    Rp = R.assign(y=R.y.to_numpy()[perm], cls=R.cls.to_numpy()[perm], sn_type=R.sn_type.to_numpy()[perm])
+    for cfg in (CFG_MIT, {**CFG_MIT, "model": "hier_hgb_II", "peso": "wz_dr"}, {**CFG_MIT, "fset": "rg"},
+                {**CFG_MIT, "g_modo": "nan"}):
+        a = C.run_config(S, R, cfg, C.classes(), folds=3, keep_model=True)
+        b = C.run_config(S, Rp, cfg, C.classes(), folds=3, keep_model=True)
+        assert isinstance(a["_model"], C.ModeloG if cfg["g_modo"] == "separado" else C.Model)
+        assert np.allclose(a["_P"], b["_P"], rtol=0, atol=1e-12) and np.allclose(a["_Q"], b["_Q"], rtol=0, atol=1e-12)
+        assert a["temperatura"] == b["temperatura"] and a["prior_em"] == b["prior_em"]
+        assert a["real_none"]["val"]["bal_acc"] != b["real_none"]["val"]["bal_acc"]   # el test no es trivial
+
+
+def test_cli_g_modo_y_grilla_mitig(tmp_path):
+    fd, rd, fr, real = _mitig_world(tmp_path)
+    out = tmp_path / "out"
+    common = ["--features-sims", str(fd), "--run-dir", str(rd), "--features-real", str(fr), "--real-dir", str(real),
+              "--out-root", str(out), "--folds", "3"]
+    res = C.main(["train", "--name", "m1", "--fset", "rg_cens", "--g-modo", "separado"] + common)
+    assert res["config"]["g_modo"] == "separado" and isinstance(res["_model"], C.ModeloG)
+    ev = C.main(["eval", "--name", "m1", "--features-real", str(fr), "--real-dir", str(real), "--out-root", str(out)])
+    assert np.allclose(ev["_P"], res["_P"], rtol=0, atol=1e-12)
+    assert C.GRIDS["mitig"] == dict(fset=("rg", "rg_cens"), model=("hgb", "hgb_lento"), use_z=(True,), peso=("wz",),
+                                    g_modo=("nan", "separado"))
+    assert all("g_modo" not in g for k, g in C.GRIDS.items() if k != "mitig")   # las otras grillas: solo nan
+    tab = C.main(["sweep", "--name", "mt", "--grid", "mitig", "--models", "hgb"] + common)
+    assert len(tab) == 2 * 2 * 2 and set(tab.g_modo) == {"nan", "separado"} and set(tab.fset) == {"rg", "rg_cens"}
+    base = tab[tab.es_base]
+    assert len(base) == 2 and set(base.g_modo) == {"nan"} and set(base.fset) == {"rg"} and set(base.model) == {"hgb"}
+    assert json.loads((out / "mt" / "mejor.json").read_text())["base"] == C.BASELINE
+    resumen = pd.read_csv(out / "resumen.csv", keep_default_na=False)
+    assert list(resumen.columns) == C.RESUMEN_COLS
+    assert set(resumen[resumen.name == "mt"].g_modo) == {"nan", "separado"}
+    assert set(resumen[resumen.name == "m1"].g_modo) == {"separado"}

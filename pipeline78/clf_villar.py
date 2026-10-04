@@ -20,6 +20,13 @@ REGLAS
    t0 no entra: cada banda tiene su propio origen (la primera deteccion de esa banda en reader.mjd_to_phase).
    Real sin z (4 de las val): tiempos en el marco observado y M_pk = NaN.
    Faltantes (p. ej. sin g) quedan NaN: HistGradientBoosting los acepta y RF/MLP imputan la mediana con bandera.
+   Mitigaciones del estudio del gap (fset rg_cens y g_modo separado, grilla mitig):
+     rg_cens  t_rise censurado: si el t_rise observado (antes de 1/(1+z)) esta en el piso del extractor, t_rise_cens
+              = NaN y t_rise_piso = 1 (0 si no, NaN sin ajuste). Las sims tienen limites superiores espurios: 9.9 % de
+              las Ia y 40.9 % de las II simuladas en el piso contra 0.9 % y 6.1 % de las reales. rg no cambia.
+     separado sin g en 36 % de las sims y 20 % de las reales (Ibc: 62 % contra 8 %): los arboles aprenden "sin g =>
+              Ibc/II". Modelo A con las sims con g (m_pk_g finito) y el set entero, modelo B con todas las sims y solo
+              las columnas de r. Cada objeto (sim o real) se predice con A si tiene g y con B si no.
 5. Pesos de entrenamiento: w = w_z (ya trae 1/(1+z)) * peso de seleccion, y despues balance de clases (cada clase
    suma lo mismo; en el jerarquico, cada nivel queda con prior efectivo uniforme sobre las clases).
    Peso de seleccion (--peso, por defecto wz):
@@ -39,7 +46,7 @@ REGLAS
    a. CV en las sims agrupada por PLANTILLA (por sn_type, II e IIb aparte) como pre-filtro: quedan fuera las
       configuraciones con exactitud balanceada de CV bajo la mediana del barrido.
    b. Las que pasan se ordenan SOLO por la exactitud balanceada en val_sel (prior none). val_rep no entra.
-   c. La primera (candidata) se compara con la base simple y fuerte BASELINE (hgb, rg, con z, wz) por bootstrap
+   c. La primera (candidata) se compara con la base simple y fuerte BASELINE (hgb, rg, con z, wz, g nan) por bootstrap
       pareado estratificado por clase sobre val_sel (pipeline78.nnclf.experimentos.paired_bootstrap, 2000
       remuestreos). La candidata queda solo si P(delta > 0) >= 0.9. Si no, queda la base.
    d. Todo se reporta en val_rep (la cifra honesta, con IC 95 % bootstrap), val_sel y val completo, con los sufijos
@@ -78,7 +85,9 @@ REAL_FEAT = RUNS / "features_real_ztf2" / "features" / "features.csv"   # re-ext
 OUT_ROOT = RUNS / "clf_villar"
 SUBSETS = ("val_rep", "val_sel", "val")                 # val = val completo (referencia)
 SUFFIX = {"val_rep": "rep", "val_sel": "sel", "val": "val"}
-BASELINE = {"model": "hgb", "fset": "rg", "use_z": True, "peso": "wz", "balance": True}   # incumbente del barrido
+BASELINE = {"model": "hgb", "fset": "rg", "use_z": True, "peso": "wz", "balance": True,   # incumbente del barrido
+            "g_modo": "nan"}
+G_MODOS = ("nan", "separado")                          # nan: g faltante queda NaN; separado: modelos A (con g) y B (r)
 SEED = 20261004
 N_JOBS = int(os.environ.get("P78_CLF_THREADS", "2"))   # hilos de RF/HGB/BLAS: la RAM y la CPU se comparten
 KEYS = ["oid", "part_index", "sn_type"]
@@ -89,6 +98,9 @@ PARS = ["A", "f", "t_rise", "t_fall", "gamma"]
 TIMES = ["t_rise", "t_fall", "gamma"]
 QUAL = ["n_points", "time_span", "rms"]
 RAW = PARS + [f"{p}_err" for p in PARS] + QUAL
+# piso de t_rise del extractor: 1.0 d en el marco OBSERVADO (feature_extraction/ztf_literature_features/config.py,
+# MODEL_CONFIG bounds t_rise = (1.0, 100.0)). 1.05 da margen a las medianas del MCMC pegadas al borde.
+T_RISE_PISO = 1.05
 
 
 def classes(four=False):
@@ -240,6 +252,12 @@ def derive(W, rest_frame=True):
         F[f"d_{t}_gr"] = F[f"{t}_g"] - F[f"{t}_r"]
     F["m_sel"] = F.m_pk_r.where(F.m_pk_r.notna(), F.m_pk_g)     # magnitud de seleccion S(m); no es feature
     F["tiene_r"] = F.m_pk_r.notna()
+    for b in BANDS:                     # censura de t_rise (solo rg_cens): se mira el valor OBSERVADO, sin 1/(1+z)
+        tr = W.get(f"t_rise_{b}", pd.Series(np.nan, index=W.index)).to_numpy(float)
+        piso = tr < T_RISE_PISO
+        F[f"t_rise_piso_{b}"] = np.where(np.isfinite(tr), piso.astype(float), np.nan)
+        F[f"t_rise_cens_{b}"] = np.where(piso, np.nan, F[f"t_rise_{b}"].to_numpy(float))
+    F["d_t_rise_cens_gr"] = F.t_rise_cens_g - F.t_rise_cens_r
     return F.replace([np.inf, -np.inf], np.nan)
 
 
@@ -249,7 +267,8 @@ def _forma(b):
 
 COLOR = ["color_gr", "d_t_rise_gr", "d_t_fall_gr", "d_gamma_gr", "d_f_gr"]
 REL = [f"rel_{p}_{b}" for b in BANDS for p in PARS]
-FSETS = ("viejo", "forma_r", "rg", "rg_err", "rg_m", "rg_robusto")
+FSETS = ("viejo", "forma_r", "rg", "rg_err", "rg_m", "rg_robusto", "rg_cens")
+CENS = {"t_rise_r": "t_rise_cens_r", "t_rise_g": "t_rise_cens_g", "d_t_rise_gr": "d_t_rise_cens_gr"}
 
 
 def fset_cols(name, use_z):
@@ -262,10 +281,17 @@ def fset_cols(name, use_z):
     rg = _forma("r") + _forma("g") + COLOR + Mrg
     sets = {"forma_r": _forma("r") + Mr, "rg": rg, "rg_err": rg + REL, "rg_m": rg + ["m_pk_r", "m_pk_g"],
             # sin t_rise: la feature que mas delata a las sims en el diagnostico gap del smoke (1.7 d contra 3.1 d)
-            "rg_robusto": [c for c in rg if "t_rise" not in c]}
+            "rg_robusto": [c for c in rg if "t_rise" not in c],
+            # t_rise censurado en el piso del extractor y su bandera (regla 4, mitigaciones)
+            "rg_cens": [CENS.get(c, c) for c in rg] + ["t_rise_piso_r", "t_rise_piso_g"]}
     if name not in sets:
         raise ValueError(f"feature set desconocido: {name}")
     return sets[name], sets[name]
+
+
+def cols_solo_r(cols):
+    """Columnas del modelo B de g_modo separado: fuera las de g (terminan en _g) y las de color (llevan _gr)."""
+    return [c for c in cols if not c.endswith("_g") and "_gr" not in c]
 
 
 GAP_COLS = (_forma("r") + _forma("g") + COLOR + ["M_pk_r", "M_pk_g", "m_pk_r", "m_pk_g"] + REL
@@ -430,6 +456,43 @@ class Model:
             P[:, self.rest_] = (1 - p1)[:, None] * p2
             return P
         return _proba(self.ests_, F[self.cols2].to_numpy(float), self.K)
+
+
+def tiene_g(F):
+    return F.m_pk_g.notna().to_numpy(bool)
+
+
+class ModeloG:
+    """g_modo separado (regla 4): A = Model con las sims con g y las columnas del set; B = Model con todas las sims y
+    solo las columnas de r (cols_solo_r). predict_proba usa A en los objetos con g y B en los sin g. Misma interfaz
+    que Model: run_config, la temperatura, el EM y las metricas no cambian."""
+
+    def __init__(self, spec_name, cols1, cols2, K, seed=SEED, balance=True):
+        self.K = K
+        self.A = Model(spec_name, cols1, cols2, K, seed, balance)
+        self.B = Model(spec_name, cols_solo_r(cols1), cols_solo_r(cols2), K, seed, balance)
+
+    def fit(self, F, y, w):
+        y, w, g = np.asarray(y, int), np.asarray(w, float), tiene_g(F)
+        self.A.fit(F[g], y[g], w[g])
+        self.B.fit(F, y, w)
+        return self
+
+    def predict_proba(self, F):
+        g, P = tiene_g(F), np.zeros((len(F), self.K))
+        if g.any():
+            P[g] = self.A.predict_proba(F[g])
+        if (~g).any():
+            P[~g] = self.B.predict_proba(F[~g])
+        return P
+
+
+def make_model(cfg, cols1, cols2, K, seed=SEED):
+    """Model o ModeloG segun cfg['g_modo'] (por defecto nan: el Model de siempre)."""
+    gm = cfg.get("g_modo", "nan")
+    if gm not in G_MODOS:
+        raise ValueError(f"g_modo desconocido: {gm}")
+    return (ModeloG if gm == "separado" else Model)(cfg["model"], cols1, cols2, K, seed, cfg.get("balance", True))
 
 
 # ------------------------------------------------------------------------------------------------ evaluacion
@@ -606,7 +669,7 @@ def evaluate_real(R, P, Q, cls, n_boot=1000, seed=SEED, nn_oids=None):
 def run_config(S, R, cfg, cls, folds=5, seed=SEED, keep_model=False, nn_oids=None):
     """Una configuracion: CV por plantilla en sims (fuera de fold) y modelo con todas las sims evaluado en las
     reales val, con prior none y em, por subconjunto (val_rep, val_sel, val). cfg: model, fset, use_z, peso,
-    balance. Las reales solo aportan features, y solo las de val_sel (S(m), wz_dr, prior EM)."""
+    balance, g_modo. Las reales solo aportan features, y solo las de val_sel (S(m), wz_dr, prior EM)."""
     K = len(cls)
     c1, c2 = fset_cols(cfg["fset"], cfg["use_z"])
     cols = sorted(set(c1) | set(c2), key=(c1 + c2).index)
@@ -622,12 +685,12 @@ def run_config(S, R, cfg, cls, folds=5, seed=SEED, keep_model=False, nn_oids=Non
         P = np.zeros((len(S), K))
         for k in range(folds):
             te = fold == k
-            m = Model(cfg["model"], c1, c2, K, seed, cfg.get("balance", True)).fit(S[~te], y[~te], w[~te])
+            m = make_model(cfg, c1, c2, K, seed).fit(S[~te], y[~te], w[~te])
             P[te] = m.predict_proba(S[te])
         res["cv_sims"] = metrics(y, P.argmax(1), cls, w)
         T = fit_temperature(P, y, class_balance(y, w) if cfg.get("balance", True) else w)
     res["temperatura"] = T
-    model = Model(cfg["model"], c1, c2, K, seed, cfg.get("balance", True)).fit(S, y, w)
+    model = make_model(cfg, c1, c2, K, seed).fit(S, y, w)
     Pr = temper(model.predict_proba(R), T) if len(R) else np.zeros((0, K))
     prior_tr = np.full(K, 1 / K) if cfg.get("balance", True) else np.bincount(y, weights=w, minlength=K) / w.sum()
     pi = em_prior(Pr[sel], prior_tr)[1] if sel.any() else prior_tr       # EM sin etiquetas, solo val_sel
@@ -699,7 +762,7 @@ SUB_KEYS = ["n", "coverage", "acc", "bal_acc", "f1_macro", "f1_Ia", "f1_II", "f1
             "bal_acc_con_r", "logloss", "ece", "acc_ic95", "bal_acc_ic95", "n_nn_oids", "acc_nn_oids",
             "bal_acc_nn_oids", "f1_macro_nn_oids"]
 RESUMEN_COLS = (["fecha", "name", "features_sims", "features_real", "model", "fset", "use_z", "peso", "balance",
-                 "prior", "n_sims", "cv_bal_acc", "temperatura"]
+                 "g_modo", "prior", "n_sims", "cv_bal_acc", "temperatura"]
                 + [f"{k}_{SUFFIX[s]}" for s in SUBSETS for k in SUB_KEYS])
 # resumen.csv anterior a la particion: sus metricas eran sobre val completo
 LEGACY = {"n_real": "n_val", "cobertura": "coverage_val", **{k: f"{k}_val" for k in (
@@ -716,8 +779,8 @@ def resumen_rows(res, name, features_sims, cov, features_real=None):
         row = {"fecha": time.strftime("%Y-%m-%d %H:%M"), "name": name, "features_sims": str(features_sims),
                "features_real": str(features_real) if features_real else None, "model": cfg["model"],
                "fset": cfg["fset"], "use_z": cfg["use_z"], "peso": cfg["peso"], "balance": cfg.get("balance", True),
-               "prior": tag, "n_sims": res["n_sims"], "cv_bal_acc": (res.get("cv_sims") or {}).get("bal_acc"),
-               "temperatura": res.get("temperatura")}
+               "g_modo": cfg.get("g_modo", "nan"), "prior": tag, "n_sims": res["n_sims"],
+               "cv_bal_acc": (res.get("cv_sims") or {}).get("bal_acc"), "temperatura": res.get("temperatura")}
         for s in SUBSETS:
             sf, r = SUFFIX[s], by.get(s) or {}
             cr, nn = r.get("con_r") or {}, r.get("nn_oids") or {}
@@ -817,7 +880,8 @@ def cmd_train(a):
     S, R, v = prepare(a.features_sims, a.run_dir, a.features_real, a.real_dir, a.cuatro_clases, not a.obs_frame,
                       a.requiere)
     nn = read_nn_oids(a.nn_preds, R) if a.nn_preds else None
-    cfg = {"model": a.model, "fset": a.fset, "use_z": not a.no_z, "peso": a.peso, "balance": not a.sin_balance}
+    cfg = {"model": a.model, "fset": a.fset, "use_z": not a.no_z, "peso": a.peso, "balance": not a.sin_balance,
+           "g_modo": a.g_modo}
     res = run_config(S, R, cfg, cls, a.folds, a.seed, keep_model=True, nn_oids=nn)
     cov = coverage(R, v, cls, nn)
     finish_run(Path(a.out_root) / a.name, res, R, cls, cov, a, cfg)
@@ -865,7 +929,7 @@ CRITERIO = {"particion": f"pipeline78.splits.val_split (semilla {splits.SEED})",
 
 def same_cfg(c, d):
     return (all(c.get(k) == d.get(k) for k in ("model", "fset", "use_z", "peso"))
-            and c.get("balance", True) == d.get("balance", True))
+            and c.get("balance", True) == d.get("balance", True) and c.get("g_modo", "nan") == d.get("g_modo", "nan"))
 
 
 def select_nested(cfgs, cv, yp, R, cls, base_i, p_min=P_MIN, n_boot=N_BOOT_PAREADO, seed=BOOT_SEED):
@@ -908,6 +972,9 @@ GRIDS = {
                  model=("hgb", "hgb_lento", "hier_hgb_II", "hier_hgb_Ia", "hier_mlp_II", "hier_mlp_Ia", "ens_hier"),
                  use_z=(True, False), peso=("wz", "wz_S", "wz_dr")),
     "completo": dict(fset=FSETS, model=tuple(MODELS), use_z=(True, False), peso=("wz", "wz_S", "wz_dr")),
+    # mitigaciones del estudio del gap (regla 4): t_rise censurado y modelos separados con y sin g
+    "mitig": dict(fset=("rg", "rg_cens"), model=("hgb", "hgb_lento"), use_z=(True,), peso=("wz",),
+                  g_modo=("nan", "separado")),
 }
 
 
@@ -932,8 +999,8 @@ def cmd_sweep(a):
     g = GRIDS[a.grid]
     models = a.models.split(",") if a.models else g["model"]
     fsets = a.fsets.split(",") if a.fsets else g["fset"]
-    cfgs = [{"model": m, "fset": f, "use_z": z, "peso": p, "balance": True}
-            for f in fsets for m in models for z in g["use_z"] for p in g["peso"]]
+    cfgs = [{"model": m, "fset": f, "use_z": z, "peso": p, "balance": True, "g_modo": gm}
+            for f in fsets for m in models for z in g["use_z"] for p in g["peso"] for gm in g.get("g_modo", ("nan",))]
     base_i = next((i for i, c in enumerate(cfgs) if same_cfg(c, BASELINE)), None)
     if base_i is None:                                               # la base siempre se corre: es la incumbente
         cfgs.append(dict(BASELINE))
@@ -982,7 +1049,7 @@ def cmd_sweep(a):
                                                           "cobertura": cov}), indent=1))
     top = tab[(tab.prior == "none") & tab.pasa_cv.fillna(False).astype(bool)].sort_values(
         ["bal_acc_sel", "cv_bal_acc"], ascending=False)
-    print(top.head(10)[["model", "fset", "use_z", "peso", "cv_bal_acc", "bal_acc_sel", "bal_acc_rep",
+    print(top.head(10)[["model", "fset", "use_z", "peso", "g_modo", "cv_bal_acc", "bal_acc_sel", "bal_acc_rep",
                         "bal_acc_val"]].round(3).to_string(index=False), flush=True)
     c = el["comparacion"]
     print(f"[clf_villar] pre-filtro CV: {el['prefiltro_cv']['n_pasan']}/{el['prefiltro_cv']['n_total']} "
@@ -1088,6 +1155,8 @@ def parser():
     ap.add_argument("--obs-frame", action="store_true", help="tiempos en el marco observado (sin 1/(1+z))")
     ap.add_argument("--peso", default="wz", choices=("wz", "wz_S", "wz_dr"))
     ap.add_argument("--sin-balance", action="store_true", help="sin balance de clases (prior = w_z * seleccion)")
+    ap.add_argument("--g-modo", default="nan", choices=G_MODOS,
+                    help="train: nan (g faltante = NaN) o separado (modelo A con g, B solo r); sweep: la grilla")
     ap.add_argument("--requiere", default="any", choices=("any", "r"))
     ap.add_argument("--cuatro-clases", action="store_true")
     ap.add_argument("--folds", type=int, default=5)
