@@ -388,6 +388,68 @@ def test_j_ztf_v78_pinned():
     assert _digest(df) == PIN_MD5
 
 
+PIN_T9_COUNTS, PIN_T9_MD5 = (361, 191, 36), "1b6b27da1bc00d24ffc6bb22e8f1e8a3"
+
+
+def test_j_ztf_v78_t9_pinned():
+    """ztf_v78_t9 (produccion): ancla uniforme (consume rng), fireball con t_exp, cola, logistica m0 1.25, UL como
+    ALeRCE y limpieza, sobre la plantilla sintetica. El digest se saco con el codigo de 2fd68a9 (antes de det_eps y
+    noise_draw_scale). Los defaults explicitos (techo 1, escala 1, escala 1 bajo sigma 0.04, m0/w/eps/escala por banda con
+    el mismo valor) dan los mismos bytes."""
+    from pipeline78.project import anchor_time
+    from pipeline78.runcfg import RUNS_CFG
+    t_rel, mags, epochs = _inputs()
+    t9 = RUNS_CFG["ztf_v78_t9"]
+    assert t9["det_m0"] == 1.25 and t9["det_w"] == 0.2 and not {"det_eps", "noise_draw_scale", "noise_draw_scale_lowsig"} & set(t9)
+    pb = lambda v: {b: v for b in ("g", "r", "i")}
+    for cfg in (t9, dict(t9, det_eps=1.0, noise_draw_scale=1.0, noise_draw_scale_lowsig={"sigma_max": 0.04, "k": 1.0}),
+                dict(t9, det_m0=pb(1.25), det_w=pb(0.2), det_eps=pb(1.0), noise_draw_scale=pb(1.0))):
+        rng = np.random.default_rng(20261002)
+        ta = anchor_time(cfg, rng, 3, cfg["n_by_class"]["II"], epochs)
+        df = project_one(t_rel, mags, epochs, ta, rng, cfg, t_exp_rel=t_rel[0] - 8.0, z=Z)
+        assert (len(df), int((df.upperlimit == "F").sum()), int((df.magnitud_modelo == 99).sum())) == PIN_T9_COUNTS
+        assert _digest(df) == PIN_T9_MD5
+
+
+def _dos(cfg, mm=19.5, ml=20.0, n=4000, seed=1):
+    """Plantilla plana en g y r con la misma mm, n epocas diarias por banda con limite ml constante."""
+    mjd = np.arange(59000.0, 59000.0 + n, 1.0)
+    ep = {b: (mjd + 0.1 * j, np.full(n, ml)) for j, b in enumerate(("g", "r"))}
+    return project_one(np.array([0.0, float(n + 1)]), {b: np.full(2, mm) for b in ("g", "r")}, ep, 59000.0,
+                       np.random.default_rng(seed), dict(cfg, bands=["g", "r"]))
+
+
+def test_e_logistic_per_band():
+    """det_m0, det_w y det_eps por banda: cada banda sale identica a la corrida con el numero global de esa banda (mismo
+    ruido y mismos uniformes) y las dos bandas detectan distinto. Una banda que falta en el dict es KeyError."""
+    for base, key, vg, vr in ((LOG, "det_m0", 0.0, 1.0), (dict(LOG, det_m0=0.0), "det_w", 2.0, 1e-9),
+                              (LOG, "det_eps", 0.5, 0.9)):
+        x = _dos(dict(base, **{key: {"g": vg, "r": vr}}))
+        for b, v in (("g", vg), ("r", vr)):
+            ref = _dos(dict(base, **{key: v}))
+            pd.testing.assert_frame_equal(x[x["filter"] == b], ref[ref["filter"] == b])
+        fg, fr = ((x[x["filter"] == b].upperlimit == "F").mean() for b in ("g", "r"))
+        assert abs(fg - fr) > 0.15, (key, fg, fr)
+    with pytest.raises(KeyError):
+        _dos(dict(LOG, det_m0={"g": 0.5}))
+
+
+def test_e_logistic_eps_caps():
+    """det_eps es el techo de la eficiencia: una fuente muy brillante (P ~ 1) se detecta en una fraccion ~det_eps y en
+    m_lim - m0 en ~det_eps/2. Las detecciones con techo son un subconjunto de las sin techo, con el mismo ruido
+    (mismos uniformes). det_eps fuera de (0, 1] es ValueError."""
+    for mm, frac in ((14.0, 1.0), (19.5, 0.5)):              # dm = 6 (P ~ 1) y dm = m0
+        x, y = _flat(mm, LOG), _flat(mm, dict(LOG, det_eps=0.6))
+        fx, fy = (x.upperlimit == "F").mean(), (y.upperlimit == "F").mean()
+        assert abs(fx - frac) < 0.04 and abs(fy - 0.6 * fx) < 0.03, (mm, fx, fy)
+        assert not ((y.upperlimit == "F") & (x.upperlimit == "T")).any()
+        both = (x.upperlimit == "F") & (y.upperlimit == "F")
+        assert (x.loc[both, "magnitud_proyectada"] == y.loc[both, "magnitud_proyectada"]).all()
+    for e in (0.0, 1.2, {"g": 1.0, "r": -0.1}):
+        with pytest.raises(ValueError):
+            _flat(19.5, dict(LOG, det_eps=e))
+
+
 def test_i_tail_min_span(monkeypatch):
     """tail_min_span {"II": 120}: una II de 80 d no recibe cola, una de 150 d si, una Ia de 80 d si. Sin cola, las
     filas hasta t1 son las mismas que con cola."""

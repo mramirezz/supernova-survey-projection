@@ -41,10 +41,18 @@ def _noise_params(cfg, b):
     return p["A"], p["B"], p["C"]
 
 
+def _banda(v, b):
+    """Parametro global (numero) o por banda {"g": .., "r": .., "i": ..}; una banda que falta es KeyError."""
+    return v[b] if isinstance(v, dict) else v
+
+
 def _noise(mm, ml, rng, cfg, b):
     """noise_model "snr" (default): sigma = clip(1.0857/S/N, sigma_floor), S/N = noise_k 10^(0.4 (ml - mm)).
     "tres_terminos": sigma_tres_terminos(ml - mm, A, B, C) con cfg["noise_params"], tope SIGMA_MAX (el mismo piso de
-    S/N 1e-6: una fila sin flujo queda en m_obs ~ 84 en _det y nunca se detecta). Un solo sorteo normal por fila."""
+    S/N 1e-6: una fila sin flujo queda en m_obs ~ 84 en _det y nunca se detecta). Un solo sorteo normal por fila.
+    noise_draw_scale k (numero o por banda, default 1): el sorteo es m_obs = mm + N(0, k sigma) y magerr sigue siendo
+    sigma (ZTF: dispersion realizada ~0.5 del sigmapsf). noise_draw_scale_lowsig {"sigma_max", "k"}: otro k donde
+    sigma < sigma_max. Mismo sorteo normal en el mismo orden: k = 1 da los mismos bytes."""
     if cfg["rule"] != "ztf":
         raise ValueError(cfg["rule"])
     model = cfg.get("noise_model", "snr")
@@ -55,13 +63,17 @@ def _noise(mm, ml, rng, cfg, b):
         sig = np.minimum(sigma_tres_terminos(ml - mm, *_noise_params(cfg, b)), SIGMA_MAX)
     else:
         raise ValueError(f"noise_model={model!r}")
-    return mm + rng.normal(0.0, sig), sig
+    k, lo = _banda(cfg.get("noise_draw_scale", 1.0), b), cfg.get("noise_draw_scale_lowsig")
+    if lo is not None:
+        k = np.where(sig < lo["sigma_max"], _banda(lo["k"], b), k)
+    return mm + rng.normal(0.0, k * sig), sig
 
 
-def _det(mm, ml, mobs, u, cfg):
+def _det(mm, ml, mobs, u, cfg, b):
     """Sin uniforme (det_model hard, o UL de flujo nulo antes de t_exp): corte duro mm < ml.
-    logistic: P = 1/(1 + exp((m_obs - (ml - det_m0))/det_w)) y det = u < P, sobre la magnitud MEDIDA (S/N medida, como
-    SEARCHEFF de SNANA). m_obs sale del mismo sorteo normal del ruido, pero en flujo: con z = (mobs - mm)/sig y
+    logistic: P = det_eps/(1 + exp((m_obs - (ml - det_m0))/det_w)) y det = u < P, sobre la magnitud MEDIDA (S/N medida,
+    como SEARCHEFF de SNANA). det_m0, det_w y det_eps (techo de eficiencia, default 1) son numeros o dicts por banda.
+    m_obs sale del mismo sorteo normal del ruido, pero en flujo: con z = (mobs - mm)/sig y
     S/N = 1.0857/sig, el flujo medido es f (1 - z/S/N) = f (1 - (mobs - mm)/1.0857) y m_obs = mm - 2.5 log10 de eso.
     mobs en magnitud diverge para fuentes debiles (sig ~1e6 mag en las filas sin flujo) y detectaria la mitad de ellas.
     m_obs = mobs a primer orden en las detecciones, mobs <= m_obs siempre, y una fila sin flujo (99) queda en
@@ -71,7 +83,8 @@ def _det(mm, ml, mobs, u, cfg):
     f = 1.0 - (mobs - mm) / 1.0857                           # flujo medido / flujo del modelo
     with np.errstate(divide="ignore"):
         m_obs = np.where(f > 0, mm - 2.5 * np.log10(np.maximum(f, 1e-300)), np.inf)
-    return u < expit((ml - cfg["det_m0"] - m_obs) / cfg["det_w"])
+    p = expit((ml - _banda(cfg["det_m0"], b) - m_obs) / _banda(cfg["det_w"], b))
+    return u < _banda(cfg.get("det_eps", 1.0), b) * p      # 1.0 * p == p: sin det_eps, los mismos bytes
 
 
 def _frame(b, mj, ml, mm, mobs, sig, det):
@@ -108,6 +121,9 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
         raise ValueError(f"edge_pre={edge_pre!r} edge_post={edge_post!r}")
     if cfg.get("det_model", "hard") not in ("hard", "logistic"):
         raise ValueError(f"det_model={cfg['det_model']!r}")
+    eps = cfg.get("det_eps", 1.0)
+    if not all(0.0 < e <= 1.0 for e in (eps.values() if isinstance(eps, dict) else (eps,))):
+        raise ValueError(f"det_eps={eps!r}")
     if cfg.get("pre_ul_mode", "window") not in ("window", "alerce"):
         raise ValueError(f"pre_ul_mode={cfg['pre_ul_mode']!r}")
     if cfg.get("noise_model", "snr") not in ("snr", "tres_terminos"):
@@ -157,7 +173,7 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
     frames = []
     for blk in (x for fr in parts.values() for x in fr):
         b, mj, ml, mm, mobs, sig, u, k = blk
-        det = _det(mm, ml, mobs, u, cfg)
+        det = _det(mm, ml, mobs, u, cfg, b)
         if k is not None:
             mj, ml, mm, mobs, sig, det = mj[k], ml[k], mm[k], mobs[k], sig[k], det[k]
         if len(mj):

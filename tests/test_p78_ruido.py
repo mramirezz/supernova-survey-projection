@@ -1,6 +1,6 @@
 # tests/test_p78_ruido.py
 """Ruido de tres terminos (fondo, fuente, piso): equivalencia con la regla snr, mismos sorteos, parametros por banda,
-calibracion contra las detecciones ZTF val y configs que lo usan."""
+escala del sorteo, calibracion contra las detecciones ZTF val y configs que lo usan."""
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import numpy as np, pandas as pd
@@ -78,6 +78,37 @@ def test_sigma_max_con_deteccion_logistica(monkeypatch):
     monkeypatch.setattr(project, "SIGMA_MAX", np.inf)
     c = _ramp(tres, n=50, pre=2000, seed=3)
     assert (c[c.magnitud_modelo == 99].upperlimit == "F").sum() > 100
+
+
+def test_escala_del_sorteo():
+    """noise_draw_scale k: con deteccion dura (no depende del ruido) las filas son las mismas, m_obs - m es k veces el de
+    k = 1 fila a fila (mismo sorteo normal), la dispersion de (m_obs - m)/magerr es k y magerr no cambia. Por banda se
+    aplica a su banda. noise_draw_scale_lowsig usa su k donde sigma < sigma_max. Con logistica permisiva y k < 1 las
+    filas sin flujo siguen sin detectarse (tope SIGMA_MAX)."""
+    tres = dict(CFG, noise_model="tres_terminos", noise_params=RUNS_CFG["ztf_v78_t9"]["noise_params"])
+    d = lambda x: (x.magnitud_proyectada.astype(float) - x.magnitud_modelo.astype(float))[x.upperlimit == "F"]
+    a = _ramp(tres, seed=13)
+    det = a.upperlimit == "F"
+    assert det.sum() > 4000
+    for k in (0.5, 0.7, 1.3):
+        x = _ramp(dict(tres, noise_draw_scale=k), seed=13)
+        pd.testing.assert_frame_equal(x.drop(columns="magnitud_proyectada"), a.drop(columns="magnitud_proyectada"))
+        assert np.abs(d(x) - k * d(a)).max() < 1e-5
+        z = d(x) / x.magerr[det].astype(float)
+        assert abs(z.std() / k - 1) < 0.05, (k, z.std())
+    per = dict(tres, noise_draw_scale={"g": 0.5, "r": 1.3})
+    pd.testing.assert_frame_equal(_ramp(per, "g", seed=13), _ramp(dict(tres, noise_draw_scale=0.5), "g", seed=13))
+    pd.testing.assert_frame_equal(_ramp(per, "r", seed=13), _ramp(dict(tres, noise_draw_scale=1.3), "r", seed=13))
+    with pytest.raises(KeyError):
+        _ramp(per, "i")
+    lo = _ramp(dict(tres, noise_draw_scale=0.5, noise_draw_scale_lowsig={"sigma_max": 0.04, "k": 0.7}), seed=13)
+    s = lo.magerr[det].astype(float).to_numpy()
+    lejos = np.abs(s - 0.04) > 1e-6                          # magerr es float32: fuera las filas pegadas al umbral
+    assert (s < 0.04).sum() > 500 and (s >= 0.04).sum() > 500
+    assert (np.abs(d(lo) - np.where(s < 0.04, 0.7, 0.5) * d(a))[lejos] < 1e-5).all()
+    pd.testing.assert_series_equal(lo.magerr, a.magerr)
+    y = _ramp(dict(tres, noise_draw_scale=0.5, det_model="logistic", det_m0=-2.0, det_w=0.2), n=50, pre=2000, seed=3)
+    assert (y.magnitud_modelo == 99).sum() == 2000 and (y[y.magnitud_modelo == 99].upperlimit == "T").all()
 
 
 def test_banda_i_usa_los_parametros_de_r():
