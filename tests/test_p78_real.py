@@ -146,3 +146,23 @@ def test_lista_versionada_de_exclusiones_manuales(tmp_path):
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"): f(); print("ok", n)
+
+
+def test_completar_desde_la_api():
+    """Solo se agregan filas de la API posteriores a la ultima fila del .dat: detecciones positivas g/r con magpsf y
+    sigmapsf, no detecciones como UL con diffmaglim; las negativas y la banda i quedan fuera."""
+    import numpy as np, pandas as pd
+    from pipeline78.real_to_parquet import completar
+    rows = pd.DataFrame({"oid": "o", "part_index": np.int32(0), "sn_type": "Ia", "mjd": [100.0, 101.0], "filter": "r",
+                         "magnitud_proyectada": [18.0, 18.1], "magerr": [0.05, 0.05], "upperlimit": "F"})
+    det = pd.DataFrame({"oid": ["o", "o", "o", "o", "x"], "mjd": [100.0, 102.0, 103.0, 104.0, 105.0],
+                        "fid": [2, 1, 2, 3, 2], "magpsf": [18.0, 18.5, 18.6, 18.7, 17.0],
+                        "sigmapsf": [0.05, 0.06, 0.07, 0.08, 0.01], "diffmaglim": 20.0, "isdiffpos": [1, 1, -1, 1, 1]})
+    nodet = pd.DataFrame({"oid": ["o", "o"], "mjd": [99.0, 110.0], "fid": [2, 2], "diffmaglim": [20.1, 20.2]})
+    out, n = completar(rows, "o", "Ia", det, nodet)
+    assert n == 2 and len(out) == 4
+    new = out.iloc[2:]
+    assert list(new.mjd) == [102.0, 110.0] and list(new["filter"]) == ["g", "r"]
+    assert list(new.upperlimit) == ["F", "T"] and new.magerr.iloc[0] == 0.06 and np.isnan(new.magerr.iloc[1])
+    assert new.magnitud_proyectada.iloc[1] == 20.2
+    assert completar(rows, "x2", "Ia", det, nodet)[1] == 0

@@ -28,6 +28,11 @@ EXCLUIR_MANUAL = DATA / "excluir_manual_reales.csv"      # versionado: decision 
 # Detecciones de ALeRCE (isdiffpos) de las reales: el cache de val de calib_ruido y el del resto de las SNe.
 ALERCE_CACHES = (DATA / "ruido_alerce_val.csv", DATA / "reales_alerce_cache.csv")
 TOL_MJD, TOL_MAG = 1e-3, 2e-3     # el .dat trae mjd y magnitud con 3 decimales
+# Los .dat se bajaron hasta ~2025-12-04 (ultima fila MJD 61013.53). Mauricio 2026-10-04: las SNe con ultima fila a menos
+# de COMPLETAR_DIAS de la descarga se completan con las detecciones y no detecciones posteriores de la API de ALeRCE
+# (cortadas por la descarga, no por la SN). Caches versionados, bajados a ciegas para todo el holdout.
+SNAPSHOT_MJD, COMPLETAR_DIAS = 61013.53, 90.0
+API_COMPLETAR = (DATA / "api_completar_det.csv", DATA / "api_completar_nodet.csv")
 
 
 def photometry_rows(sn, label, filters_data, bands=("g", "r")):
@@ -41,6 +46,45 @@ def photometry_rows(sn, label, filters_data, bands=("g", "r")):
                                  "filter": b, "magnitud_proyectada": d["MAG"].astype(float).to_numpy(),
                                  "magerr": err, "upperlimit": np.where(up, "T", "F")}))
     return pd.concat(out, ignore_index=True) if out else None
+
+
+def completar(rows, oid, label, det, nodet):
+    """Agrega a `rows` (un .dat) las detecciones positivas g/r (magpsf, sigmapsf) y las no detecciones (diffmaglim) de la
+    API posteriores a su ultima fila. -> (rows, n agregadas)."""
+    t_end = float(rows.mjd.max())
+    d = det[(det.oid == oid) & (det.mjd > t_end + TOL_MJD) & (det.isdiffpos > 0) & det.fid.isin((1, 2))]
+    n = nodet[(nodet.oid == oid) & (nodet.mjd > t_end + TOL_MJD) & nodet.fid.isin((1, 2))]
+    b = {1: "g", 2: "r"}
+    extra = pd.DataFrame({"oid": oid, "part_index": np.int32(0), "sn_type": label,
+                          "mjd": np.r_[d.mjd, n.mjd].astype(float), "filter": np.r_[d.fid.map(b), n.fid.map(b)],
+                          "magnitud_proyectada": np.r_[d.magpsf, n.diffmaglim].astype(float),
+                          "magerr": np.r_[d.sigmapsf, np.full(len(n), np.nan)].astype(float),
+                          "upperlimit": np.r_[np.full(len(d), "F"), np.full(len(n), "T")]})
+    if not len(extra):
+        return rows, 0
+    return pd.concat([rows, extra], ignore_index=True), len(extra)
+
+
+def fetch_completar(holdout=None, oc=OC, phot=PHOT):
+    """Baja de la API las detecciones y no detecciones de las SNe cuyo .dat termina a menos de COMPLETAR_DIAS de la
+    descarga (todas: el holdout se baja a ciegas, sin mirar sus curvas)."""
+    from reader import parse_photometry_file
+    from pipeline78.holdout import CARPETA_CLASE
+    carpetas = [c for c, _, _ in CARPETA_CLASE]
+    oids = []
+    for oid in sorted(set(load_meta(holdout, oc).oid)):
+        f = next((Path(phot) / c / f"{oid}_photometry.dat" for c in carpetas
+                  if (Path(phot) / c / f"{oid}_photometry.dat").exists()), None)
+        if f is None:
+            continue
+        fd, _ = parse_photometry_file(str(f))
+        t = max((float(x["MJD"].astype(float).max()) for x in fd.values() if len(x)), default=-np.inf)
+        if t > SNAPSHOT_MJD - COMPLETAR_DIAS:
+            oids.append(oid)
+    print(f"{len(oids)} SNe con el .dat a menos de {COMPLETAR_DIAS} d de la descarga", flush=True)
+    _alerce.fetch(oids, API_COMPLETAR[0], cols=["oid", "mjd", "fid", "magpsf", "sigmapsf", "diffmaglim", "isdiffpos"])
+    _alerce.fetch(oids, API_COMPLETAR[1], ep="non_detections")
+    return oids
 
 
 def load_alerce(paths=ALERCE_CACHES):
@@ -100,13 +144,15 @@ def load_meta(holdout=None, oc=OC):
     return pd.concat([h] + v, ignore_index=True)
 
 
-def ztf_real_to_parquet(out_dir, holdout=None, oc=OC, phot=PHOT, tns=TNS, excluir_manual=None, alerce=None):
+def ztf_real_to_parquet(out_dir, holdout=None, oc=OC, phot=PHOT, tns=TNS, excluir_manual=None, alerce=None,
+                        api=None):
     """alerce: DataFrame de alertas (load_alerce) o lista de caches csv para sacar las restas negativas. None: no se
     revisan (las filas identicas se sacan igual)."""
     from reader import parse_photometry_file
     if alerce is not None and not isinstance(alerce, pd.DataFrame):
         alerce = load_alerce(alerce)
     por_oid = {} if alerce is None else {k: g.reset_index(drop=True) for k, g in alerce.groupby("oid")}
+    api_det, api_nodet = (pd.read_csv(api[0]), pd.read_csv(api[1])) if api else (None, None)
     out_dir = Path(out_dir).expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)
     meta = load_meta(holdout, oc)
@@ -129,6 +175,9 @@ def ztf_real_to_parquet(out_dir, holdout=None, oc=OC, phot=PHOT, tns=TNS, exclui
         rows = photometry_rows(r.oid, r.sn_type, fd)
         if rows is None:
             empty.append(r.oid); continue
+        n_api = 0
+        if api_det is not None and rows.mjd.max() > SNAPSHOT_MJD - COMPLETAR_DIAS:   # (0) cortadas por la descarga
+            rows, n_api = completar(rows, r.oid, r.sn_type, api_det, api_nodet)
         n0 = len(rows)
         rows = rows.drop_duplicates().reset_index(drop=True)          # (1) filas identicas
         n_dup = n0 - len(rows)
@@ -144,7 +193,8 @@ def ztf_real_to_parquet(out_dir, holdout=None, oc=OC, phot=PHOT, tns=TNS, exclui
         if not (rows.upperlimit == "F").any():          # nada de la SN en la ventana
             empty.append(r.oid); continue
         res[r.oid] = dict(t_disc=t_disc, **s, n_det_r=int(((rows["filter"] == "r") & (rows.upperlimit == "F")).sum()),
-                          n_duplicadas=n_dup, n_negativas=int(neg.sum()), alerce=r.oid in por_oid)
+                          n_duplicadas=n_dup, n_negativas=int(neg.sum()), alerce=r.oid in por_oid,
+                          n_api=n_api)
         frames.setdefault(r.sn_type, []).append(rows)
     for label, fr in frames.items():
         pd.concat(fr, ignore_index=True).to_parquet(out_dir / f"{label}.parquet", index=False)
@@ -194,7 +244,10 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="fotometria real ZTF -> parquets con el esquema de la proyeccion")
     ap.add_argument("--out", default=str(Path.home() / "thesis_runs/real_ztf"))
     ap.add_argument("--fetch-alerce", action="store_true", help="baja las alertas que falten en reales_alerce_cache.csv")
+    ap.add_argument("--fetch-completar", action="store_true", help="baja de la API lo posterior a la descarga de los .dat")
     a = ap.parse_args()
     if a.fetch_alerce:
         fetch_alerce_reales()
-    ztf_real_to_parquet(Path(a.out), alerce=ALERCE_CACHES)
+    if a.fetch_completar:
+        fetch_completar()
+    ztf_real_to_parquet(Path(a.out), alerce=ALERCE_CACHES, api=API_COMPLETAR if API_COMPLETAR[0].exists() else None)

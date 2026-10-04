@@ -41,11 +41,11 @@ def _frame(rows, cols):
     return df
 
 
-def fetch(oids, cache, ep="detections", workers=4, every=100):
+def fetch(oids, cache, ep="detections", workers=4, every=100, cols=None):
     """Bajar `ep` (detections o non_detections) de cada oid y guardar en `cache` (csv, .gz si el nombre lo dice).
     Reanuda: los oid que ya estan en el cache no se vuelven a pedir. Guarda cada `every` objetos. Un oid sin filas en
     ALeRCE no queda en el cache (se vuelve a pedir si se reanuda). Devuelve (cache completo, oid que fallaron)."""
-    cols = DET_COLS if ep == "detections" else ND_COLS
+    cols = cols or (DET_COLS if ep == "detections" else ND_COLS)
     cache = Path(cache)
     old = pd.read_csv(cache) if cache.exists() else _frame([], cols)
     todo = sorted(set(oids) - set(old.oid))
