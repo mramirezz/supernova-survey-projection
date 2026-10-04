@@ -11,6 +11,15 @@ Tiempo (time_enc):
   con gamma una serie de Fourier de H armonicos FIJOS h / T_max y coeficientes APRENDIDOS, un juego por banda.
   Como en el codigo, h = 0..H-1 (el paper escribe h = 1..H) y los coeficientes se inicializan con randn. H = 64 y
   T_max = 1500 d son los del paper (Sec. 2.2.5). Reemplaza al embedding sinusoidal (no se suma nada mas).
+  NO es una replica de ATAT, es el TimeModulator de ATAT aplicado a nuestro token (revision H3):
+  (1) En ATAT LL(x) = W_TM x con x = (flujo, error), una matriz E x 2 SIN sesgo (ec. 1 y nota 9). Aca LL es un
+      nn.Linear CON sesgo sobre el token completo [dt/100, m - m_ref, 10 sigma_m, es_UL, banda] (en la GRU ademas
+      log(1 + gap)), asi que el tiempo entra tambien linealmente, y la banda va en el token y en el juego de
+      coeficientes.
+  (2) En ATAT t son los dias desde el primer punto de fotometria forzada. Aca son los dias desde la primera deteccion
+      (marco observado), negativos en los UL previos (hasta -60 d).
+  (3) Magnitudes relativas a la mediana y UL con bandera, no flujo de fotometria forzada.
+  (4) Sin token [CLS], sin rama tabular ni QFT: el transformer promedia con mascara.
 
 Pooling de la GRU (gru_pool):
 - "last" (default): estado oculto final de la capa superior (concatena las dos direcciones si es bidireccional).

@@ -15,8 +15,9 @@ REGLAS
    las metricas sobre las cubiertas. Con nn_run se calculan tambien las metricas de la red sobre las MISMAS oids, y
    la corrida NN tiene que tener las mismas clases y el mismo use_z (assert, revision B3).
 5. Salida comun (nn-lit-brief): preds.parquet con la celda principal (natural, g+r, todas) de las reales cubiertas y
-   las sims de validacion, resumida con evaluate.summarize. Villar no pasa por la degradacion (revision M2): con
-   menos de 7 detecciones no ajusta, asi que alli la comparacion es de cobertura.
+   las sims de validacion, resumida con evaluate.summarize por subconjunto (val_rep, val_sel y val, de
+   pipeline78.splits). Villar no pasa por la degradacion (revision M2): con menos de 7 detecciones no ajusta, asi que
+   alli la comparacion es de cobertura.
 """
 import csv
 import json
@@ -25,7 +26,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 from pipeline78.nnclf import data as D
-from pipeline78.nnclf.evaluate import metrics, summarize, write_outputs, print_summary
+from pipeline78.nnclf.evaluate import metrics, summarize, write_outputs, print_summary, val_subsets
 from pipeline78.paths import RUNS
 
 SIM_FEAT = RUNS / "features_ztf_v78_t9_final/features/features.csv"
@@ -158,8 +159,10 @@ def run_baseline(name=None, use_z=False, four_classes=False, n_folds=5, fold=0, 
             t[f"p_{c}"] = pp[:, i].astype(np.float32) if len(t) else []
         parts.append(t)
     tab = pd.concat(parts, ignore_index=True)
-    sres, agg = summarize(tab, cls, len(v), villar_oids=list(R.oid.astype(str)))
-    write_outputs(out / "comun", tab, sres, agg, cls, {"method": "villar", "use_z": use_z, "sim_feat": str(sim_feat)})
+    subsets = val_subsets(real_dir, four_classes)
+    sres, agg = summarize(tab, cls, len(v), villar_oids=list(R.oid.astype(str)), subsets=subsets)
+    write_outputs(out / "comun", tab, sres, agg, cls, {"method": "villar", "use_z": use_z, "sim_feat": str(sim_feat),
+                                                       "real_feat": str(real_feat)}, subsets)
     res["comun"] = {k: sres[k] for k in ("coverage", "n_main", "calibration", "sims_main_all_gr") if k in sres}
     if nn_run:
         nn = pd.read_csv(Path(out_root) / nn_run / "pred_real_val.csv")

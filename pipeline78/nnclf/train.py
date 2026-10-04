@@ -130,6 +130,11 @@ def load_model(out_dir, device="cpu"):
     return model.to(device).eval(), cfg, ck
 
 
+def n_params(model):
+    """Parametros entrenables. La cola los usa para decidir cual arquitectura es la mas simple."""
+    return int(sum(p.numel() for p in model.parameters() if p.requires_grad))
+
+
 def _count(curves, cls):
     return {c: int(sum(k.y == i for k in curves)) for i, c in enumerate(cls)}
 
@@ -200,8 +205,9 @@ def train(cfg):
     model.load_state_dict(best_state)
     torch.save({"state_dict": best_state, "config": asdict(cfg), "classes": cls, "best_epoch": best_ep}, out / "model.pt")
     pd.DataFrame(hist).to_csv(out / "history.csv", index=False)
-    (out / "config.json").write_text(json.dumps({**asdict(cfg), "versions": {"torch": torch.__version__,
-                                                                             "numpy": np.__version__}}, indent=1))
+    (out / "config.json").write_text(json.dumps({**asdict(cfg), "n_params": n_params(model),
+                                                 "versions": {"torch": torch.__version__, "numpy": np.__version__}},
+                                                indent=1))
     (out / "split.json").write_text(json.dumps({
         "val_templates": sorted(val_tpl), "val_keys": [c.key for c in va],
         "n_train": _count(tr, cls), "n_val": _count(va, cls), "best_epoch": best_ep, "best_val_loss": best_loss,

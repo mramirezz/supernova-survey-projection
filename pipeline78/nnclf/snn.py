@@ -23,7 +23,9 @@ la misma que ve la red con sus pesos. SuperNNova elige el modelo por la perdida 
 
 DOS DATABASES: train (sims) y test (reales val en todas las celdas de evaluate, natural y fija, mas la celda principal
 de las sims de validacion para la brecha sim -> real). La prediccion usa la normalizacion guardada con el modelo
-(data_norm.json), asi que las reales no entran a la normalizacion. Los databases se cachean por parametros.
+(data_norm.json), asi que las reales no entran a la normalizacion. Los databases se cachean por parametros y por el
+md5 del codigo que arma las celdas y la conversion (snn.py, data.py y evaluate.py; revision H9): si cambia la
+conversion o las celdas, se arma un database nuevo.
 
 MODELO: los defaults de SuperNNova 3.0.51 (LSTM bidireccional, 2 x 32, salida "mean", dropout 0.05, batch 128,
 lr 1e-3, random_length). --snn-model variational es la variante bayesiana (MC dropout) del paper.
@@ -38,7 +40,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from pipeline78.nnclf import data as D
-from pipeline78.nnclf.evaluate import enumerate_cells, summarize, write_outputs, print_summary, villar_oids_or_none
+from pipeline78.nnclf.evaluate import (enumerate_cells, summarize, write_outputs, print_summary, villar_oids_or_none,
+                                       val_subsets)
 
 SNN_PY = Path(os.environ.get("SNN_PY", Path.home() / "venvs/snn/bin/python"))
 RUNNER = Path(__file__).with_name("snn_runner.py")
@@ -109,11 +112,20 @@ def balanced_train(tr, n_cls, seed, balance):
     return keep
 
 
+def code_hash():
+    """md5 del codigo que define las celdas y la conversion (revision H9)."""
+    from pipeline78.nnclf import evaluate
+    h = hashlib.md5()
+    for f in (Path(__file__), Path(D.__file__), Path(evaluate.__file__)):
+        h.update(f.read_bytes())
+    return h.hexdigest()[:10]
+
+
 def build_dbs(name, sim_run, real_dir, four_classes, n_folds, fold, seed, max_sims, balance, n_draws, out_root,
               threads, log):
     classes = D.classes(four_classes)
     tag = hashlib.md5(json.dumps([str(sim_run), str(real_dir), four_classes, n_folds, fold, seed, max_sims, balance,
-                                  n_draws]).encode()).hexdigest()[:10]
+                                  n_draws, code_hash()]).encode()).hexdigest()[:10]
     db = Path(out_root) / f"_snn_db_{tag}"
     done = db / "done.json"
     curves = D.load_sims(sim_run, four_classes, max_sims=max_sims or None, seed=seed)
@@ -190,11 +202,12 @@ def run_snn(name, use_z=False, four_classes=False, n_folds=5, fold=0, seed=D.SEE
     for i, c in enumerate(classes):
         tab[f"p_{c}"] = tab.pop(f"all_class{i}").astype(np.float32)
     tab = tab.drop(columns=["SNID"])
-    res, agg = summarize(tab, classes, n_real_total, villar_oids_or_none(real_dir, four_classes))
+    subsets = val_subsets(real_dir, four_classes)
+    res, agg = summarize(tab, classes, n_real_total, villar_oids_or_none(real_dir, four_classes), subsets)
     extra = {"method": "supernnova", "snn_model": snn_model, "use_z": use_z, "balance": balance, "nb_epoch": nb_epoch,
              "model_file": model_file, "db": str(db), "info": info,
              "times_s": {"train": t_train, "predict": t_pred, "total": time.time() - t0}}
-    res = write_outputs(out, tab, res, agg, classes, extra)
+    res = write_outputs(out, tab, res, agg, classes, extra, subsets)
     (out / "config.json").write_text(json.dumps({"method": "supernnova", "use_z": use_z, "snn_model": snn_model,
                                                  "four_classes": four_classes, "fold": fold, "seed": seed,
                                                  "nb_epoch": nb_epoch, "balance": balance, "sim_run": str(sim_run),

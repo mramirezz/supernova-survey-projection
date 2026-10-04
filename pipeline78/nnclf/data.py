@@ -5,8 +5,10 @@ REGLAS
    Deteccion = upperlimit 'F'. Entra la sim con >= MIN_DET detecciones en g+r (no las 7 de Villar).
 2. Clases: Ia, II (= II + IIb), Ibc. IIn fuera, salvo four_classes=True (Ia, II, Ibc, IIn). El mapeo sale de
    sn_type y no de clf_class, porque clf_class de la T9 junta IIn con II.
-3. Validacion real: RUNS/real_ztf, origen holdout & split val & ~excluir. La lectura filtra por oid dentro de
+3. Validacion real: RUNS/real_ztf, origen holdout & split val & ~excluir. meta_real_ztf.csv se lee con
+   pipeline78.splits.read_val_meta (csv, solo las filas val llegan a pandas) y la fotometria filtra por oid dentro de
    pyarrow (filters), asi las filas de la mitad final nunca se materializan. No se usan las viejas ni las plantillas.
+   La mitad val se parte en val_sel (elegir y calibrar) y val_rep (reportar) con pipeline78.splits.val_split.
 4. Token por observacion: [dt/100, m - m_ref, 10 magerr (0 en UL), es_UL, g, r]. dt en dias (marco observado)
    desde la primera deteccion g/r de la curva de entrada. m_ref = MEDIANA de las detecciones de la curva de entrada
    (despues del aumento o la degradacion). dt va aparte al embedding temporal continuo del modelo.
@@ -36,7 +38,11 @@ REGLAS
    "frac" conserva las primeras floor(f n_det) detecciones con f ~ U(0.1, 1) (preset ZTF_Sims-lite del repo
    dev-ved30/Oracle, truncate_ZTF_SIM_light_curve_fractionally, que cuenta filas y no detecciones). "both" elige uno
    de los dos al azar. Adaptacion propia: el corte nunca deja menos de MIN_DET detecciones, y se aplica despues del
-   modo solo r y antes del raleo.
+   modo solo r y antes del raleo. Con p_trunc < 1 solo esa fraccion de las vistas se trunca (revision H4: p = 1 casi
+   nunca deja la curva entera, y la evaluacion principal es la curva completa).
+13. Horizonte temporal (evaluacion, revision H4): solo las bandas de la celda y t <= t_primera + H dias (marco
+   observado), con t_primera la primera deteccion en esas bandas. Los UL previos se conservan. None si quedan menos de
+   MIN_DET detecciones.
 """
 import zlib
 from dataclasses import dataclass, replace
@@ -48,6 +54,7 @@ import pyarrow.compute as pc
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 from pipeline78.paths import RUNS, FILTERS
+from pipeline78.splits import read_val_meta
 
 SIM_RUN = RUNS / "ztf_v78_t9_final"
 REAL_DIR = RUNS / "real_ztf"
@@ -192,13 +199,12 @@ def balance_weights(y, w, n_cls):
 
 # ---------------------------------------------------------------- reales (solo la mitad val)
 def real_val_meta(real_dir=REAL_DIR, four_classes=False):
-    m = pd.read_csv(Path(real_dir) / "meta_real_ztf.csv")
-    excl = m.excluir.astype(str).str.lower().isin(["true", "1"])
-    v = m[(m.origen == "holdout") & (m.split == "val") & ~excl].copy()
+    """Metadatos de la mitad val de las clases pedidas. read_val_meta verifica que ninguna oid val este en otro split
+    y no guarda las filas de la mitad final (revision H10)."""
+    v = read_val_meta(Path(real_dir) / "meta_real_ztf.csv")
+    v["oid"] = v.oid.astype(str)
     v["cls"] = v.sn_type.map(lambda t: class_of(t, four_classes))
-    v = v[v.cls.notna()].reset_index(drop=True)
-    assert not set(v.oid) & set(m.oid[m.split != "val"]), "una oid de val aparece en otro split"
-    return v
+    return v[v.cls.notna()].reset_index(drop=True)
 
 
 def load_real_val(real_dir=REAL_DIR, four_classes=False, min_det=MIN_DET):
@@ -322,3 +328,14 @@ def degrade(c, n, bands, rng, min_det=MIN_DET):
         keep[rng.choice(det, len(det) - n, replace=False)] = False
         c = c.subset(keep)
     return c
+
+
+def cut_horizon(c, h_days, bands, min_det=MIN_DET):
+    """Regla 13. h_days = None es la curva completa en esas bandas. None si no quedan min_det detecciones."""
+    c = c.subset(np.isin(c.band, [BAND_ID[b] for b in bands]))
+    det = ~c.ul
+    if det.sum() < min_det:
+        return None
+    if h_days is not None:
+        c = c.subset(c.t <= c.t[det].min() + h_days)
+    return c if c.n_det() >= min_det else None

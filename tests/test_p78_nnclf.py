@@ -304,7 +304,7 @@ def test_temperature_scaling_y_ece():
     assert 2.8 < T < 3.9                                             # deshace el afilado: T ~ 1 / 0.3
     assert calib.ece(p_sobre, yy) > 2 * calib.ece(calib.apply_temperature(p_sobre, T), yy)
     rep = calib.calibration_report(p_sobre, yy)
-    assert rep["ece_ts_cv5"] < rep["ece_raw"] and len(rep["reliability_raw"]) == calib.N_BINS
+    assert rep["ece_ts_cv5_val"] < rep["by_subset"]["val"]["ece_raw"] and len(rep["reliability_raw"]) == calib.N_BINS
     # ECE a mano: dos predicciones con confianza 0.9 y 0.6, una acierta
     p = np.array([[0.9, 0.05, 0.05], [0.6, 0.3, 0.1]])
     assert np.isclose(calib.ece(p, np.array([0, 1]), n_bins=10), 0.5 * 0.1 + 0.5 * 0.6)
@@ -324,7 +324,8 @@ def test_summarize_oids_villar_y_cobertura():
     vo = res["villar_oids"]
     assert vo["n_comun"] == 4 and np.isclose(vo["metrics"]["acc"], 3 / 4)
     row = summary_row("x", "nn", res, agg, cls)
-    assert row["n_villar_oids"] == 4 and np.isclose(row["coverage"], 0.75)
+    assert row["n_villar_oids_val"] == 4 and np.isclose(row["coverage_val"], 0.75)
+    assert "bal_acc_rep" not in row                                         # sin particion no hay _rep
 
 
 def test_conversion_supernnova():
@@ -346,6 +347,186 @@ def test_conversion_supernnova():
     bal = snn.balanced_train(tr, 3, 0, "subsample")
     assert [sum(b.y == k for b in bal) for k in range(3)] == [11, 11, 11]
     assert len({b.key for b in bal}) == 33 and snn.balanced_train(tr, 3, 0, "none") is tr
+
+
+# ---------------------------------------------------------------- particion anidada (revision H1)
+def test_real_val_meta_via_splits():
+    # data.real_val_meta lee meta_real_ztf.csv con splits.read_val_meta (solo las filas val llegan a pandas, H10)
+    tmp = Path(tempfile.mkdtemp())
+    _fake_real(tmp)
+    v = D.real_val_meta(tmp)
+    assert set(v.oid) == {"ZTF00val", "ZTF02val", "ZTF03val"} and set(v.split) == {"val"}
+    assert set(D.real_val_meta(tmp, four_classes=True).oid) == {"ZTF00val", "ZTF02val", "ZTF03val", "ZTF06val"}
+
+
+def test_bootstrap_pareado():
+    from sklearn.metrics import balanced_accuracy_score
+    from pipeline78.nnclf.experimentos import paired_bootstrap
+    rng = np.random.default_rng(0)
+    y = np.repeat([0, 1, 2], [80, 120, 50])
+    ok = rng.random(len(y)) < 0.6
+    d, p, ci = paired_bootstrap(y, ok, ok)
+    assert d == 0 and p == 0.0                                       # empate: no gana (se queda la incumbente)
+    mejor = ok | (rng.random(len(y)) < 0.4)                          # acierta todo lo de ok y mas
+    d, p, ci = paired_bootstrap(y, mejor, ok)
+    yhat_m, yhat_o = np.where(mejor, y, (y + 1) % 3), np.where(ok, y, (y + 1) % 3)
+    assert np.isclose(d, balanced_accuracy_score(y, yhat_m) - balanced_accuracy_score(y, yhat_o))
+    assert p > 0.99 and ci[0] > 0
+    ruido = rng.random(len(y)) < 0.6                                 # misma tasa, otra suerte
+    assert paired_bootstrap(y, ruido, ok)[1] < 0.9
+
+
+def _fake_run(root, name, preds, n_params=1000, cfg=None):
+    """Corrida falsa para la cola: pred_real_val.csv (oid, y_true, y_pred) y config.json."""
+    d = Path(root) / name
+    d.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(preds).to_csv(d / "pred_real_val.csv", index=False)
+    (d / "metrics.json").write_text("{}")
+    base = {"model": "gru", "use_z": False, "band_enc": "onehot", "time_enc": "sin", "gru_pool": "last",
+            "trunc": "none", "p_trunc": 1.0, "bidir": False, "n_params": n_params}
+    import json
+    (d / "config.json").write_text(json.dumps({**base, **(cfg or {})}))
+
+
+def _preds(oids, y, acc_sel, acc_rep, sel, seed):
+    """Predicciones con exactitud acc_sel en val_sel y acc_rep en val_rep (por clase, exacta)."""
+    cls = ("Ia", "II", "Ibc")
+    rng = np.random.default_rng(seed)
+    yp = []
+    for o, k in zip(oids, y):
+        a = acc_sel if o in sel else acc_rep
+        yp.append(cls[k] if rng.random() < a else cls[(k + 1) % 3])
+    return {"oid": oids, "y_true": [cls[k] for k in y], "y_pred": yp}
+
+
+def test_cola_seleccion_anidada():
+    import json
+    from pipeline78.nnclf import experimentos as X
+    root = Path(tempfile.mkdtemp())
+    oids = [f"o{k:03d}" for k in range(600)]
+    y = [k % 3 for k in range(600)]
+    sel = set(oids[:300])
+    P = lambda a_sel, a_rep, s: _preds(oids, y, a_sel, a_rep, sel, s)          # noqa: E731
+    # gru: lambda y attnpool ganan en val_sel; trunc05 gana (y a trunc); trunc pierde. En val_rep todo al reves.
+    _fake_run(root, "gru_base", P(0.50, 0.90, 1), 1000)
+    _fake_run(root, "gru_lambda", P(0.65, 0.40, 2), 1000, {"band_enc": "lambda"})
+    _fake_run(root, "gru_attnpool", P(0.66, 0.40, 3), 1200, {"bidir": True, "gru_pool": "attn"})
+    _fake_run(root, "gru_trunc", P(0.40, 0.99, 4), 1000, {"trunc": "both"})
+    _fake_run(root, "gru_trunc05", P(0.70, 0.40, 5), 1000, {"trunc": "both", "p_trunc": 0.5})
+    # tf: solo timemod gana; tf_trunc05 no existe (falta)
+    _fake_run(root, "tf_base", P(0.50, 0.50, 6), 5000, {"model": "transformer"})
+    _fake_run(root, "tf_lambda", P(0.51, 0.99, 7), 5000, {"model": "transformer", "band_enc": "lambda"})
+    _fake_run(root, "tf_timemod", P(0.70, 0.50, 8), 6000, {"model": "transformer", "time_enc": "atat"})
+    _fake_run(root, "tf_trunc", P(0.30, 0.99, 9), 5000, {"model": "transformer", "trunc": "both"})
+    info = X.fase2_select(root, "", sel)
+    assert info["gru"]["pasan"] == ["gru_lambda", "gru_attnpool", "gru_trunc05"]     # un ganador por slot
+    assert info["gru"]["comb"] == "gru_comb_lambda_attnpool_trunc05"
+    jobs = X.fase2_comb_jobs(info)
+    assert len(jobs) == 1 and jobs[0][0] == "gru_comb_lambda_attnpool_trunc05"      # tf no necesita combinacion
+    fl = jobs[0][2]
+    assert fl[:2] == ["--model", "gru"] and "lambda" in fl and "attn" in fl and fl.count("--trunc") == 1
+    assert fl[fl.index("--p-trunc") + 1] == "0.5"
+    assert info["tf"]["pasan"] == ["tf_timemod"] and info["tf"]["comb"] is None
+    assert info["tf"]["faltan"] == ["tf_trunc05"]
+    # la combinacion no le gana a la mejor individual en val_sel (aunque en val_rep sea mucho mejor): queda trunc05
+    _fake_run(root, "gru_comb_lambda_attnpool_trunc05", P(0.70, 1.00, 10), 1300,
+              {"band_enc": "lambda", "bidir": True, "gru_pool": "attn", "trunc": "both", "p_trunc": 0.5})
+    jz = X.fase2_decide(root, "", sel, X.fase2_select(root, "", sel))
+    e = json.loads((root / "fase2_eleccion.json").read_text())
+    assert e["arquitecturas"]["gru"]["mejor"] == "gru_trunc05" and e["arquitecturas"]["tf"]["mejor"] == "tf_timemod"
+    # gru tiene menos parametros: es la incumbente y tf_timemod (0.70) no le gana a gru_trunc05 (0.70)
+    assert e["arquitectura"] == "gru" and e["mejor_noz"] == "gru_trunc05"
+    assert jz == [("gru_trunc05_z", "nn", ["--model", "gru", "--band-enc", "onehot", "--time-enc", "sin", "--gru-pool",
+                                          "last", "--trunc", "both", "--p-trunc", "0.5", "--use-z"])]
+    # ahora la combinacion si gana en val_sel
+    _fake_run(root, "gru_comb_lambda_attnpool_trunc05", P(0.95, 0.10, 11), 1300,
+              {"band_enc": "lambda", "bidir": True, "gru_pool": "attn", "trunc": "both", "p_trunc": 0.5})
+    jz = X.fase2_decide(root, "", sel, X.fase2_select(root, "", sel))
+    assert jz[0][0] == "gru_comb_lambda_attnpool_trunc05_z"
+    # fase 3: z gana en val_sel -> folds y ensemble de la corrida con z
+    _fake_run(root, "gru_comb_lambda_attnpool_trunc05_z", P(1.0, 0.0, 12), 1310,
+              {"band_enc": "lambda", "bidir": True, "gru_pool": "attn", "trunc": "both", "p_trunc": 0.5, "use_z": True})
+    j3 = X.fase3(root, "", sel)
+    assert [j[0] for j in j3] == [f"gru_comb_lambda_attnpool_trunc05_z_f{k}" for k in range(1, 5)] + \
+        ["gru_comb_lambda_attnpool_trunc05_z_ens5"]
+    assert j3[0][2][-2:] == ["--fold", "1"] and "--use-z" in j3[0][2]
+    assert j3[-1][2][1:] == ["gru_comb_lambda_attnpool_trunc05_z"] + \
+        [f"gru_comb_lambda_attnpool_trunc05_z_f{k}" for k in range(1, 5)]
+    # con prefijo smoke_ no se mezcla con las corridas sin prefijo (revision H7)
+    try:
+        X.fase3(root, "smoke_", sel)
+        raise AssertionError("fase 3 con prefijo uso la eleccion sin prefijo")
+    except SystemExit:
+        pass
+
+
+def test_horizonte_y_muestra_fija():
+    from pipeline78.nnclf.evaluate import enumerate_cells, FIXED_MIN, HORIZONS
+    c = _curve(n_det_g=30, n_det_r=30, n_ul_pre=3, t_pre=(-50.0, -30.0, -5.0))     # 3 d entre epocas
+    td = c.t[~c.ul].min()
+    prev = -1
+    for h in HORIZONS + (None,):
+        d = D.cut_horizon(c, h, ("g", "r"))
+        assert d.n_det() >= prev and (h is None or d.t.max() <= td + h)
+        assert (d.ul & (d.t < td)).sum() == 3                                       # UL previos conservados
+        prev = d.n_det()
+    assert D.cut_horizon(c, 10, ("r",)).band.tolist() == [1] * len(D.cut_horizon(c, 10, ("r",)).t)
+    assert D.cut_horizon(_curve(n_det_g=1, n_det_r=1), 10, ("g", "r")) is None
+    cs = _curvas_reales_falsas() + [_curve(n_det_g=2, n_det_r=12, key="lenta", y=1)]
+    cs[-1].t[~cs[-1].ul] = np.sort(np.r_[1000.0, 1000.5, 1100 + 3 * np.arange(12)])  # 2 det en 10 d y luego nada
+    meta, dcs = enumerate_cells(cs, n_draws=2, seed=3, fixed=True)
+    for bands, bid in (("r", (1,)), ("g+r", (0, 1))):
+        hz = meta[(meta["mode"] == "horizon") & (meta.bands == bands)]
+        assert set(hz.N) == {"10d", "20d", "50d", "all"} and set(hz.draw) == {0}
+        keys = [set(g.key) for _, g in hz.groupby("N")]
+        assert all(k == keys[0] for k in keys)                                      # misma muestra en las 4 celdas
+        fija = {c.key for c in cs if c.n_det(bid) >= FIXED_MIN}
+        assert keys[0] <= fija and "lenta" not in keys[0]
+    assert "horizon" not in set(enumerate_cells(cs, 2, 3, fixed=False)[0]["mode"])
+
+
+def test_correccion_de_priors():
+    from pipeline78.nnclf import calib
+    rng = np.random.default_rng(2)
+    pi = np.array([0.6, 0.3, 0.1])
+    n = 6000
+    y = rng.choice(3, n, p=pi)
+    mu = np.eye(3) * 1.2
+    x = mu[y] + rng.normal(0, 1, (n, 3))
+    lik = np.exp(-0.5 * ((x[:, None, :] - mu[None]) ** 2).sum(-1))
+    p_bal = lik / lik.sum(1, keepdims=True)                          # posterior con prior uniforme (entreno balanceado)
+    sel = np.arange(n) < n // 2
+    rep = calib.calibration_report(p_bal, y, sel, ~sel)
+    assert np.allclose(rep["priors_val_sel"], np.bincount(y[sel], minlength=3) / sel.sum())
+    b = rep["by_subset"]["val_rep"]
+    assert b["n"] == n - n // 2 and rep["fit_on"] == "val_sel"
+    assert b["nll_ts_prior"] < b["nll_ts"] and b["acc_ts_prior"] > b["acc_raw"]     # la mezcla de val se recupera
+    assert b["bal_acc_ts_prior"] < b["bal_acc_raw"]                                 # y la balanceada baja
+    assert 0.8 < rep["T_prior"] < 1.25                                              # el modelo ya estaba calibrado
+    q = calib.apply_temperature(p_bal, 1.0, calib.prior_adjustment(pi))
+    assert np.allclose(q, p_bal * pi / (p_bal * pi).sum(1, keepdims=True))         # softmax(log p + log pi)
+
+
+def test_summarize_por_subconjunto():
+    from pipeline78.nnclf.evaluate import summarize, summary_row, _subset_col
+    cls = ("Ia", "II", "Ibc")
+    rows = []
+    for k in range(60):
+        ok = k < 30 or k % 2 == 0                                    # sel (k < 30) perfecto, rep a medias
+        p = np.eye(3)[k % 3 if ok else (k + 1) % 3] * 0.8 + 0.2 / 3
+        rows.append({"key": f"o{k}", "dataset": "real", "mode": "natural", "bands": "g+r", "N": "all", "draw": 0,
+                     "y": k % 3, "w": 1.0, "n_det": 10, **{f"p_{c}": p[i] for i, c in enumerate(cls)}})
+    tab = pd.DataFrame(rows)
+    subsets = {"val_sel": {f"o{k}" for k in range(30)}, "val_rep": {f"o{k}" for k in range(30, 62)}}
+    res, agg = summarize(tab, cls, 62, subsets=subsets)
+    by = res["main_by_subset"]
+    assert by["val_sel"]["metrics"]["acc"] == 1.0 and by["val_rep"]["metrics"]["acc"] == 0.5
+    assert np.isclose(by["val_rep"]["coverage"], 30 / 32) and by["val"]["metrics"]["acc"] == 0.75
+    assert res["calibration"]["fit_on"] == "val_sel" and res["calibration"]["by_subset"]["val_rep"]["n"] == 30
+    assert set(agg.subset) == {"val_rep", "val_sel", "val"}                     # sin sims en esta tabla
+    row = summary_row("x", "nn", res, agg, cls)
+    assert row["acc_sel"] == 1.0 and row["acc_rep"] == 0.5 and row["acc_val"] == 0.75 and "bal_acc_rep" in row
+    assert list(_subset_col(["o1", "o40", "zz"], subsets)) == ["val_sel", "val_rep", ""]
 
 
 def test_distmod():
