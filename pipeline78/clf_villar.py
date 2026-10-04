@@ -1051,7 +1051,10 @@ def cmd_gap(a):
     out.mkdir(parents=True, exist_ok=True)
     imp.to_csv(out / "gap_importancias.csv", index=False)
     pd.DataFrame(por_clase).to_csv(out / "gap_medianas_por_clase.csv", index=False)
+    # ponytail: usa val completo (sel + rep). Es diagnostico de la simulacion: no elige configuraciones ni ajusta nada.
+    # Restringirlo a val_sel rompe la invariancia a etiquetas (val_split estratifica por clase).
     res = {"auc_sim_vs_real": auc, "n_sims": int(len(S)), "n_real": int(len(R)), "peso": a.peso,
+           "reales": "val completo (val_sel + val_rep), solo diagnostico",
            "top": imp.head(10).to_dict("records")}
     (out / "gap.json").write_text(json.dumps(_jsonable(res), indent=1))
     print(f"[clf_villar] gap {a.name}: AUC sim contra real {auc:.3f} (0.5 = indistinguibles)", flush=True)

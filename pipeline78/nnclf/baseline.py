@@ -6,10 +6,10 @@ REGLAS
    t_fall, gamma, t_rise y la razon de duraciones. Con use_z se agregan M_peak = m_peak - mu(z) y z. Las dos bandas
    se juntan con outer join: la SN con una sola banda ajustada queda con NaN en la otra (HistGradientBoosting los
    acepta). En 00_prep_data.py el join partia de r.
-2. Train: sims de la T9 final con features (RUNS/features_ztf_v78_t9_final), sin las plantillas de validacion
+2. Train: sims de la T9 final2 con features (RUNS/features_ztf_v78_t9_final2), sin las plantillas de validacion
    interna del MISMO split que la red (data.split_templates, mismos n_folds, fold y seed). Pesos w_z por balance
    de clases (data.balance_weights, misma regla que la red).
-3. Validacion: features de las reales (RUNS/features_real_ztf), solo las oids de la mitad val. csv.reader recorre
+3. Validacion: features de las reales (RUNS/features_real_ztf2, post logfix), solo las oids de la mitad val. csv.reader recorre
    todas las lineas pero solo guarda las de oids val: las filas de la mitad final no llegan a pandas ni se guardan.
 4. Cobertura: la real de validacion sin features (Villar no ajusto) queda sin clasificar. Se reporta la cobertura y
    las metricas sobre las cubiertas. Con nn_run se calculan tambien las metricas de la red sobre las MISMAS oids, y
@@ -29,8 +29,8 @@ from pipeline78.nnclf import data as D
 from pipeline78.nnclf.evaluate import metrics, summarize, write_outputs, print_summary, val_subsets
 from pipeline78.paths import RUNS
 
-SIM_FEAT = RUNS / "features_ztf_v78_t9_final/features/features.csv"
-REAL_FEAT = RUNS / "features_real_ztf/features/features.csv"
+SIM_FEAT = RUNS / "features_ztf_v78_t9_final2/features/features.csv"
+REAL_FEAT = RUNS / "features_real_ztf2/features/features.csv"
 PARAMS = ['A', 'f', 't0', 't_rise', 't_fall', 'gamma', 'A_err', 'f_err', 't_rise_err',
           't_fall_err', 'gamma_err', 'rms', 'mad', 'n_points', 'time_span']
 
