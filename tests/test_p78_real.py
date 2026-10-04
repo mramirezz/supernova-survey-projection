@@ -105,6 +105,31 @@ def test_exclusiones_manuales(tmp_path):
     assert len(a) == len(b) == 3
 
 
+def test_duplicados_y_restas_negativas(tmp_path):
+    """Filas identicas fuera siempre. Restas negativas (deteccion emparejada con una alerta de isdiffpos < 0) fuera
+    solo en las SNe que tienen alertas; un UL o una deteccion con alerta positiva se quedan."""
+    from pipeline78.real_to_parquet import ztf_real_to_parquet
+    kw, t, sn = _escenario(tmp_path)
+    _dat(tmp_path / "phot" / "SN Ia" / "ZTF20aaa_photometry.dat", "ZTF20aaa", sn + sn[:3] + [(t + 20, "g", 20.9, "T")])
+    neg = [(t + 60, "g"), (t + 30, "r")]
+    al = pd.DataFrame([("ZTF20aaa", m + 3e-4, {"g": 1, "r": 2}[b], mag + 1e-3, -1 if (m, b) in neg else 1)
+                       for m, b, mag, _ in sn] + [("ZTF20aaa", t + 20, 1, 20.9, -1)],     # alerta negativa de un UL: no cuenta
+                      columns=["oid", "mjd", "fid", "magpsf", "isdiffpos"])
+    m = ztf_real_to_parquet(tmp_path / "out", **kw, alerce=al).set_index("oid")
+    ia = pd.read_parquet(tmp_path / "out" / "Ia.parquet")
+    assert len(ia) == len(sn) - 2 + 1 and not ia.duplicated().any()
+    det = ia[ia.upperlimit == "F"]
+    assert not any((((det.mjd - mj).abs() < 1e-6) & (det["filter"] == b)).any() for mj, b in neg)
+    assert (ia.upperlimit == "T").sum() == 1
+    a = m.loc["ZTF20aaa"]
+    assert a.n_duplicadas == 3 and a.n_negativas == 2 and a.alerce
+    b = m.loc["ZTF20bbb"]                                                     # sin alertas: no se revisa
+    assert b.n_duplicadas == 0 and b.n_negativas == 0 and not b.alerce
+    sin = ztf_real_to_parquet(tmp_path / "sin", **kw)                          # sin alertas: solo las identicas
+    assert len(pd.read_parquet(tmp_path / "sin" / "Ia.parquet")) == len(sn) + 1
+    assert sin.set_index("oid").loc["ZTF20aaa", "n_duplicadas"] == 3 and (sin.n_negativas == 0).all()
+
+
 def test_lista_versionada_de_exclusiones_manuales(tmp_path):
     from pipeline78.real_to_parquet import load_excluir_manual
     man = load_excluir_manual()

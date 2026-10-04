@@ -26,15 +26,17 @@ RUNS_CFG["ztf_v78_fireball"] = dict(RUNS_CFG["ztf_v78"], edge_pre="fireball",
 # UL previos como ALeRCE (solo con una deteccion en los 30 d siguientes) y sin cola en las II de menos de 120 d de
 # reposo (SN2024ggi, SN2016esw terminan en el plateau). Lo heredan la grilla det* y ztf_v78_t9.
 # Ruido de tres terminos (Mauricio 2026-10-04): sigma^2 = (A 1.0857/(5 10^(0.4 dm)))^2 + (B 10^(-0.2 dm))^2 + C^2,
-# dm = m_lim - m_modelo (project.sigma_tres_terminos). Ajuste de pipeline78/calib_ruido.py (2026-10-04) sobre 19171
-# detecciones de 578 SNe del holdout ZTF val (sin excluidas) con 0 <= dm < 4, m_lim = diffmaglim de cada alerta de
-# ALeRCE (data/ruido_alerce_val.csv; el maglim del log en epocas con deteccion es estimado). Error bootstrap sobre SNe
-# (300): g A 0.774 +- 0.035, B 0.1644 +- 0.0054, C 0.0217 +- 0.0054; r A 0.792 +- 0.019, B 0.1371 +- 0.0038,
-# C 0.0258 +- 0.0026. B difiere entre g y r en 4.4 sigma: parametros por banda. i no tiene detecciones reales: usa
-# los de r (supuesto, banda vecina). Medianas por bin dentro del 9 % de las reales (tests/test_p78_ruido.py).
-NOISE_TRES_TERMINOS = {"g": dict(A=0.7738, B=0.1644, C=0.0217),
-                       "r": dict(A=0.7924, B=0.1371, C=0.0258),
-                       "i": dict(A=0.7924, B=0.1371, C=0.0258)}
+# dm = m_lim - m_modelo (project.sigma_tres_terminos). Ajuste de pipeline78/calib_ruido.py sobre 18811 detecciones de
+# 578 SNe del holdout ZTF val (sin excluidas) con 0 <= dm < 4, m_lim = diffmaglim de cada alerta de ALeRCE
+# (data/ruido_alerce_val.csv; el maglim del log en epocas con deteccion es estimado). Reajuste del logfix (2026-10-04):
+# las reales ya no traen filas identicas repetidas ni restas negativas (antes 19171 detecciones; g A 0.7738,
+# B 0.1644, C 0.0217, r sin cambio en 1e-3). Error bootstrap sobre SNe (300): g A 0.788 +- 0.035, B 0.1621 +- 0.0054,
+# C 0.0231 +- 0.0052; r A 0.793 +- 0.019, B 0.1370 +- 0.0037, C 0.0258 +- 0.0026. B difiere entre g y r en 4.1 sigma:
+# parametros por banda. i no tiene detecciones reales: usa los de r (supuesto, banda vecina). Medianas por bin dentro
+# del 10 % de las reales y el ajuste reproduce estos numeros (tests/test_p78_ruido.py).
+NOISE_TRES_TERMINOS = {"g": dict(A=0.7882, B=0.1621, C=0.0231),
+                       "r": dict(A=0.7930, B=0.1370, C=0.0258),
+                       "i": dict(A=0.7930, B=0.1370, C=0.0258)}
 # Log con limites reales (logfix, controlador 2026-10-04): en las epocas con deteccion del objeto del campo el maglim de
 # ztf_obslog_best es estimado y recortado a >= m + 0.5. ztf_obslog_alerce lo reemplaza por el diffmaglim de la alerta
 # de ALeRCE (pipeline78/obslog_alerce.py). Solo los 1000 campos de ztf_fields_1000.txt. ztf_v78 sigue con el log viejo.

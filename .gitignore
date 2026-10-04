@@ -18,6 +18,8 @@ data/*
 !data/ruido_alerce_val.csv
 # alertas ALeRCE (diffmaglim) de los 1000 campos de la proyeccion, entrada de pipeline78/obslog_alerce.py (2026-10-04)
 !data/obslog_alerce_cache.csv.gz
+# alertas ALeRCE (isdiffpos) de las SNe reales fuera del cache de val, entrada de pipeline78/real_to_parquet.py (2026-10-04)
+!data/reales_alerce_cache.csv
 
 # Python cache
 __pycache__/

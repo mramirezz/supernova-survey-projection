@@ -12,8 +12,8 @@ Dos fuentes de m_lim (--maglim):
     emparejado por oid, banda, mjd y magnitud. Es el limite 5 sigma real de la imagen diferencia de esa deteccion.
   log: maglim de ztf_obslog_best.parquet por oid, banda y dia (floor, como survey._best_per_day). En las epocas con
     deteccion ese valor es ESTIMADO en ZTF_observing_log_complete.csv (diffmaglim_original vacio, estimated=True en
-    el 100 %) y recortado a >= m + 0.5 (41 % de las detecciones val quedan en dm = 0.5 exacto). Solo se usa como
-    comparacion.
+    el 100 %) y recortado a >= m + 0.5 (dm = 0.5 exacto en el 31 % de las detecciones val tras el cruce por dia y en
+    el 41 % de las filas de deteccion del csv). Solo se usa como comparacion.
 Los valores que usan las sims se escriben a mano en runcfg (no se recalculan en cada corrida).
 """
 import argparse, json, time, urllib.request
