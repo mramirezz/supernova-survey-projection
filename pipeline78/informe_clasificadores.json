@@ -1,0 +1,47 @@
+{
+ "_doc": "Config de pipeline78/informe_clasificadores.py. Rutas relativas: nn_root, real_dir, numeros y calib_obs.dir bajo runs_root (null = paths.RUNS); villar_sweep y gap bajo runs_root/clf_villar_root; pagina y calib_obs.figura bajo PHD. 'actual' = produccion final (modelo de observacion t11); 'historia' = runs del modelo viejo (m0 1.25, sin stream de alertas). sims_* son los nombres esperados: la pagina avisa si el run usa otras.",
+ "runs_root": null,
+ "real_dir": "real_ztf",
+ "clf_villar_root": "clf_villar",
+ "pagina": "paper2_ZTF/figures_templates/pipeline78_clasificadores",
+ "atlas": "~/atlas_local/figures_templates/pipeline78_clasificadores",
+ "url": "http://127.0.0.1:8899/figures_templates/pipeline78_clasificadores/index.html",
+ "numeros": "informe_clasificadores/numeros.json",
+ "nn_incumbente": "gru_base",
+ "meta_bal_acc": 0.75,
+ "bins_ndet": [3, 8, 15, 25],
+ "actual": {
+  "etiqueta": "Produccion final: modelo de observacion t11 (alertas, m0 g -0.25 / r 0, k 0.52/0.54, piso 56Co)",
+  "nn_root": "nnclf_t11",
+  "villar_sweep": "sweep_t11_mitig",
+  "gap": "gap_t11_wz",
+  "sims_nn": "ztf_v78_t11_x4",
+  "sims_villar": "ztf_v78_t11_x2"
+ },
+ "historia": [
+  {
+   "etiqueta": "final2: 40 000 sims, modelo viejo (m0 1.25, ruido 1 sigma, sin alertas)",
+   "nn_root": "nnclf",
+   "villar_sweep": "sweep_final2_foco",
+   "gap": "gap_final2_wz",
+   "sims_nn": "ztf_v78_t9_final2",
+   "sims_villar": "ztf_v78_t9_final2"
+  },
+  {
+   "etiqueta": "x2: 80 000 sims, modelo viejo (m0 1.25, ruido 1 sigma, sin alertas)",
+   "nn_root": "nnclf_x2",
+   "villar_sweep": "sweep_x2_mitig",
+   "sims_nn": "ztf_v78_t9_x2",
+   "sims_villar": "ztf_v78_t9_x2"
+  }
+ ],
+ "calib_obs": {
+  "dir": "calib_obs",
+  "figura": "paper2_ZTF/figures_templates/pipeline78_ajustes_mcmc/calib_obs.png"
+ },
+ "pendientes": [
+  "Fase 2/3 de nnclf sobre t11 (ablaciones, z, ensemble de 5 folds) si la fase 1 reducida lo justifica: decide Mauricio.",
+  "Plantillas II: suben rapido en r y no hay II de caida rapida (gap-sintesis R2/P3). Limitacion declarada de la biblioteca.",
+  "Parrafo de la tesis con estas cifras: solo con el visto bueno de Mauricio y con las citas verificadas en ADS."
+ ]
+}
