@@ -24,9 +24,20 @@ RUNS_CFG["ztf_v78_fireball"] = dict(RUNS_CFG["ztf_v78"], edge_pre="fireball",
 # Fix H (Mauricio 2026-10-03): ancla al azar en el log del campo (pivot dejaba todas las sims en las mismas fechas),
 # UL previos como ALeRCE (solo con una deteccion en los 30 d siguientes) y sin cola en las II de menos de 120 d de
 # reposo (SN2024ggi, SN2016esw terminan en el plateau). Lo heredan la grilla det* y ztf_v78_t9.
+# Ruido de tres terminos (Mauricio 2026-10-04): sigma^2 = (A 1.0857/(5 10^(0.4 dm)))^2 + (B 10^(-0.2 dm))^2 + C^2,
+# dm = m_lim - m_modelo (project.sigma_tres_terminos). Ajuste de pipeline78/calib_ruido.py (2026-10-04) sobre 19171
+# detecciones de 578 SNe del holdout ZTF val (sin excluidas) con 0 <= dm < 4, m_lim = diffmaglim de cada alerta de
+# ALeRCE (data/ruido_alerce_val.csv; el maglim del log en epocas con deteccion es estimado). Error bootstrap sobre SNe
+# (300): g A 0.774 +- 0.035, B 0.1644 +- 0.0054, C 0.0217 +- 0.0054; r A 0.792 +- 0.019, B 0.1371 +- 0.0038,
+# C 0.0258 +- 0.0026. B difiere entre g y r en 4.4 sigma: parametros por banda. i no tiene detecciones reales: usa
+# los de r (supuesto, banda vecina). Medianas por bin dentro del 9 % de las reales (tests/test_p78_ruido.py).
+NOISE_TRES_TERMINOS = {"g": dict(A=0.7738, B=0.1644, C=0.0217),
+                       "r": dict(A=0.7924, B=0.1371, C=0.0258),
+                       "i": dict(A=0.7924, B=0.1371, C=0.0258)}
 RUNS_CFG["ztf_v78_t9_bordes"] = dict(RUNS_CFG["ztf_v78"], edge_pre="fireball", rise_Ia_days=18.9, edge_post="tail",
                                      tail_days=150, tail_fit_days=20, tail_min_slope=0.005,
-                                     anchor="uniform", pre_ul_mode="alerce", pre_ul_days=30, tail_min_span={"II": 120.0})
+                                     anchor="uniform", pre_ul_mode="alerce", pre_ul_days=30, tail_min_span={"II": 120.0},
+                                     noise_model="tres_terminos", noise_params=NOISE_TRES_TERMINOS)
 
 # Calibracion de la eficiencia de deteccion (Fix G, 2026-10-03): logistica sobre el S/N medido, sin UL tras la ultima
 # deteccion y la misma limpieza que las reales.

@@ -14,6 +14,8 @@ data/*
 !data/templates_v78_md5.csv
 # exclusiones manuales de SNe reales revisadas por Mauricio (2026-10-03)
 !data/excluir_manual_reales.csv
+# diffmaglim de las alertas ALeRCE del holdout ZTF val, entrada de pipeline78/calib_ruido.py (2026-10-04)
+!data/ruido_alerce_val.csv
 
 # Python cache
 __pycache__/

@@ -25,11 +25,36 @@ def anchor_time(cfg, rng, k, n, epochs):
     raise ValueError(cfg["anchor"])
 
 
-def _noise(mm, ml, rng, cfg):
+SIGMA_MAX = 1.0857 / 1e-6      # mag: el piso de S/N 1e-6 de la regla snr; las filas sin flujo (99) quedan ahi
+
+
+def sigma_tres_terminos(dm, A, B, C):
+    """sigma_m con dm = m_lim - m: fondo (A, S/N 5 en el limite), fuente y host (B, ~F^-1/2) y piso (C), en cuadratura."""
+    dm = np.asarray(dm, float)
+    return np.sqrt((A * 1.0857 / (5.0 * 10.0 ** (0.4 * dm))) ** 2 + (B * 10.0 ** (-0.2 * dm)) ** 2 + C ** 2)
+
+
+def _noise_params(cfg, b):
+    """noise_params global {"A","B","C"} o por banda {"g": {...}, "r": {...}, ...}."""
+    p = cfg["noise_params"]
+    p = p if "A" in p else p[b]
+    return p["A"], p["B"], p["C"]
+
+
+def _noise(mm, ml, rng, cfg, b):
+    """noise_model "snr" (default): sigma = clip(1.0857/S/N, sigma_floor), S/N = noise_k 10^(0.4 (ml - mm)).
+    "tres_terminos": sigma_tres_terminos(ml - mm, A, B, C) con cfg["noise_params"], tope SIGMA_MAX (el mismo piso de
+    S/N 1e-6: una fila sin flujo queda en m_obs ~ 84 en _det y nunca se detecta). Un solo sorteo normal por fila."""
     if cfg["rule"] != "ztf":
         raise ValueError(cfg["rule"])
-    snr = cfg["noise_k"] * 10.0 ** (0.4 * (ml - mm))      # identico a multiband_projection.py:356-372
-    sig = np.clip(1.0857 / np.maximum(snr, 1e-6), cfg["sigma_floor"], None)
+    model = cfg.get("noise_model", "snr")
+    if model == "snr":
+        snr = cfg["noise_k"] * 10.0 ** (0.4 * (ml - mm))      # identico a multiband_projection.py:356-372
+        sig = np.clip(1.0857 / np.maximum(snr, 1e-6), cfg["sigma_floor"], None)
+    elif model == "tres_terminos":
+        sig = np.minimum(sigma_tres_terminos(ml - mm, *_noise_params(cfg, b)), SIGMA_MAX)
+    else:
+        raise ValueError(f"noise_model={model!r}")
     return mm + rng.normal(0.0, sig), sig
 
 
@@ -85,6 +110,8 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
         raise ValueError(f"det_model={cfg['det_model']!r}")
     if cfg.get("pre_ul_mode", "window") not in ("window", "alerce"):
         raise ValueError(f"pre_ul_mode={cfg['pre_ul_mode']!r}")
+    if cfg.get("noise_model", "snr") not in ("snr", "tres_terminos"):
+        raise ValueError(f"noise_model={cfg['noise_model']!r}")
     if edge_post == "tail" and z is None:
         raise ValueError("edge_post='tail' necesita z")
     t_exp = t_anchor + t_exp_rel if edge_pre in ("texp", "fireball") and t_exp_rel is not None else None
@@ -105,7 +132,7 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
             mj, ml = mjd[sel], mlim[sel]
             mm = np.interp(mj, t, mags[b])
             mm[mj < t0] = 99.0                           # antes de la explosion: no hay flujo
-            mobs, sig = _noise(mm, ml, rng, cfg)
+            mobs, sig = _noise(mm, ml, rng, cfg, b)
             k = mj >= t0 if t_exp is not None else None  # texp/fireball: [t_exp, t0) no queda como no deteccion falsa
             parts[b].append([b, mj, ml, mm, mobs, sig, None, k])
             ruido.append(parts[b][-1])
@@ -122,7 +149,7 @@ def project_one(t_rel, mags, epochs, t_anchor, rng, cfg, t_exp_rel=None, z=None)
                 s = s if s >= cfg["tail_min_slope"] else cfg["tail_min_slope"]     # nan -> pendiente minima
                 cola.append((b, mjd[tl], mlim[tl], mags[b][-1] + s * (mjd[tl] - t1)))
     for b, mj, ml, mm in cola + fb:                      # ruido de la cola y despues el de la bola de fuego, al final
-        parts[b].append([b, mj, ml, mm, *_noise(mm, ml, rng, cfg), None, None])
+        parts[b].append([b, mj, ml, mm, *_noise(mm, ml, rng, cfg, b), None, None])
         ruido.append(parts[b][-1])
     if cfg.get("det_model", "hard") == "logistic":
         for blk in ruido:                                # uniformes despues de todo el ruido, en el orden del ruido
