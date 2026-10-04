@@ -73,7 +73,7 @@ def simulate(field, cls, k, epochs, mw):
     rng = sim_rng(_W["seed"], field, cls, k)
     tpl = choose_template(_W["seed"], field, cls, k, rng, tpls, SUBTYPE_FRACTIONS.get(cls))
     z = _W["z"](rng, cls)
-    if cfg["z_mode"] == "uniform_weighted":
+    if cfg["z_mode"] == "uniform_weighted":   # z ~ U(zmin, zmax) repesada a (dV/dz)/(1+z): tasa por tiempo del observador
         zmx = cfg["zmax_by_class"][cls]
         w_z = float(sampling.z_volume_weight(z, cfg["zmin"], zmx)) * (zmx - cfg["zmin"])
     else:

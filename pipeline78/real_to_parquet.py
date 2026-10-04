@@ -5,8 +5,9 @@ split val_viejo/final_viejo). Los upper limits se respetan: upperlimit 'T' con m
 Limpieza (Fix G, 2026-10-03): ALeRCE junta todo lo de esa posicion del cielo. Cada SN pasa por clean_lc con t_ref =
 descubrimiento de TNS (discoverydate, cruce por el ZTF de internal_names como en holdout.py), o la primera deteccion
 si no esta en TNS. revisar_reales.csv (motivo): "<7 det r" o "span>300 sin gap" (span de detecciones > 300 d sin ser IIn).
-excluir_reales.csv: primera_det_tardia (la curva no tiene la fase principal). Se marcan con excluir=True en meta pero
-siguen en los parquets: decide Mauricio."""
+excluir_reales.csv: primera_det_tardia (la curva no tiene la fase principal) y las exclusiones manuales de
+data/excluir_manual_reales.csv (oid, motivo: SNe dudosas que Mauricio reviso a mano). Se marcan con excluir=True y su
+motivo en meta pero siguen en los parquets: los consumidores filtran por excluir (realism.prepare)."""
 import sys
 from pathlib import Path
 import numpy as np
@@ -17,6 +18,7 @@ from pipeline78.holdout import TNS
 
 sys.path.insert(0, str(ZLF))
 PHOT = PHD / "paper2_ZTF/Photometry_ZTF_ST_Alerce"
+EXCLUIR_MANUAL = DATA / "excluir_manual_reales.csv"      # versionado: decision de Mauricio SN por SN
 
 
 def photometry_rows(sn, label, filters_data, bands=("g", "r")):
@@ -46,6 +48,17 @@ def tns_disc(tns=TNS):
     return idx
 
 
+def load_excluir_manual(path=None):
+    """oid -> motivo de las SNe reales excluidas a mano (data/excluir_manual_reales.csv, columnas oid,motivo)."""
+    d = pd.read_csv(Path(path) if path else EXCLUIR_MANUAL, dtype=str)
+    d = d.assign(oid=d.oid.str.strip(), motivo=d.motivo.fillna("").str.strip())
+    if d.oid.duplicated().any():
+        raise ValueError(f"oid repetidos en {path or EXCLUIR_MANUAL}: {d.oid[d.oid.duplicated()].tolist()}")
+    if (d.motivo == "").any():
+        raise ValueError(f"exclusion manual sin motivo: {d.oid[d.motivo == ''].tolist()}")
+    return dict(zip(d.oid, d.motivo))
+
+
 def load_meta(holdout=None, oc=OC):
     holdout = Path(holdout) if holdout else DATA / "holdout_ztf_v78.csv"
     h = pd.read_csv(holdout)
@@ -57,7 +70,7 @@ def load_meta(holdout=None, oc=OC):
     return pd.concat([h] + v, ignore_index=True)
 
 
-def ztf_real_to_parquet(out_dir, holdout=None, oc=OC, phot=PHOT, tns=TNS):
+def ztf_real_to_parquet(out_dir, holdout=None, oc=OC, phot=PHOT, tns=TNS, excluir_manual=None):
     from reader import parse_photometry_file
     out_dir = Path(out_dir).expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -95,12 +108,17 @@ def ztf_real_to_parquet(out_dir, holdout=None, oc=OC, phot=PHOT, tns=TNS):
     bad = set(missing) | set(empty)
     m = meta[~meta.oid.isin(bad)].assign(part_index=0)
     m = m.join(pd.DataFrame.from_dict(res, orient="index"), on="oid")
-    m["excluir"] = m.primera_det_tardia
+    man = load_excluir_manual(excluir_manual)
+    tardia = m.primera_det_tardia.fillna(False).astype(bool)
+    manual = m.oid.map(man).fillna("")
+    m["excluir"] = tardia | (manual != "")
+    m["motivo"] = [" + ".join(x for x in (a, b) if x) for a, b in zip(np.where(tardia, "primera_det_tardia", ""), manual)]
+    fuera = sorted(set(man) - set(m.oid))
     m.drop(columns="n_det_r").to_csv(out_dir / "meta_real_ztf.csv", index=False)
-    m[m.excluir].drop(columns="n_det_r").assign(motivo="primera_det_tardia").to_csv(out_dir / "excluir_reales.csv", index=False)
+    m[m.excluir].drop(columns="n_det_r").to_csv(out_dir / "excluir_reales.csv", index=False)
     pocas, largo = m.n_det_r < 7, (m.span_det_despues > 300) & (m.sn_type != "IIn")
     motivo = np.where(pocas & largo, "<7 det r + span>300 sin gap", np.where(pocas, "<7 det r", "span>300 sin gap"))
-    rev = m.assign(motivo=motivo)[pocas | largo]
+    rev = m.rename(columns={"motivo": "motivo_excluir"}).assign(motivo=motivo)[pocas | largo]
     rev.to_csv(out_dir / "revisar_reales.csv", index=False)
     print(f"{len(meta)} SNe en las listas, {len(missing)} sin archivo de fotometria {missing[:10]}, {len(empty)} sin g/r o sin "
           f"detecciones en la ventana {empty[:10]}")
@@ -111,7 +129,10 @@ def ztf_real_to_parquet(out_dir, holdout=None, oc=OC, phot=PHOT, tns=TNS):
     print("Grupos eliminados por regla (antes del pico, chicos tras el pico, no siguen bajando):")
     print(m.groupby(["origen", "sn_type"])[["n_grupos_antes_pico", "n_grupos_chicos", "n_grupos_no_bajan"]].sum())
     print(f"{len(rev)} a revisar ({rev.motivo.value_counts().to_dict()}) -> {out_dir / 'revisar_reales.csv'}")
-    print(f"{int(m.excluir.sum())} a excluir (primera_det_tardia, siguen en los parquets): {m.oid[m.excluir].tolist()}")
+    print(f"{int(m.excluir.sum())} a excluir (siguen en los parquets): {int(tardia.sum())} primera_det_tardia "
+          f"{m.oid[tardia].tolist()}, {int((manual != '').sum())} manuales {m.oid[manual != ''].tolist()}")
+    if fuera:
+        print(f"WARNING: {len(fuera)} exclusiones manuales que no estan en meta (sin fotometria o fuera de las listas): {fuera}")
     return m
 
 

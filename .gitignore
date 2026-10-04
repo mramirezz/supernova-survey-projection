@@ -10,6 +10,8 @@ data/*
 !data/dm15_Ia.json
 # md5 de las 78 congeladas copiadas a data/<clase>_v78 (2026-10-02)
 !data/templates_v78_md5.csv
+# exclusiones manuales de SNe reales revisadas por Mauricio (2026-10-03)
+!data/excluir_manual_reales.csv
 
 # Python cache
 __pycache__/

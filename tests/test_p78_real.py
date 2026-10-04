@@ -24,9 +24,10 @@ def _dat(path, oid, rows):
     path.write_text("\n".join(txt) + "\n")
 
 
-def test_real_to_parquet_limpia_desde_tns(tmp_path):
+def _escenario(tmp_path):
+    """3 SNe: ZTF20aaa (Ia con basura alrededor), ZTF20bbb (sin TNS, vieja), ZTF20ccc (primera_det_tardia).
+    Devuelve los kwargs de ztf_real_to_parquet (sin exclusiones manuales), t de descubrimiento y las filas de la SN."""
     from astropy.time import Time
-    from pipeline78.real_to_parquet import ztf_real_to_parquet
     phot, oc = tmp_path / "phot", tmp_path / "oc"
     (oc / "data").mkdir(parents=True)
     t = float(Time("2020-03-01 12:00:00", format="iso", scale="utc").mjd)
@@ -44,8 +45,17 @@ def test_real_to_parquet_limpia_desde_tns(tmp_path):
     pd.DataFrame({"sn_name": ["ZTF20bbb"], "label": ["II"], "z": [0.02]}).to_parquet(oc / "data/real_val.parquet")
     pd.DataFrame({"sn_name": pd.Series([], dtype=str), "label": pd.Series([], dtype=str),
                   "z": pd.Series([], dtype=float)}).to_parquet(oc / "data/real_final.parquet")
+    (tmp_path / "excluir_vacio.csv").write_text("oid,motivo\n")
+    kw = dict(holdout=tmp_path / "holdout.csv", oc=oc, phot=phot, tns=tmp_path / "tns.csv",
+              excluir_manual=tmp_path / "excluir_vacio.csv")
+    return kw, t, sn
+
+
+def test_real_to_parquet_limpia_desde_tns(tmp_path):
+    from pipeline78.real_to_parquet import ztf_real_to_parquet
+    kw, t, sn = _escenario(tmp_path)
     out = tmp_path / "out"
-    m = ztf_real_to_parquet(out, holdout=tmp_path / "holdout.csv", oc=oc, phot=phot, tns=tmp_path / "tns.csv")
+    m = ztf_real_to_parquet(out, **kw)
     ia = pd.read_parquet(out / "Ia.parquet")
     assert ia.mjd.between(t - 50, t + 400).all() and len(ia) == len(sn)    # ventana desde t_disc y el aislado de +250
     meta = pd.read_csv(out / "meta_real_ztf.csv").set_index("oid")
@@ -66,6 +76,46 @@ def test_real_to_parquet_limpia_desde_tns(tmp_path):
     rev = pd.read_csv(out / "revisar_reales.csv")
     assert list(rev.oid) == ["ZTF20bbb"] and list(rev.motivo) == ["<7 det r"]  # 5 detecciones en r
     assert len(m) == 3
+
+
+def test_exclusiones_manuales(tmp_path):
+    """data/excluir_manual_reales.csv: excluir=True y su motivo en meta, sin tocar los parquets (decide el consumidor)."""
+    from pipeline78.real_to_parquet import ztf_real_to_parquet
+    kw, t, sn = _escenario(tmp_path)
+    a = ztf_real_to_parquet(tmp_path / "a", **kw)
+    pd.DataFrame({"oid": ["ZTF20aaa", "ZTF20ccc", "ZTF99zzz"],
+                  "motivo": ["dudosa de prueba", "manual c", "no esta en las listas"]}).to_csv(tmp_path / "ex.csv", index=False)
+    b = ztf_real_to_parquet(tmp_path / "b", **dict(kw, excluir_manual=tmp_path / "ex.csv"))
+    for label in ("Ia", "II"):                                                   # parquets identicos
+        pd.testing.assert_frame_equal(pd.read_parquet(tmp_path / "a" / f"{label}.parquet"),
+                                      pd.read_parquet(tmp_path / "b" / f"{label}.parquet"))
+    assert len(pd.read_parquet(tmp_path / "b" / "Ia.parquet")) == len(sn)
+    meta = pd.read_csv(tmp_path / "b" / "meta_real_ztf.csv").set_index("oid")
+    assert meta.excluir.to_dict() == {"ZTF20aaa": True, "ZTF20ccc": True, "ZTF20bbb": False}
+    assert meta.loc["ZTF20aaa", "motivo"] == "dudosa de prueba" and not meta.loc["ZTF20aaa", "primera_det_tardia"]
+    assert meta.loc["ZTF20ccc", "motivo"] == "primera_det_tardia + manual c"
+    assert pd.isna(meta.loc["ZTF20bbb", "motivo"])
+    ex = pd.read_csv(tmp_path / "b" / "excluir_reales.csv")
+    assert list(ex.oid) == ["ZTF20aaa", "ZTF20ccc"] and list(ex.motivo) == ["dudosa de prueba", "primera_det_tardia + manual c"]
+    rev = pd.read_csv(tmp_path / "b" / "revisar_reales.csv")
+    assert list(rev.oid) == ["ZTF20bbb"] and list(rev.motivo) == ["<7 det r"] and rev.motivo_excluir.isna().all()
+    # sin exclusiones manuales solo queda la automatica
+    ma = pd.read_csv(tmp_path / "a" / "meta_real_ztf.csv").set_index("oid")
+    assert ma.excluir.to_dict() == {"ZTF20aaa": False, "ZTF20ccc": True, "ZTF20bbb": False}
+    assert len(a) == len(b) == 3
+
+
+def test_lista_versionada_de_exclusiones_manuales(tmp_path):
+    from pipeline78.real_to_parquet import load_excluir_manual
+    man = load_excluir_manual()
+    assert sorted(man) == ["ZTF21abxlmuw", "ZTF23aamanim", "ZTF24abqndnz", "ZTF24abymeet"]
+    assert all(v.startswith("dudosa revisada por Mauricio 2026-10-03") for v in man.values())
+    (tmp_path / "dup.csv").write_text("oid,motivo\nZTFa,x\nZTFa,y\n")
+    (tmp_path / "sin.csv").write_text("oid,motivo\nZTFa,\n")
+    import pytest
+    for f in ("dup.csv", "sin.csv"):
+        with pytest.raises(ValueError):
+            load_excluir_manual(tmp_path / f)
 
 
 if __name__ == "__main__":

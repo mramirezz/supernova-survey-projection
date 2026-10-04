@@ -43,32 +43,56 @@ def test_volumetric_favours_high_z():
 def test_fixed_z_sampler():
     assert z_sampler({"z_mode": "fixed", "z_fixed": 0.2})(np.random.default_rng(0), "Ia") == 0.2
 
-_UW = dict(z_mode="uniform_weighted", zmin=0.005, zmax_by_class={"Ia": 0.25, "II": 0.15})
+_UW = dict(z_mode="uniform_weighted", zmin=0.005, zmax_by_class={"Ia": 0.25, "II": 0.15, "IIn": 0.35})
 
 def _uw_draws(cls, n=20000, seed=11):
     rng = np.random.default_rng(seed); f = z_sampler(_UW)
     z = np.array([f(rng, cls) for _ in range(n)])
     return z, z_volume_weight(z, _UW["zmin"], _UW["zmax_by_class"][cls]) * (_UW["zmax_by_class"][cls] - _UW["zmin"])
 
+def _cdf_dilatada(zmin, zmax, n=4000):
+    """CDF de referencia de (dV/dz)/(1+z), calculada aca sin pasar por sampling (trapecio)."""
+    from pipeline78.sampling import COSMO
+    g = np.linspace(zmin, zmax, n); d = COSMO.differential_comoving_volume(g).value / (1.0 + g)
+    c = np.concatenate([[0.0], np.cumsum(0.5 * (d[1:] + d[:-1]) * np.diff(g))])
+    return g, c / c[-1]
+
 def test_uniform_weighted_mean_weight_is_one():
-    for cls in ("Ia", "II"):
+    for cls in ("Ia", "II", "IIn"):
         z, w = _uw_draws(cls)
         assert z.min() >= _UW["zmin"] and z.max() <= _UW["zmax_by_class"][cls]
-        assert abs(w.mean() - 1.0) < 0.02, w.mean()
+        assert abs(w.mean() - 1.0) < 0.02, (cls, w.mean())
 
-def test_uniform_weighted_reproduces_volumetric_cdf():
-    z, w = _uw_draws("Ia")
-    i = np.argsort(z); ecdf = np.cumsum(w[i]) / w.sum()
-    g, c = zgrid_cdf(_UW["zmin"], _UW["zmax_by_class"]["Ia"])
-    assert np.abs(ecdf - np.interp(z[i], g, c)).max() < 0.02
+def test_uniform_weighted_reproduces_dilated_volumetric_cdf():
+    # el histograma ponderado de z reproduce la CDF de (dV/dz)/(1+z): KS < 0.02, y zgrid_cdf es esa misma CDF
+    for cls in ("Ia", "IIn"):
+        z, w = _uw_draws(cls)
+        i = np.argsort(z); ecdf = np.cumsum(w[i]) / w.sum()
+        g, c = _cdf_dilatada(_UW["zmin"], _UW["zmax_by_class"][cls])
+        assert np.abs(ecdf - np.interp(z[i], g, c)).max() < 0.02, cls
+        g2, c2 = zgrid_cdf(_UW["zmin"], _UW["zmax_by_class"][cls])
+        assert np.allclose(g2, g) and np.abs(c2 - c).max() < 1e-12
+
+def test_time_dilation_factor_vs_old_weight():
+    # peso viejo (sin dilatacion): (dV/dz)/int dV/dz. El cociente nuevo/viejo es (1/(1+z)) * N_viejo/N_nuevo, asi que
+    # entre z=0.3 y z=0.01 cae exactamente en (1+0.01)/(1+0.3), y a z=0.3 el peso nuevo queda bajo el viejo
+    from pipeline78.sampling import COSMO
+    zmin, zmax = 0.005, 0.35
+    g = np.linspace(zmin, zmax, 4000); dv = COSMO.differential_comoving_volume(g).value
+    old = lambda z: COSMO.differential_comoving_volume(np.asarray(z, float)).value / float(
+        np.sum(0.5 * (dv[1:] + dv[:-1]) * np.diff(g)))
+    r = lambda z: z_volume_weight(z, zmin, zmax) / old(z)
+    assert abs(r(0.3) / r(0.01) - 1.01 / 1.3) < 1e-9
+    assert z_volume_weight(0.3, zmin, zmax) < old(0.3) and z_volume_weight(0.01, zmin, zmax) > old(0.01)
+    assert abs(r(0.3) - 0.964) < 0.005, r(0.3)          # N_viejo/N_nuevo = 1.2535 en [0.005, 0.35], /1.3
 
 def test_volume_weight_cache_equals_direct():
     from pipeline78.sampling import COSMO, _vol_norm
-    g = np.linspace(0.005, 0.25, 4000); dv = COSMO.differential_comoving_volume(g).value
-    direct = float(np.sum(0.5 * (dv[1:] + dv[:-1]) * np.diff(g)))
+    g = np.linspace(0.005, 0.25, 4000); d = COSMO.differential_comoving_volume(g).value / (1.0 + g)
+    direct = float(np.sum(0.5 * (d[1:] + d[:-1]) * np.diff(g)))
     assert _vol_norm(0.005, 0.25) == direct and _vol_norm(0.005, 0.25) == direct
     z = np.array([0.01, 0.1])
-    assert np.array_equal(z_volume_weight(z, 0.005, 0.25), COSMO.differential_comoving_volume(z).value / direct)
+    assert np.array_equal(z_volume_weight(z, 0.005, 0.25), COSMO.differential_comoving_volume(z).value / (1.0 + z) / direct)
 
 def test_ebv_subtype_ic_mean_av():
     rng = np.random.default_rng(5)

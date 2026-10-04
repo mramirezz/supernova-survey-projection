@@ -50,23 +50,38 @@ def sample_mpeak(rng, cls, dm15=None, subtype=None, ii_dust=None, iin_lf=None):
     return float(np.clip(m, c["min"], c["max"]))
 
 
+def dndz_obs(z):
+    """Densidad en z (sin normalizar) de las SNe que explotan durante una ventana FIJA de tiempo del observador, con
+    tasa volumetrica comovil constante R: dN/(dz dt_obs) = R (dV/dz) / (1+z). La tasa R es por unidad de tiempo
+    propio de la SN y un intervalo dt_obs del survey equivale a dt_obs/(1+z) en el reposo de la SN (dilatacion
+    temporal cosmologica): a z alta caben menos explosiones por dia de observacion que las que da dV/dz solo."""
+    z = np.asarray(z, float)
+    return COSMO.differential_comoving_volume(z).value / (1.0 + z)
+
+
 def zgrid_cdf(zmin, zmax, n=4000):
+    """CDF de dndz_obs en [zmin, zmax] (z_mode 'volumetric'): la misma distribucion fisica que reproduce
+    z_volume_weight en el modo 'uniform_weighted', con el factor 1/(1+z) de la dilatacion temporal."""
     z = np.linspace(zmin, zmax, n)
-    dv = COSMO.differential_comoving_volume(z).value
-    c = np.concatenate([[0.0], np.cumsum(0.5 * (dv[1:] + dv[:-1]) * np.diff(z))])
+    d = dndz_obs(z)
+    c = np.concatenate([[0.0], np.cumsum(0.5 * (d[1:] + d[:-1]) * np.diff(z))])
     return z, c / c[-1]
 
 
 @functools.lru_cache(maxsize=None)
 def _vol_norm(zmin, zmax, n=4000):
+    """int_zmin^zmax dndz_obs dz (trapecio en la misma grilla que zgrid_cdf), en cache por (zmin, zmax)."""
     g = np.linspace(zmin, zmax, n)
-    dv = COSMO.differential_comoving_volume(g).value
-    return float(np.sum(0.5 * (dv[1:] + dv[:-1]) * np.diff(g)))
+    d = dndz_obs(g)
+    return float(np.sum(0.5 * (d[1:] + d[:-1]) * np.diff(g)))
 
 
 def z_volume_weight(z, zmin, zmax):
-    """(dV/dz)(z) / int_zmin^zmax dV/dz, con la misma cosmologia que zgrid_cdf (normalizacion en cache)."""
-    return COSMO.differential_comoving_volume(np.asarray(z, float)).value / _vol_norm(float(zmin), float(zmax))
+    """Densidad normalizada en [zmin, zmax] de las SNe a tasa comovil constante vistas por unidad de tiempo del
+    OBSERVADOR: [(dV/dz)/(1+z)](z) / int_zmin^zmax (dV/dz)/(1+z) dz. El 1/(1+z) es la dilatacion temporal (la tasa
+    es por tiempo propio, el survey cuenta tiempo del observador). Misma cosmologia que zgrid_cdf, normalizacion en
+    cache. Con z ~ U(zmin, zmax), w_z = z_volume_weight * (zmax - zmin) tiene media 1 (run.simulate)."""
+    return dndz_obs(z) / _vol_norm(float(zmin), float(zmax))
 
 
 def z_sampler(cfg):

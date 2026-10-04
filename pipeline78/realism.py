@@ -140,7 +140,7 @@ def prepare(runs, out, n=50, seed=20261003, real_dir=RUNS / "real_ztf"):
     rng = np.random.default_rng(seed)
     meta = pd.read_csv(real_dir / "meta_real_ztf.csv")
     meta = meta[(meta.origen == "holdout") & (meta.split == "val")]
-    if "excluir" in meta:                                # Fix G: curvas sin la fase principal (primera_det_tardia)
+    if "excluir" in meta:              # Fix G (primera_det_tardia) y exclusiones manuales (data/excluir_manual_reales.csv)
         print(f"reales excluidas (excluir=True): {meta.oid[meta.excluir.astype(bool)].tolist()}")
         meta = meta[~meta.excluir.astype(bool)]
     sims = pd.read_parquet(runs["base"] / "_sims_all.parquet")
