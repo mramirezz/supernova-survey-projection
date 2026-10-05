@@ -73,6 +73,30 @@ def l1_boot(a, b, n_boot=2000, seed=20261004, col="argmax"):
     return float(np.mean(d < 0)), (float(np.percentile(d, 5)), float(np.percentile(d, 95)))
 
 
+def corregidas(sel, rep):
+    """Fracciones de val_rep corregidas con la matriz de confusion medida en val_sel (Nivel 2 de las tasas):
+    M[i, j] = P(pred i | real j) en val_sel, f = M^-1 f_pred(rep), negativos a 0 y renormalizado. -> L1 contra la real."""
+    M = np.array([[np.mean(sel.y_pred[sel.y_true == j] == i) for j in CLS] for i in CLS])
+    fp = np.array([(rep.y_pred == c).mean() for c in CLS])
+    f = np.clip(np.linalg.solve(M, fp), 0, None)
+    f = f / f.sum()
+    real = np.array([(rep.y_true == c).mean() for c in CLS])
+    return float(np.abs(f - real).sum()), dict(zip(CLS, f.round(4))), float(np.linalg.cond(M))
+
+
+def corregidas_boot(sel, rep, n_boot=1000, seed=20261004):
+    rng = np.random.default_rng(seed)
+    out = []
+    for _ in range(n_boot):
+        a = sel.iloc[rng.integers(0, len(sel), len(sel))]
+        b = rep.iloc[rng.integers(0, len(rep), len(rep))]
+        try:
+            out.append(corregidas(a, b)[0])
+        except np.linalg.LinAlgError:
+            pass
+    return float(np.median(out)), (float(np.percentile(out, 5)), float(np.percentile(out, 95)))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--red", default="tf_base")
@@ -98,6 +122,12 @@ def main(argv=None):
                 res["pares"].setdefault(sub, {})[f"{x}_vs_{z}"] = dict(
                     delta_bal=dlt, P_bal=p, ic90_bal=ci, P_L1_argmax_menor=pa, ic90_dL1_argmax=cia,
                     P_L1_prob_menor=pp, ic90_dL1_prob=cip, gana_bal=(x if p >= P_MIN else z if p <= 1 - P_MIN else None))
+    res["corregidas_rep"] = {}
+    for k, d in S.items():
+        l1, f, cond = corregidas(d[d.subset == "val_sel"], d[d.subset == "val_rep"])
+        med, ic = corregidas_boot(d[d.subset == "val_sel"], d[d.subset == "val_rep"])
+        res["corregidas_rep"][k] = dict(L1=l1, frac=f, cond_M=cond, L1_boot_mediana=med, ic90=ic)
+        print(f"corregidas val_rep {k}: L1 {l1:.3f} (boot mediana {med:.3f}, IC90 [{ic[0]:.3f}, {ic[1]:.3f}]) cond(M) {cond:.1f} {f}")
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "sistema_tasas.json").write_text(json.dumps(res, indent=1, default=float))
     for sub, m in res["por_subconjunto"].items():

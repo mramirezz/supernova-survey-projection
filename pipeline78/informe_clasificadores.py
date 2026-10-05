@@ -1143,6 +1143,75 @@ def seccion_plantillas(J):
     return "".join(h)
 
 
+def particiones_conteo(real_dir):
+    """Conteos por origen/split/excluir de meta_real_ztf.csv (solo esas columnas, sin fotometria ni clases)."""
+    import csv
+    from collections import Counter
+    c, e = Counter(), Counter()
+    with open(Path(real_dir) / "meta_real_ztf.csv", newline="") as f:
+        for r in csv.DictReader(f):
+            c[(r["origen"], r["split"])] += 1
+            e[(r["origen"], r["split"])] += r["excluir"].strip().lower() in ("true", "1")
+    return {f"{o}/{s}": {"n": n, "excluidas": e[(o, s)]} for (o, s), n in c.items()}
+
+
+def seccion_tasas(J):
+    """Seccion 0: la regla para las tasas (pipeline78/sistema_tasas.py) y las particiones de datos."""
+    T, Pc = J.get("tasas"), J.get("particiones_conteo") or {}
+    h = ["<h2>0. Decisi&oacute;n para las tasas y particiones de datos</h2>"]
+    if T:
+        h.append("<p>Regla acordada con Mauricio el 2026-10-04, <b>fijada antes de ver val_rep de las plantillas</b>: cada "
+                 "m&eacute;todo se eval&uacute;a como <b>sistema completo sobre todas las SNe</b> (lo que no cubre lo "
+                 f"clasifica el respaldo, {html.escape(T['respaldo'])}). M&eacute;tricas: exactitud balanceada y error de "
+                 "las fracciones por clase (L1 = &sum;|f<sub>pred</sub> &minus; f<sub>real</sub>|, contando la clase "
+                 "predicha o sumando probabilidades). val_sel decide con el bootstrap pareado (P &ge; 0.9), val_rep "
+                 "confirma. Empate: m&aacute;s cobertura propia, despu&eacute;s menos dependencia de la simulaci&oacute;n.</p>")
+        rows = []
+        for k in ("plantillas", "villar", "red"):
+            a, b = T["por_subconjunto"]["val_sel"][k], T["por_subconjunto"]["val_rep"][k]
+            cr = T.get("corregidas_rep", {}).get(k, {})
+            rows.append([f"<b>{NOM[k]}</b> ({html.escape(T['metodos'][k])})", pc(a["cobertura_propia"]),
+                         f3(a["bal_acc"]), f3(b["bal_acc"]), f3(b["acc"]), f3(a["L1_argmax"]), f3(b["L1_argmax"]),
+                         f3(b["L1_prob"]), f"{f3(cr.get('L1'))} [{f3((cr.get('ic90') or [None, None])[0])}, "
+                         f"{f3((cr.get('ic90') or [None, None])[1])}]"])
+        h.append(tabla(["sistema", "cobertura propia (sel)", "exact. bal. sel", "exact. bal. rep", "exactitud rep",
+                        "L1 clase sel", "L1 clase rep", "L1 prob rep", "L1 rep corregida con la matriz de val_sel [IC 90]"], rows))
+        pr = T["pares"]
+        lin = []
+        for sub in ("val_sel", "val_rep"):
+            for k, v in pr[sub].items():
+                x, z = k.split("_vs_")
+                lin.append(f"<li>{sub}, {NOM[x]} contra {NOM[z]}: &Delta; exact. bal. {v['delta_bal']:+.3f} "
+                           f"(P({NOM[x]} mejor) = {v['P_bal']:.3f}); P(L1 de {NOM[x]} menor) = {v['P_L1_argmax_menor']:.3f} "
+                           f"contando clases, {v['P_L1_prob_menor']:.3f} sumando probabilidades.</li>")
+        h.append("<ul>" + "".join(lin) + "</ul>")
+        h.append("<p class='nota'>Lectura: en exactitud las plantillas le ganan a la red en las dos mitades y quedan arriba "
+                 "de Villar (sin alcanzar 0.9 en val_sel). En el error de fracciones sin corregir, el sistema de Villar sale "
+                 "mejor en val_sel pero no en val_rep. Todas las fracciones sin corregir est&aacute;n sesgadas: para las tasas "
+                 "hay que corregir con la matriz de confusi&oacute;n (&uacute;ltima columna, medida en val_sel y aplicada a "
+                 "val_rep); esa columna es informaci&oacute;n adicional, no parte de la regla fijada.</p>")
+    else:
+        h.append("<p class='pend'>Pendiente: correr python -m pipeline78.sistema_tasas.</p>")
+    lab = {"holdout/val": "Holdout ZTF, mitad val: se parte en val_sel (elegir) y val_rep (reportar), 50/50 estratificado "
+                          "por clase, semilla 20261004, la misma partici&oacute;n para los tres m&eacute;todos",
+           "holdout/final": "Holdout ZTF, mitad final: <b>intocable</b>; se usa una sola vez con el clasificador elegido "
+                            "y ese es el n&uacute;mero de la tesis",
+           "viejas/val_viejo": "Muestra vieja: calibraci&oacute;n del modelo de observaci&oacute;n (m0, ruido, alertas) "
+                               "sin tocar el holdout",
+           "viejas/final_viejo": "Muestra vieja: sin uso"}
+    h.append("<h3>Particiones de las SNe reales</h3>" + tabla(["conjunto", "SNe", "excluidas", "para qu&eacute;"], [
+        [k, str(v["n"]), str(v["excluidas"]), lab.get(k, "")] for k, v in sorted(Pc.items())]))
+    h.append("<ul><li>Las 78 plantillas no est&aacute;n en el holdout; las SLSN quedan fuera (no hay plantillas); las IIn "
+             "quedan fuera de la m&eacute;trica de 3 clases y entran en la de 4; las excluidas son las 4 dudosas que "
+             "decidi&oacute; Mauricio y las de primera detecci&oacute;n tard&iacute;a.</li>"
+             "<li>Simulaciones: entrenan Villar (80 000) y la red (160 000); su validaci&oacute;n cruzada es por plantilla "
+             "(ninguna plantilla est&aacute; a la vez en entrenamiento y prueba). El ajuste de plantillas no entrena.</li>"
+             "<li>Incidentes declarados: el ruido se calibr&oacute; primero con val y despu&eacute;s se rehizo con las "
+             "viejas; dos agentes imprimieron por error filas de metadata de la mitad final (ZTF18aacemcn, "
+             "ZTF18aaiykoz), sin fotometr&iacute;a y sin ning&uacute;n uso.</li></ul>")
+    return "".join(h)
+
+
 def pagina(J, figs, out):
     A, H, S, P = J["actual"], J.get("historia") or [], J["simulacion"], J["particion"]
     v, r = A.get("villar") or {}, A.get("red") or {}
@@ -1159,6 +1228,7 @@ def pagina(J, figs, out):
                  "producci&oacute;n final.</p>")
     s.append(f"<p>Bloque actual: <b>{html.escape(str(A.get('etiqueta')))}</b>. Redes: {html.escape(A['nn_root'])}. "
              f"Villar: {html.escape(A['villar_sweep'])}.</p>")
+    s.append(seccion_tasas(J))
     # 1
     s.append("<h2>1. La respuesta</h2><p>Pregunta: &iquest;qu&eacute; clasifica mejor las SNe reales de ZTF, el ajuste "
              "de Villar o una red neuronal, si los dos aprendieron <b>solo de simulaciones</b>? Todo en val_rep, la "
@@ -1404,6 +1474,9 @@ def construir(cfg_path=CFG, actual_nn=None, actual_villar=None, actual_gap=None,
         shutil.copy2(cf, out / cf.name)
         figs["calib"] = cf.name
     J["figuras"] = {k: v for k, v in figs.items() if v}
+    ft = _p(cfg.get("numeros", "informe_clasificadores/numeros.json"), cfg["_runs"]).parent / "sistema_tasas.json"
+    J["tasas"] = json.loads(ft.read_text()) if ft.exists() else None
+    J["particiones_conteo"] = particiones_conteo(_p(cfg.get("real_dir", "real_ztf"), cfg["_runs"]))
     pagina(J, figs, out)
     txt = json.dumps(J, indent=1, ensure_ascii=False)
     (out / "numeros.json").write_text(txt)
