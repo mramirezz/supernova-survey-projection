@@ -276,8 +276,8 @@ def _forma(b):
 
 COLOR = ["color_gr", "d_t_rise_gr", "d_t_fall_gr", "d_gamma_gr", "d_f_gr"]
 REL = [f"rel_{p}_{b}" for b in BANDS for p in PARS]
-FSETS = ("viejo", "forma_r", "rg", "rg_err", "rg_m", "rg_robusto", "rg_cens", "rg_fisica")
-FSETS_FISICA = ("rg_fisica",)                          # necesitan las curvas: prepare(fisica=True)
+FSETS = ("viejo", "forma_r", "rg", "rg_err", "rg_m", "rg_robusto", "rg_cens", "rg_fisica", "rg_err_fisica")
+FSETS_FISICA = ("rg_fisica", "rg_err_fisica")                          # necesitan las curvas: prepare(fisica=True)
 CENS = {"t_rise_r": "t_rise_cens_r", "t_rise_g": "t_rise_cens_g", "d_t_rise_gr": "d_t_rise_cens_gr"}
 # features fisicas (seccion fisica): hombro de r en los residuos del SPM y evolucion del color g - r
 VENTANAS = {"res_r_15_40": (15.0, 40.0), "res_r_40_70": (40.0, 70.0)}
@@ -299,7 +299,7 @@ def fset_cols(name, use_z):
             # t_rise censurado en el piso del extractor y su bandera (regla 4, mitigaciones)
             "rg_cens": [CENS.get(c, c) for c in rg] + ["t_rise_piso_r", "t_rise_piso_g"],
             # hombro de r y color g - r en fases fijas (seccion fisica)
-            "rg_fisica": rg + FIS}
+            "rg_fisica": rg + FIS, "rg_err_fisica": rg + REL + FIS}
     if name not in sets:
         raise ValueError(f"feature set desconocido: {name}")
     return sets[name], sets[name]
@@ -1266,6 +1266,9 @@ GRIDS = {
     # hombro de r y evolucion de color (seccion fisica) contra rg, planos y jerarquicos; la base no cambia
     "fisica": dict(fset=("rg", "rg_fisica"), model=("hgb", "hgb_lento", "hier_hgb_II", "ens_hier"), use_z=(True,),
                    peso=("wz",)),
+    # jerarquicos del ganador de foco (hier_mlp, rg_err, wz_S) combinados con la fisica (pregunta de Mauricio 2026-10-05)
+    "combo": dict(fset=("rg_err", "rg_fisica", "rg_err_fisica"), model=("hier_mlp_II", "hier_mlp_Ia", "ens_hier", "hier_hgb_II"),
+                  use_z=(True,), peso=("wz", "wz_S")),
 }
 
 
