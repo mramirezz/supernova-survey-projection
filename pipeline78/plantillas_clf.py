@@ -5,7 +5,10 @@ que la curva observada a cualquier z es fotometria sintetica exacta (sin tablas 
 
 Uso:
     python -m pipeline78.plantillas_clf biblioteca [--force]
+    python -m pipeline78.plantillas_clf sigma [--workers 4]            (regla 4c, solo val_sel)
     python -m pipeline78.plantillas_clf run --name NOMBRE [--cuatro-clases] [--sin-z] [--subset val_sel] [--limit N]
+                                            [--ul previos] [--sigma-mod S] [--ii-dust cfg|sudare]
+    python -m pipeline78.plantillas_clf comparar --name NOMBRE [--contra k=ruta ...] [--tag T]
 
 REGLAS
 1. Biblioteca (una por survey, en cache). Por plantilla del catalogo (STORE/catalog.csv), nodo de z, E(B-V) del host y
@@ -45,28 +48,51 @@ REGLAS
          SUBTYPE_FRACTIONS y plantillas equiprobables dentro del subtipo (run.choose_template). Sin fracciones,
          equiprobables. Clases equiprobables (el prior de entrenamiento balanceado de los otros dos metodos).
 4. Verosimilitud en flujo (unidades 10^(-0.4 (m - m_ref)), m_ref = la deteccion mas brillante). Detecciones
-   gaussianas, sigma_f = 0.921 f_obs sqrt(magerr^2 + SIGMA_MOD^2), piso del modelo SIGMA_MOD = 0.05 mag fijado a
-   priori y evaluado en el flujo observado: chi2 es cuadratico en la escala y la integral en dmag sale de tres sumas.
-   UL: P(f_modelo < f_lim) = Phi((f_lim - f_modelo)/sigma), sigma = f_lim/5 (alertas de ZTF a 5 sigma), evaluado en
-   el centro de la integral en dmag de cada (plantilla, z, E, T_max) (aproximacion: la escala la fijan las detecciones).
-4b. Que UL entran (--ul). "todos" (por defecto, el modelo pedido): todos los de la curva. Las alertas reales traen UL
-   en la misma noche y banda que una deteccion (74 de las 224 curvas de val_sel de 3 clases, 358 de 6290 UL, en la
-   prueba chica del 2026-10-04), a veces 4 mag mas profundos que la SN detectada: son restas fallidas, las sims no los
-   tienen, y con sigma = f_lim/5 hunden a toda plantilla que ajusta las detecciones. Variantes: "misma_noche" saca los
-   UL con una deteccion de su banda a menos de 0.5 d, "previos" deja solo los UL antes de la primera deteccion,
-   "ninguno" los saca todos. Elegir entre ellas es una decision de Mauricio (val_sel con el bootstrap pareado).
-5. Evidencia: E_tipo = sum_pl pi(pl) sum_{z,E,T} P(z) P(E) P(T) int L(dmag) P(dmag) ddmag. La integral en dmag va en
-   len(U) puntos (+-6 sigma) centrados en la combinacion gaussiana de la verosimilitud y el prior. Se calcula solo en
-   las celdas (z, E, T_max) cuya aproximacion de Laplace queda a menos de LAPLACE_NATS = 30 del maximo de la
-   plantilla. Las demas quedan con Laplace (pesan < e^-30). P_tipo = E_tipo/sum E.
+   gaussianas de varianza (0.921 f_obs magerr)^2 + (SIGMA_MOD f_modelo)^2: el error de los datos mas un error del
+   modelo, fraccion SIGMA_MOD del flujo del modelo, en cuadratura (regla 4c). Como la varianza depende del modelo, la
+   verosimilitud lleva su log det y su cola hacia escalas grandes no es gaussiana (el error del modelo crece con el
+   modelo): ver la regla 5. UL: P(f_modelo < f_lim) = Phi((f_lim - f_modelo)/sigma), sigma^2 = (f_lim/5)^2 +
+   (SIGMA_MOD f_modelo)^2 (alertas de ZTF a 5 sigma), evaluado en el modo en d de cada (plantilla, z, E, T_max)
+   (aproximacion: la escala la fijan las detecciones).
+4b. Que UL entran (--ul). Por defecto "previos" (Mauricio 2026-10-04, decision fisica a priori, no ajustada): solo los
+   UL antes de la primera deteccion, que acotan la explosion. Los UL despues de la primera deteccion (noches con la SN
+   ya detectada) no entran: las alertas reales traen UL en la misma noche y banda que una deteccion (74 de 224 curvas de
+   val_sel, 358 de 6290 UL), a veces 4 mag mas profundos que la SN detectada (restas fallidas que las sims no tienen).
+   "todos", "misma_noche" (saca los UL con una deteccion de su banda a menos de 0.5 d) y "ninguno" quedan solo como
+   sensibilidad reportada en val_sel. Nunca se eligen con val_rep.
+4c. SIGMA_MOD (Mauricio 2026-10-04): las series tienen incertidumbres propias que no se propagaron y la diversidad
+   real va mas alla de las 78 plantillas. SIGMA_MOD se elige en val_sel (3 clases con z, UL previos, polvo principal)
+   entre SIGMA_MOD_GRID = 0.05, 0.10, 0.15, 0.20, 0.30 por la log-verosimilitud de la clase verdadera, media por clase
+   (log p con piso 1e-12, como calib_metrics, balanceada como la exactitud con que se elige): la candidata de mayor
+   valor reemplaza al a priori SIGMA_MOD_APRIORI = 0.05 solo si el bootstrap pareado de nnclf (paired_bootstrap sobre
+   log p por objeto) da P >= P_MIN. Se reportan tambien la exactitud balanceada, el ECE y el chi2 reducido de los mejores
+   ajustes por valor (sigma/eleccion.json). El valor queda congelado en SIGMA_MOD antes de mirar val_rep.
+5. Evidencia: E_tipo = sum_pl pi(pl) sum_{z,E,T} P(z) P(E) P(T) int L(d) P(d) dd, d = mu + dmag. Por bloque de celdas
+   (z, E, T_max) de una plantilla:
+   etapa 1 (todas): verosimilitud exacta en el punto de partida (minimos cuadrados con pesos fijos + prior gaussiano de
+         d) y en la media del prior (segundo modo posible: con el error del modelo la verosimilitud se aplana a escalas
+         grandes y el prior fija el modo), Laplace con el ancho de cada uno. Las celdas a mas de CRIBA_NATS = 150 del
+         maximo de la plantilla quedan con ese valor.
+   etapa 2 (las demas): Newton con radio de confianza (derivadas analiticas) desde el punto de partida, la media del
+         prior y el mejor punto de una grilla gruesa del prior (+-4 sigma); los modos a menos de 4 anchos se juntan.
+         Laplace en cada modo. Las celdas a menos de LAPLACE_NATS = 30 del maximo: integral en d de cada modo en su
+         tramo (cortes entre modos vecinos), nodos d* + w U (paso w/2, +-8 w), extendida con el mismo paso mientras el
+         borde quede a menos de BORDE_NATS del maximo.
+   Verificado contra la integral por fuerza bruta (paso 0.002 mag en +-25 mag) en celdas al azar con uno y dos modos
+   (tests): error < 0.02 nats, Laplace < 0.2 nats. La criba de la etapa 1 solo cambia plantillas que quedan > 80 nats
+   bajo la mejor (P igual): test. P_tipo = E_tipo/sum E.
 6. Reales: solo la mitad val, con los lectores con guarda (nnclf.data.load_real_val: meta con csv linea a linea,
    pyarrow con filtro por oid; clf_villar.read_val_meta para el subset de splits.val_split). La mitad final no se lee.
    Entran las de >= MIN_DET detecciones en g + r. E(B-V)_MW de data/sfd98_cache.parquet (sampling.load_mw, el de las
    sims; una oid que falta usa mw_const, como run.run_unit).
-7. Nada se ajusta con las reales: SIGMA_Z, SIGMA_MOD, el sigma de los UL, T_PRE, U y las grillas son a priori.
+7. Nada se ajusta con val_rep: SIGMA_Z, el sigma de los UL, T_PRE, U, las grillas y el modo de UL son a priori;
+   SIGMA_MOD sale de val_sel (regla 4c). Polvo de las II: el modelo principal es el de RUN_CFG (IIP/IIL sin polvo del
+   host, IIb e IIn con polvo); --ii-dust sudare (half-normal sigma_E 0.2, R_V 3.1, LF IIP/IIL desenrojecida) es una
+   sensibilidad, comparada con el principal con el bootstrap pareado (comparar).
 8. Salidas en RUNS/plantillas_clf/<nombre>: pred_real_val.csv (oid, subset, y_true, y_pred, p_<clase>, n_det,
-   best_template, chi2_min, parametros MAP y medias posteriores dentro de la mejor plantilla), metrics.json (acc, bal_acc con IC 95 % bootstrap,
-   F1 por clase, confusion, cobertura por subconjunto, tiempos) y sin_clasificar.csv.
+   best_template, chi2_min, parametros MAP y medias posteriores dentro de la mejor plantilla, chi2 del MAP con y sin el
+   error del modelo), metrics.json (acc, bal_acc con IC 95 % bootstrap, F1 por clase, confusion, log-loss, ECE, chi2
+   reducido, cobertura por subconjunto, tiempos), sin_clasificar.csv y comparacion*.json (comparar).
 """
 import argparse
 import functools
@@ -104,12 +130,20 @@ BORDES = ("edge_pre", "rise_Ia_days", "edge_post", "tail_fit_days", "tail_min_sl
 SIGMA_Z = 0.005                  # SUDARE I: P(z) = N(z_spec, 0.005)
 Z_FLOOR = 0.001                  # borde inferior del prior de z (tres val tienen z < 0.005)
 DMU_SUB = 0.05                   # mag: paso de mu(z) dentro de la celda de un nodo
-SIGMA_MOD = 0.05                 # mag: piso del error del modelo, a priori
+SIGMA_MOD_GRID = (0.05, 0.10, 0.15, 0.20, 0.30)   # error del modelo (fraccion del flujo del modelo): candidatos
+SIGMA_MOD_APRIORI = 0.05         # el piso a priori de la primera version (referencia del bootstrap pareado)
+SIGMA_MOD = 0.05                 # elegido en val_sel (regla 4c): ver sigma/eleccion.json
+UL_MODO = "previos"              # regla 4b (Mauricio 2026-10-04): solo los UL antes de la primera deteccion
 UL_NSIG = 5.0                    # alertas de ZTF: limite a 5 sigma
 T_PRE = 60.0                     # d: el pico puede caer hasta 60 d antes de la primera deteccion
 MIN_DET = D.MIN_DET              # 3 detecciones en g + r, como las redes
-U = np.linspace(-6.0, 6.0, 25)   # nodos de la integral en dmag, en unidades del ancho combinado
+U = np.linspace(-8.0, 8.0, 33)   # nodos de la integral en d, en unidades del ancho en el modo
 LAPLACE_NATS = 30.0              # celdas con Laplace mas de 30 nats bajo el maximo de la plantilla: quedan con Laplace
+N_NEWTON = 10                    # iteraciones de Newton para el modo en d
+PASO_MAX = 1.0                   # mag: radio de confianza maximo de Newton
+CRIBA_NATS = 150.0               # etapa 1 mas de esto bajo el maximo de la plantilla: sin Newton
+BORDE_NATS = 20.0                # integrando en un borde a menos de esto de su maximo: se dobla el ancho
+N_ENSANCHE = 4
 SQ2PI = math.sqrt(2.0 * math.pi)
 UL_MODOS = ("todos", "misma_noche", "previos", "ninguno")
 MASA_MIN_Z, MASA_MIN_E = 1e-4, 1e-6
@@ -200,13 +234,18 @@ def tpl_prior(tab, four=False, cfg_name=RUN_CFG):
     return out
 
 
-def priors(lib, four=False, sin_z=False, cfg_name=RUN_CFG):
+def priors(lib, four=False, sin_z=False, cfg_name=RUN_CFG, ii_dust="cfg"):
+    """Priors de las sims de cfg_name. ii_dust: "cfg" = el de la config (modelo principal), o la variante ("sudare")."""
     cfg = runcfg.RUNS_CFG[cfg_name]
+    ii = cfg.get("ii_dust") if ii_dust == "cfg" else ii_dust
+    rv = np.array([ext_params(r.clase, r.subtype, ii)[1]["Rv"] for r in lib.tab.itertuples()])
+    if not np.allclose(rv, lib.tab.rv):
+        raise ValueError(f"el R_V del polvo ii_dust={ii} no es el de la biblioteca: construirla con ese ii_dust")
     tab = lib.tab
     cls = D.classes(four)
     with np.errstate(divide="ignore"):
-        log_pe = np.stack([np.log(ebv_prior(r.clase, r.subtype, lib.ebv, cfg.get("ii_dust"))) for r in tab.itertuples()])
-    lf = np.array([lf_params(r.clase, r.subtype, r.dm15_B, cfg.get("ii_dust"), cfg.get("iin_lf")) for r in tab.itertuples()])
+        log_pe = np.stack([np.log(ebv_prior(r.clase, r.subtype, lib.ebv, ii)) for r in tab.itertuples()])
+    lf = np.array([lf_params(r.clase, r.subtype, r.dm15_B, ii, cfg.get("iin_lf")) for r in tab.itertuples()])
     idx = np.array([cls.index(D.class_of(t, four)) if D.class_of(t, four) else -1 for t in tab.clase])
     return Priors(cls, idx, tpl_prior(tab, four, cfg_name), log_pe, lf,
                   tab.clase.isin(LF_AFTER_HOST_DUST).to_numpy(), sin_z)
@@ -264,9 +303,10 @@ def _tabla_prior_y(mu_s, w_s, lf):
 
 
 # ------------------------------------------------------------------------------------------------ biblioteca
-def biblioteca_clave(store=None, cfg_name=RUN_CFG, z_grid=Z_GRID, ebv_grid=EBV_GRID, fases=FASES):
+def biblioteca_clave(store=None, cfg_name=RUN_CFG, z_grid=Z_GRID, ebv_grid=EBV_GRID, fases=FASES, ii_dust="cfg"):
     store = Path(store or STORE)
     cfg = runcfg.RUNS_CFG[cfg_name]
+    ii = cfg.get("ii_dust") if ii_dust == "cfg" else ii_dust
     cat = pd.read_csv(store / "catalog.csv")
     rb = B.rest_bands()
     blob = dict(version=VERSION, survey=SURVEY, bandas=list(BANDS), catalogo=md5_file(store / "catalog.csv"),
@@ -274,7 +314,7 @@ def biblioteca_clave(store=None, cfg_name=RUN_CFG, z_grid=Z_GRID, ebv_grid=EBV_G
                 reposo={n: hashlib.md5(np.concatenate([b.wave, b.resp, [b.f0]]).tobytes()).hexdigest()
                         for n, b in sorted(rb.items())},
                 bordes={k: cfg.get(k) for k in BORDES},
-                rv={r.sn: ext_params(r.clase, r.subtype, cfg.get("ii_dust"))[1]["Rv"] for r in cat.itertuples()},
+                rv={r.sn: ext_params(r.clase, r.subtype, ii)[1]["Rv"] for r in cat.itertuples()},
                 z=[float(x) for x in z_grid], ebv=[float(x) for x in ebv_grid], fases=[*map(float, fases), DP],
                 e_mw_ref=E_MW_REF)
     return hashlib.md5(json.dumps(blob, sort_keys=True).encode()).hexdigest()[:16]
@@ -345,15 +385,17 @@ def tabla_fases(t_rel, m, ph, z, cls, tpl, cfg):
 
 
 def construir_biblioteca(store=None, cfg_name=RUN_CFG, out_root=OUT_ROOT, z_grid=Z_GRID, ebv_grid=EBV_GRID,
-                         fases=FASES, force=False, verificar=2, seed=SEED, log=print):
-    """Tabla de la biblioteca en out_root/biblioteca_<clave> (no la rehace si ya esta). Devuelve el directorio."""
+                         fases=FASES, force=False, verificar=2, seed=SEED, log=print, ii_dust="cfg"):
+    """Tabla de la biblioteca en out_root/biblioteca_<clave> (no la rehace si ya esta). Devuelve el directorio.
+    ii_dust solo entra por el R_V de las II (la variante "sudare" tiene el mismo R_V 3.1: misma biblioteca)."""
     store, out_root = Path(store or STORE), Path(out_root)
-    key = biblioteca_clave(store, cfg_name, z_grid, ebv_grid, fases)
+    key = biblioteca_clave(store, cfg_name, z_grid, ebv_grid, fases, ii_dust)
     d = out_root / f"biblioteca_{key}"
     if (d / "meta.json").exists() and not force:
         return d
     t_ini = time.time()
     cfg = runcfg.RUNS_CFG[cfg_name]
+    ii = cfg.get("ii_dust") if ii_dust == "cfg" else ii_dust
     if cfg.get("edge_pre", "window") not in ("window", "fireball") or cfg.get("edge_post", "none") not in ("none", "tail"):
         raise ValueError(f"bordes no implementados: {cfg.get('edge_pre')} / {cfg.get('edge_post')}")
     cat = pd.read_csv(store / "catalog.csv").sort_values(["clase", "sn"]).reset_index(drop=True)
@@ -372,7 +414,7 @@ def construir_biblioteca(store=None, cfg_name=RUN_CFG, out_root=OUT_ROOT, z_grid
     rng, dmax, filas = np.random.default_rng(seed), 0.0, []
     for it, r in enumerate(cat.itertuples()):
         tpl = load_template(r.store_path)
-        rv = ext_params(r.clase, r.subtype, cfg.get("ii_dust"))[1]["Rv"]
+        rv = ext_params(r.clase, r.subtype, ii)[1]["Rv"]
         m, cov, m_mw = mags_sin_distancia(tpl, rv, bands, z_grid, ebv_grid)
         for _ in range(verificar):                              # la tabla es engine.observed_lightcurves - mu(z)
             iz, ie = int(rng.integers(nz)), int(rng.integers(ne))
@@ -402,7 +444,7 @@ def construir_biblioteca(store=None, cfg_name=RUN_CFG, out_root=OUT_ROOT, z_grid
         t_exp = (tpl["t_Bmax"] - cfg.get("rise_Ia_days", np.nan) - tpl["t_peak"]) if r.clase == "Ia" else np.nan
         filas.append(dict(sn=r.sn, clase=r.clase, subtype=r.subtype, M_ref=float(tpl["M_ref"]),
                           dm15_B=np.nan if tpl.get("dm15_B") is None else float(tpl["dm15_B"]), rv=rv,
-                          ext_key=ext_params(r.clase, r.subtype, cfg.get("ii_dust"))[0], t_peak=float(tpl["t_peak"]),
+                          ext_key=ext_params(r.clase, r.subtype, ii)[0], t_peak=float(tpl["t_peak"]),
                           t0_reposo=float(tt[0]), t1_reposo=float(tt[-1]), t_exp_reposo=float(t_exp),
                           cola=bool(cfg.get("edge_post") == "tail" and not tt[-1] - tt[0] <
                                     cfg.get("tail_min_span", {}).get(r.clase, 0.0)), ref_band=tpl["ref_band"]))
@@ -460,9 +502,156 @@ def ul_usados(cur, det, ul_modo="todos"):
     raise ValueError(f"ul_modo desconocido: {ul_modo}")
 
 
-def clasificar(cur, lib, pri, mw=0.0, ul_modo="todos"):
+def _centro(SFF, SfF, q0, mp, vp):
+    """Punto de partida en d (= mu + dmag): combinacion gaussiana de la verosimilitud con pesos fijos (cuadratica en la
+    escala A: SFF = sum w F^2, SfF = sum w f F) y el prior gaussiano de d (media mp, varianza vp). q0 = Lp - m_ref.
+    Devuelve (centro, ancho). Sin flujo del modelo en las detecciones: el prior solo."""
+    good = (SFF > 0) & (SfF > 0)
+    Ah = np.where(good, SfF / np.where(good, SFF, 1.0), 1.0)              # escala de minimos cuadrados
+    pd_ = np.where(good, (Ah * K_MAG) ** 2 * SFF, 0.0)                     # precision de la verosimilitud en d
+    prec = pd_ + 1.0 / vp
+    return (pd_ * (-q0[:, :, None] - 2.5 * np.log10(Ah)) + mp / vp) / prec, 1.0 / np.sqrt(prec)
+
+
+def _verosim(fo, so, s2m, a, deriv=False):
+    """Verosimilitud de las detecciones (eje -2 = puntos) con el modelo a (flujo): gaussianas de varianza
+    V = so + s2m a^2 (datos + error del modelo, fraccion s2m^0.5 del flujo del modelo). Devuelve (log L, chi2) y con
+    deriv tambien S1 = sum a phi' y S2 = sum a (phi' + a phi''), phi(a) = -(r^2/V + log V)/2 de un punto, r = f - a:
+    d log L/dd = -K S1 y d2 log L/dd2 = K^2 S2 (a = A F, dA/dd = -K A)."""
+    V = so + s2m * a * a
+    r = fo - a
+    iV = 1.0 / V
+    q = r * r * iV
+    chi2 = q.sum(-2)
+    ll = -0.5 * (chi2 + np.log(V).sum(-2))
+    if not deriv:
+        return ll, chi2
+    t = s2m * a * iV
+    p1 = r * iV + t * (q - 1.0)
+    p2 = (s2m * (q - 1.0) - 1.0 - 4.0 * t * r + 2.0 * t * s2m * a * (1.0 - 2.0 * q)) * iV
+    return ll, chi2, (a * p1).sum(-2), (a * (p1 + a * p2)).sum(-2)
+
+
+def _modo(fo, so, s2m, Fc, q0, mp, vp, d0, n_it=None):
+    """Modo local en d de g(d) = log L(d) + log N(d; mp, vp) de cada celda: Newton con radio de confianza desde d0 (un
+    paso que empeora g se rehace desde el mejor punto con el radio / 4, uno que mejora lo duplica hasta PASO_MAX). Fc
+    (nd, n) forma del modelo en las detecciones, q0 = Lp - m_ref, mp, vp, d0 (n,). Devuelve (d*, ancho 1/sqrt(-g'') en
+    d*, log L en d*, chi2 en d*). Sin curvatura negativa en d*: el ancho del prior."""
+    tr = np.full(d0.shape, PASO_MAX)
+    d, b = d0, None
+    for _ in range(N_NEWTON if n_it is None else n_it):
+        ll, chi2, s1, s2 = _verosim(fo, so, s2m, np.exp(-K_MAG * (q0 + d)) * Fc, True)
+        x = (ll - 0.5 * (d - mp) ** 2 / vp, d, ll, chi2, -K_MAG * s1 - (d - mp) / vp, K_MAG ** 2 * s2 - 1.0 / vp)
+        if b is None:
+            b = x
+        else:
+            m = x[0] >= b[0]
+            tr = np.where(m, np.minimum(2.0 * tr, PASO_MAX), 0.25 * tr)
+            b = tuple(np.where(m, u, v) for u, v in zip(x, b))
+        g1, g2 = b[4], b[5]
+        st = np.where(g2 < 0, -g1 / np.where(g2 < 0, g2, -1.0), np.sign(g1) * tr)
+        d = b[1] + np.clip(st, -tr, tr)
+    return b[1], 1.0 / np.sqrt(np.where(b[5] < 0, -b[5], 1.0 / vp)), b[2], b[3]
+
+
+def _integral_d(fo, so, s2m, Fq, q0, dm, sm, lprior, lo=None, hi=None):
+    """log int_lo^hi L(d) p(d) dd de n celdas: nodos dm + sm U (paso sm/2). Un lado cuyo ultimo nodo queda a menos de
+    BORDE_NATS del maximo se extiende con el mismo paso, 16 sm por vez (hasta N_ENSANCHE veces): la cola de escalas
+    grandes no es gaussiana (el error del modelo crece con el modelo). lprior(i, D) = log p en los nodos D de las
+    celdas i. Fq (n, nd), q0, dm, sm, lo, hi (n,)."""
+    n, du = len(dm), U[1] - U[0]
+    lo = np.full(n, -np.inf) if lo is None else lo
+    hi = np.full(n, np.inf) if hi is None else hi
+    acc, mx, borde = np.full(n, -np.inf), np.full(n, -np.inf), {}
+    nb = max(1, CHUNK // (len(U) * max(Fq.shape[1], 1)))
+
+    def suma(i, Uk):
+        for b0 in range(0, len(i), nb):
+            j = i[b0:b0 + nb]
+            D_ = dm[j][:, None] + sm[j][:, None] * Uk                                  # (n, nU)
+            a = np.exp(-K_MAG * (q0[j][:, None] + D_))[:, None, :] * Fq[j][:, :, None]  # (n, nd, nU)
+            lw = np.where((D_ >= lo[j][:, None]) & (D_ < hi[j][:, None]), _verosim(fo, so, s2m, a)[0] + lprior(j, D_),
+                          -np.inf)
+            acc[j] = np.logaddexp(acc[j], logsumexp(lw, axis=-1))
+            mx[j] = np.maximum(mx[j], lw.max(1))
+            borde[-1][j], borde[1][j] = lw[:, 0], lw[:, -1]
+    borde = {-1: np.full(n, -np.inf), 1: np.full(n, -np.inf)}
+    suma(np.arange(n), U)
+    for lado in (-1, 1):
+        ext = lado * (U[-1] + du * np.arange(1, len(U)))                            # 16 sm por extension
+        ext = ext if lado > 0 else ext[::-1]
+        for _ in range(N_ENSANCHE):
+            i = np.flatnonzero(borde[lado] > mx - BORDE_NATS)
+            if not len(i):
+                break
+            otro = borde[-lado].copy()
+            suma(i, ext)
+            borde[-lado] = otro
+            ext = ext + lado * (ext.max() - ext.min() + du)
+    return acc + np.log(sm * du)
+
+
+def _posterior_d(fo, so, s2m, Fc, q0, mp, vp, d0, lpri, ulf):
+    """Modos de la posterior en d de n celdas: Newton desde el punto de partida d0, desde la media del prior y desde el
+    mejor punto de una grilla gruesa del prior (mp +- 4 sigma): con el error del modelo la verosimilitud puede tener
+    mas de un modo (escala de minimos cuadrados y escalas grandes donde se aplana). Modos a menos de 4 anchos se juntan
+    (queda el mejor). Devuelve (D, S, L, C, Ul, V) de forma (n, 3) ordenados en d: modo, ancho, Laplace (sin las
+    constantes de la celda), chi2 y log P de los UL en el modo, y V = modo distinto (los demas no cuentan).
+    lpri(D) = log p exacto en d de cada celda (D (n, k)), ulf(d) = log P de los UL con escala en d."""
+    G = mp[:, None] + np.sqrt(vp)[:, None] * np.linspace(-4.0, 4.0, 17)
+    gg = np.stack([_verosim(fo, so, s2m, np.exp(-K_MAG * (q0 + G[:, k])) * Fc)[0] for k in range(G.shape[1])], 1) \
+        - 0.5 * (G - mp[:, None]) ** 2 / vp[:, None]
+    res = []
+    for ini in (d0, mp.copy(), G[np.arange(len(mp)), np.argmax(gg, 1)]):
+        dk, sk, llk, chk = _modo(fo, so, s2m, Fc, q0, mp, vp, ini)
+        ulk = ulf(dk)
+        res.append((dk, sk, llk + lpri(dk[:, None])[:, 0] + np.log(SQ2PI * sk) + ulk, chk, ulk))
+    D, S, L, C, Ul = (np.stack([r[k] for r in res], 1) for k in range(5))
+    o = np.argsort(D, 1, kind="stable")
+    D, S, L, C, Ul = (np.take_along_axis(x, o, 1) for x in (D, S, L, C, Ul))
+    V = np.ones(D.shape, bool)
+    n_ = np.arange(len(D))
+    cur = np.zeros(len(D), int)                                    # ultimo modo que queda
+    for k in (1, 2):
+        cerca = np.abs(D[:, k] - D[n_, cur]) <= 4.0 * np.maximum(S[:, k], S[n_, cur])
+        mejor = L[:, k] > L[n_, cur]
+        V[n_[cerca & mejor], cur[cerca & mejor]] = False
+        V[cerca & ~mejor, k] = False
+        cur = np.where(cerca & ~mejor, cur, k)
+    return D, S, L, C, Ul, V
+
+
+def _integral_modos(fo, so, s2m, Fq, q0, D, S, V, Ul, lpr):
+    """log int L(d) p(d) P(UL | d) dd de n celdas con los modos de _posterior_d: cada modo que queda (V) en su tramo,
+    con cortes entre modos vecinos (mas cerca del angosto), y los UL en su modo. lpr(i, D) = log p de las celdas i."""
+    lo, hi = np.full(D.shape, -np.inf), np.full(D.shape, np.inf)
+    for a_ in range(3):
+        for b_ in range(a_ + 1, 3):                                # b_ = el siguiente modo que queda despues de a_
+            sig = V[:, a_] & V[:, b_] & ~V[:, a_ + 1:b_].any(1)
+            sp = D[:, a_] + (D[:, b_] - D[:, a_]) * S[:, a_] / (S[:, a_] + S[:, b_])
+            hi[sig, a_], lo[sig, b_] = sp[sig], sp[sig]
+    I = np.full(len(D), -np.inf)
+    for a_ in range(3):
+        m = np.flatnonzero(V[:, a_])
+        if len(m):
+            I[m] = np.logaddexp(I[m], _integral_d(fo, so, s2m, Fq[m], q0[m], D[m, a_], S[m, a_],
+                                                  lambda i, D_: lpr(m[i], D_), lo[m, a_], hi[m, a_]) + Ul[m, a_])
+    return I
+
+
+def _lul(flim, s2m, a):
+    """log P(f < f_lim) de los UL (eje -2) con el modelo a: Phi((f_lim - a)/sigma), sigma^2 = (f_lim/UL_NSIG)^2 +
+    s2m a^2 (el error del modelo tambien en los UL). Sin UL: 0."""
+    if not len(flim):
+        return np.zeros(a.shape[:-2] + a.shape[-1:])
+    fl = flim[:, None]
+    return log_ndtr((fl - a) / np.sqrt((fl / UL_NSIG) ** 2 + s2m * a * a)).sum(-2)
+
+
+def clasificar(cur, lib, pri, mw=0.0, ul_modo=UL_MODO, sig_mod=SIGMA_MOD):
     """Una curva (nnclf.data.Curve: t en MJD, band 0 = g / 1 = r, mag, err, ul, z) -> dict con log E y P por clase,
-    mejor plantilla y sus parametros MAP. None si tiene menos de MIN_DET detecciones o ningun modelo valido."""
+    mejor plantilla y sus parametros MAP. None si tiene menos de MIN_DET detecciones o ningun modelo valido.
+    sig_mod: error del modelo como fraccion del flujo del modelo (regla 4)."""
     det = ~cur.ul & np.isfinite(cur.mag) & np.isfinite(cur.err) & (cur.err > 0)
     ul = ul_usados(cur, det, ul_modo) if det.any() else cur.ul
     nd, nu = int(det.sum()), int(ul.sum())
@@ -473,8 +662,9 @@ def clasificar(cur, lib, pri, mw=0.0, ul_modo="todos"):
     mag = cur.mag[sel].astype(float)
     m_ref = float(mag[:nd].min())
     f = 10.0 ** (-0.4 * (mag[:nd] - m_ref))
-    wd = 1.0 / (K_MAG * f * np.sqrt(cur.err[sel][:nd].astype(float) ** 2 + SIGMA_MOD ** 2)) ** 2
-    wf, sff = wd * f, float(np.sum(wd * f * f))
+    s2o, s2m = (K_MAG * f * cur.err[sel][:nd].astype(float)) ** 2, float(sig_mod) ** 2   # datos (flujo) y modelo
+    w0 = 1.0 / (s2o + s2m * f * f)                     # punto de partida: el error del modelo en el flujo observado
+    fo, so = f[:, None], s2o[:, None]
     flim = 10.0 ** (-0.4 * (mag[nd:] - m_ref))
     T0 = float(t[:nd].min()) - T_PRE
     nT = int(math.floor((float(t[:nd].max()) - T0) / DP)) + 1
@@ -486,7 +676,7 @@ def clasificar(cur, lib, pri, mw=0.0, ul_modo="todos"):
     i1 = np.clip(k0[:, None] - np.arange(nT)[None, :] + 1, 0, npf - 1)  # columna 0, sin flujo
     nod = z_nodos(lib.z, cur.z, pri.sin_z)
     bandas = np.unique(bo)
-    dU, ltab = U[1] - U[0], {}
+    ltab = {}
     nt = len(lib.tab)
     logE = np.full(nt, -np.inf)
     mapa = [None] * nt
@@ -501,8 +691,8 @@ def clasificar(cur, lib, pri, mw=0.0, ul_modo="todos"):
         lf, Mref = tuple(pri.lf[it]), float(lib.tab.M_ref.iloc[it])
         aref = lib.aref[it, ie] * pri.lf_dust[it]                                  # (ne,)
         lpe = pri.log_pe[it, ie]
-        per = max(1, CHUNK // (len(ie) * nT * max(len(bo), len(U))))
-        acc, medias, tope = [], [], -math.inf
+        per = max(1, CHUNK // (len(ie) * nT * len(bo)))
+        acc, medias, tope, tope2 = [], [], -math.inf, -math.inf
         for c0 in range(0, len(ns), per):
             ch = ns[c0:c0 + per]
             ks = [n[0] for n in ch]
@@ -513,59 +703,83 @@ def clasificar(cur, lib, pri, mw=0.0, ul_modo="todos"):
             if mw:
                 F *= (10.0 ** (-0.4 * lib.rmw[it][ks][:, bo] * mw))[:, None, :, None]
             Fd = F[:, :, :nd]
-            SFF, SfF = np.matmul(wd, Fd * Fd), np.matmul(wf, Fd)                    # (nk, ne, nT)
             Lp = lib.lp[it][ks][:, ie]                                              # (nk, ne)
             mu_m = np.array([np.sum(n[3] * n[2]) for n in ch])
             mu_v = np.array([np.sum(n[3] * (n[2] - np.sum(n[3] * n[2])) ** 2) for n in ch])
             mp = mu_m[:, None] + lf[0] - Mref - aref[None, :]                       # prior de dmag + mu, gaussiano
             vp = (lf[1] ** 2 + mu_v)[:, None, None]
-            good = (SFF > 0) & (SfF > 0)
-            Ah = np.where(good, SfF / np.where(good, SFF, 1.0), 1.0)
-            chi2_min = min(chi2_min, float(np.min(np.where(good, sff - SfF * Ah, sff))))
-            pd_ = np.where(good, (Ah / 1.0857) ** 2 * SFF, 0.0)                     # precision de la verosimilitud en d
-            dh = m_ref - Lp[:, :, None] - 2.5 * np.log10(Ah)
-            prec = pd_ + 1.0 / vp
-            dc = (pd_ * dh + mp[:, :, None] / vp) / prec
-            sc = 1.0 / np.sqrt(prec)
-            Ac = 10.0 ** (-0.4 * (Lp[:, :, None] + dc - m_ref))                    # escala en el centro
-            yc = dc + Mref + aref[None, :, None]                                   # y = M + mu(z)
-            lpc = np.empty_like(dc)
-            for j, n in enumerate(ch):
-                kk = (lf, n[0])
-                if kk not in ltab:
-                    ltab[kk] = _tabla_prior_y(n[2], n[3], lf)
-                lpc[j] = np.interp(yc[j], *ltab[kk], left=LOG0, right=LOG0)
-            lul = log_ndtr(UL_NSIG * (1.0 - Ac[:, :, None, :] * F[:, :, nd:] / flim[None, None, :, None])).sum(2) \
-                if nu else np.zeros_like(dc)
-            base = lul + np.array([n[1] for n in ch])[:, None, None] + lpe[None, :, None] - math.log(nT)
-            # Laplace en todas las celdas; la integral en dmag completa solo donde puede pesar
-            lE = -0.5 * (sff - 2.0 * Ac * SfF + Ac * Ac * SFF) + lpc + np.log(SQ2PI * sc) + base
+            q0, mp3 = Lp - m_ref, mp[:, :, None]
+            shp = (len(ch), len(ie), nT)
+            mpb, vpb = np.broadcast_to(mp3, shp), np.broadcast_to(vp, shp)
+            bconst = np.broadcast_to(np.array([n[1] for n in ch])[:, None, None] + lpe[None, :, None] - math.log(nT), shp)
+            for n in ch:
+                if (lf, n[0]) not in ltab:
+                    ltab[(lf, n[0])] = _tabla_prior_y(n[2], n[3], lf)
+            yl = Mref + aref[None, :, None]                                        # y = M + mu(z) = d + yl
+            lpri = lambda d: np.stack([np.interp(d[j] + yl[0], *ltab[(lf, n[0])], left=LOG0, right=LOG0)
+                                       for j, n in enumerate(ch)])
+            Fu = F[:, :, nd:]
+            # etapa 1, todas las celdas: verosimilitud exacta en el punto de partida (minimos cuadrados con pesos fijos +
+            # prior) y en la media del prior (con el error del modelo la verosimilitud se aplana a escalas grandes: ahi
+            # el prior fija un segundo modo). Laplace con el ancho de cada uno.
+            d0, s0 = _centro(np.matmul(w0, Fd * Fd), np.matmul(w0 * f, Fd), q0, mp3, vp)
+            A0, Ab = np.exp(-K_MAG * (q0[:, :, None] + d0)), np.exp(-K_MAG * (q0[:, :, None] + mpb))
+            ll0, ch0 = _verosim(fo, so, s2m, A0[:, :, None, :] * Fd)
+            llb, chb = _verosim(fo, so, s2m, Ab[:, :, None, :] * Fd)
+            ul0, ulb = _lul(flim, s2m, A0[:, :, None, :] * Fu), _lul(flim, s2m, Ab[:, :, None, :] * Fu)
+            e1a = ll0 + lpri(d0) + np.log(SQ2PI * s0) + ul0
+            e1b = llb + lpri(mpb) + np.log(SQ2PI * np.sqrt(vpb)) + ulb
+            ga = e1a >= e1b
+            lE = np.where(ga, e1a, e1b) + bconst
+            dmap, chi2c, lulc = np.where(ga, d0, mpb), np.where(ga, ch0, chb), np.where(ga, ul0, ulb)
+            del ll0, llb, ch0, chb, ul0, ulb, e1a, e1b, ga
+            # etapa 2, celdas a menos de CRIBA_NATS del maximo de la plantilla: Newton desde los dos puntos
             tope = max(tope, float(lE.max()))
-            ix = np.nonzero(lE > tope - LAPLACE_NATS)
-            Dd = dc[ix][:, None] + sc[ix][:, None] * U                              # (n_sel, nU)
-            A = np.exp(-K_MAG * (Lp[ix[0], ix[1]][:, None] + Dd - m_ref))
-            ll = -0.5 * (sff - 2.0 * A * SfF[ix][:, None] + A * A * SFF[ix][:, None])
-            y = Dd + Mref + aref[ix[1]][:, None]
-            for j, n in enumerate(ch):
-                r_ = ix[0] == j
-                if r_.any():
-                    ll[r_] += np.interp(y[r_], *ltab[(lf, n[0])], left=LOG0, right=LOG0)
-            lE[ix] = logsumexp(ll, axis=-1) + np.log(sc[ix] * dU) + base[ix]
+            sv = np.nonzero(lE > tope - CRIBA_NATS)
+            if len(sv[0]):
+                Fc, Fuc = Fd[sv[0], sv[1], :, sv[2]].T, Fu[sv[0], sv[1], :, sv[2]].T     # (nd, n), (nu, n)
+                qc, mpc, vpc, yo = q0[sv[0], sv[1]], mp[sv[0], sv[1]], vp[sv[0], 0, 0], Mref + aref[sv[1]]
+
+                def lpri_c(i, D_):
+                    y, out = D_ + yo[i][:, None], np.empty_like(D_)
+                    for j in np.unique(sv[0][i]):
+                        r_ = sv[0][i] == j
+                        out[r_] = np.interp(y[r_], *ltab[(lf, ch[j][0])], left=LOG0, right=LOG0)
+                    return out
+                todas = np.arange(len(qc))
+                D, S, L, C, Ul, V = _posterior_d(fo, so, s2m, Fc, qc, mpc, vpc, d0[sv], lambda D_: lpri_c(todas, D_),
+                                                 lambda d: _lul(flim, s2m, np.exp(-K_MAG * (qc + d)) * Fuc))
+                Lv = np.where(V, L, -np.inf)
+                b = np.argmax(Lv, 1)
+                L2 = logsumexp(Lv, axis=1) + bconst[sv]
+                lE[sv] = L2
+                dmap[sv], chi2c[sv], lulc[sv] = (np.take_along_axis(x, b[:, None], 1)[:, 0] for x in (D, C, Ul))
+                # integral en d donde puede pesar: cada modo en su tramo (cortes entre modos vecinos, mas cerca del
+                # angosto)
+                tope2 = max(tope2, float(L2.max()))
+                k2 = np.flatnonzero(L2 > tope2 - LAPLACE_NATS)
+                if len(k2):
+                    I = _integral_modos(fo, so, s2m, Fc[:, k2].T, qc[k2], D[k2], S[k2], V[k2], Ul[k2],
+                                        lambda i, D_: lpri_c(k2[i], D_))
+                    lE[tuple(a[k2] for a in sv)] = I + bconst[sv][k2]
+            chi2_min = min(chi2_min, float(chi2c.min()))
+            Ac = np.exp(-K_MAG * (q0[:, :, None] + dmap))
             j, e, mT = np.unravel_index(int(np.argmax(lE)), lE.shape)
             lse = logsumexp(lE)
             if np.isfinite(lse):                                   # medias posteriores dentro del bloque
                 wq = np.exp(lE - lse)
-                Mq = dc - mu_m[:, None, None] + Mref + aref[None, :, None]
+                Mq = dmap - mu_m[:, None, None] + yl
                 acc.append(lse)
                 medias.append(dict(z_post=np.sum(wq * lib.z[ks][:, None, None]),
                                    ebv_post=np.sum(wq * lib.ebv[ie][None, :, None]),
                                    tmax_post=T0 + DP * np.sum(wq * np.arange(nT)[None, None, :]), M_post=np.sum(wq * Mq)))
             if mapa[it] is None or lE[j, e, mT] > mapa[it]["lE"]:
+                fm = Ac[j, e, mT] * Fd[j, e, :, mT]
                 mapa[it] = dict(lE=float(lE[j, e, mT]), z_map=float(lib.z[ks[j]]), ebv_map=float(lib.ebv[ie[e]]),
-                                tmax_map=T0 + mT * DP,
-                                M_map=float(dc[j, e, mT] - mu_m[j] + Mref + aref[e]),
-                                chi2_map=float(sff - 2 * Ac[j, e, mT] * SfF[j, e, mT] + Ac[j, e, mT] ** 2 * SFF[j, e, mT]),
-                                chi2_ul_map=float(-2.0 * lul[j, e, mT]))
+                                tmax_map=T0 + mT * DP, M_map=float(dmap[j, e, mT] - mu_m[j] + yl[0, e, 0]),
+                                chi2_map=float(chi2c[j, e, mT]),                  # con el error del modelo
+                                chi2_dat_map=float(np.sum((f - fm) ** 2 / s2o)),  # solo el error de los datos
+                                chi2_ul_map=float(-2.0 * lulc[j, e, mT]))
         if acc:
             logE[it] = logsumexp(acc)
             pw = np.exp(np.array(acc) - logE[it])
@@ -589,18 +803,34 @@ def clasificar(cur, lib, pri, mw=0.0, ul_modo="todos"):
 _W = {}
 
 
-def _init(lib_dir, four, sin_z, cfg_name, ul_modo="todos"):
+def _init(lib_dir, four, sin_z, cfg_name, ul_modo=UL_MODO, sig_mod=SIGMA_MOD, ii_dust="cfg"):
     from threadpoolctl import threadpool_limits
     threadpool_limits(1)
     lib = cargar_biblioteca(lib_dir)
-    _W.update(lib=lib, pri=priors(lib, four, sin_z, cfg_name), ul_modo=ul_modo)
+    _W.update(lib=lib, pri=priors(lib, four, sin_z, cfg_name, ii_dust), ul_modo=ul_modo, sig_mod=sig_mod)
 
 
 def _uno(args):
     cur, mw = args
     t0 = time.time()
-    r = clasificar(cur, _W["lib"], _W["pri"], mw, _W["ul_modo"])
+    r = clasificar(cur, _W["lib"], _W["pri"], mw, _W["ul_modo"], _W["sig_mod"])
     return cur.key, r, time.time() - t0
+
+
+def chi2_red(P, n_par=4):
+    """chi2 reducido de la mejor plantilla (MAP): chi2 / (n_det - n_par), n_par = z, E(B-V), T_max y escala."""
+    return P.chi2_map / np.maximum(P.n_det - n_par, 1)
+
+
+def resumen_chi2(P):
+    out = {}
+    for k, c in (("con_error_del_modelo", "chi2_map"), ("solo_datos", "chi2_dat_map")):
+        if c not in P or not len(P):
+            continue
+        x = chi2_red(P.assign(chi2_map=P[c])).to_numpy(float)
+        out[k] = {"mediana": float(np.median(x)), "p16": float(np.percentile(x, 16)), "p84": float(np.percentile(x, 84)),
+                  "frac_mayor_2": float(np.mean(x > 2)), "frac_mayor_5": float(np.mean(x > 5))}
+    return out
 
 
 def val_meta(real_dir=REAL_DIR, four=False):
@@ -618,11 +848,12 @@ def elegir_oids(v, subset="val", limit=None, seed=SEED):
 
 
 def run(name, four=False, sin_z=False, subset="val", limit=None, workers=2, real_dir=REAL_DIR, out_root=OUT_ROOT,
-        lib_dir=None, store=None, mw=None, cfg_name=RUN_CFG, n_boot=1000, ul_modo="todos"):
+        lib_dir=None, store=None, mw=None, cfg_name=RUN_CFG, n_boot=1000, ul_modo=UL_MODO, sig_mod=SIGMA_MOD,
+        ii_dust="cfg"):
     from pipeline78.clf_villar import bootstrap_ci, calib_metrics, metrics
     t_ini = time.time()
     out_root = Path(out_root)
-    lib_dir = Path(lib_dir) if lib_dir else construir_biblioteca(store, cfg_name, out_root)
+    lib_dir = Path(lib_dir) if lib_dir else construir_biblioteca(store, cfg_name, out_root, ii_dust=ii_dust)
     t_lib = time.time() - t_ini
     cls = D.classes(four)
     v = val_meta(real_dir, four)
@@ -638,11 +869,11 @@ def run(name, four=False, sin_z=False, subset="val", limit=None, workers=2, real
     workers = max(1, min(int(workers), 4))
     t1 = time.time()
     if workers == 1:
-        _init(lib_dir, four, sin_z, cfg_name, ul_modo)
+        _init(lib_dir, four, sin_z, cfg_name, ul_modo, sig_mod, ii_dust)
         res = [_uno(x) for x in tareas]
     else:
         with get_context("spawn").Pool(workers, initializer=_init,
-                                       initargs=(lib_dir, four, sin_z, cfg_name, ul_modo)) as pool:
+                                       initargs=(lib_dir, four, sin_z, cfg_name, ul_modo, sig_mod, ii_dust)) as pool:
             res = []
             for i, r in enumerate(pool.imap(_uno, tareas, chunksize=1), 1):
                 res.append(r)
@@ -660,14 +891,15 @@ def run(name, four=False, sin_z=False, subset="val", limit=None, workers=2, real
                           y_pred=cls[k], **{f"p_{c_}": float(r["p"][i]) for i, c_ in enumerate(cls)},
                           n_det=r["n_det"], n_ul=r["n_ul"], z=c.z, prior_z=r["prior_z"], ebv_mw=m,
                           best_template=r["best_template"], best_template_clase=r["best_template_clase"],
-                          chi2_min=r["chi2_min"], chi2_map=r["chi2_map"], chi2_ul_map=r["chi2_ul_map"],
+                          chi2_min=r["chi2_min"], chi2_map=r["chi2_map"], chi2_dat_map=r["chi2_dat_map"],
+                          chi2_ul_map=r["chi2_ul_map"],
                           z_map=r["z_map"], ebv_map=r["ebv_map"], tmax_map=r["tmax_map"], M_map=r["M_map"],
                           z_post=r["z_post"], ebv_post=r["ebv_post"], tmax_post=r["tmax_post"], M_post=r["M_post"],
                           **{f"logE_{c_}": float(r["logE"][i]) for i, c_ in enumerate(cls)}, t_seg=dt))
     nada += [dict(oid=o, motivo=f"menos de {MIN_DET} detecciones g + r") for o in faltan if o in oids]
     P = pd.DataFrame(filas, columns=["oid", "subset", "sn_type", "y_true", "y_pred"] + [f"p_{c}" for c in cls] +
                      ["n_det", "n_ul", "z", "prior_z", "ebv_mw", "best_template", "best_template_clase", "chi2_min",
-                      "chi2_map", "chi2_ul_map", "z_map", "ebv_map", "tmax_map", "M_map", "z_post", "ebv_post",
+                      "chi2_map", "chi2_dat_map", "chi2_ul_map", "z_map", "ebv_map", "tmax_map", "M_map", "z_post", "ebv_post",
                       "tmax_post", "M_post"] +
                      [f"logE_{c}" for c in cls] + ["t_seg"])
     out = out_root / name
@@ -688,10 +920,13 @@ def run(name, four=False, sin_z=False, subset="val", limit=None, workers=2, real
         r = metrics(y, yp, cls)
         r.update(calib_metrics(ps[[f"p_{c}" for c in cls]].to_numpy(), y))
         r.update(bootstrap_ci(y, yp, cls, n_boot, SEED))
+        r["chi2_reducido"] = resumen_chi2(ps)
         real[s] = r
     ts = P.t_seg.to_numpy() if len(P) else np.zeros(1)
-    cfg_txt = dict(run_cfg=cfg_name, cuatro_clases=four, sin_z=sin_z, subset=subset,
-                   limit=limit, ul_modo=ul_modo, laplace_nats=LAPLACE_NATS, sigma_z=SIGMA_Z, z_floor=Z_FLOOR, sigma_mod=SIGMA_MOD, ul_nsig=UL_NSIG, t_pre=T_PRE,
+    ii = runcfg.RUNS_CFG[cfg_name].get("ii_dust") if ii_dust == "cfg" else ii_dust
+    cfg_txt = dict(run_cfg=cfg_name, cuatro_clases=four, sin_z=sin_z, subset=subset, limit=limit, ul_modo=ul_modo,
+                   sigma_mod=float(sig_mod), sigma_mod_es="fraccion del flujo del modelo, en cuadratura",
+                   ii_dust=ii, laplace_nats=LAPLACE_NATS, sigma_z=SIGMA_Z, z_floor=Z_FLOOR, ul_nsig=UL_NSIG, t_pre=T_PRE,
                    min_det=MIN_DET, n_u=len(U), u_max=float(U[-1]), dmu_sub=DMU_SUB, masa_min_z=MASA_MIN_Z,
                    masa_min_e=MASA_MIN_E, mw_const=mw_const, n_sin_mw=len(sin_mw))
     res_json = dict(config=cfg_txt, clases=list(cls), biblioteca=str(lib_dir),
@@ -709,11 +944,142 @@ def run(name, four=False, sin_z=False, subset="val", limit=None, workers=2, real
     return out
 
 
+# ------------------------------------------------------------------------------------------------ comparacion
+CONTRA = {"villar": "clf_villar/sweep_t11_foco/mejor", "tf_base": "nnclf_t11/tf_base",
+          "gru_attn_uni_z": "nnclf_t11/gru_attn_uni_z"}
+
+
+def comparar(name, contra=None, out_root=OUT_ROOT, runs=RUNS, real_dir=REAL_DIR, villar="villar", tag=None):
+    """Plantillas (3 clases) contra otros clasificadores en los mismos objetos, con las funciones de
+    informe_clasificadores (mitad val de splits.read_val_meta, leer_pred, met y pareado = bootstrap pareado de nnclf).
+    val_sel decide (P >= P_MIN), val_rep solo reporta (delta e IC 90 %). Ademas la exactitud de cada uno en las SNe que
+    Villar cubre y en las que no, sobre las oids que clasifican todos menos Villar. Escribe comparacion.json en el run.
+    gana: en val_sel el que pasa la regla (P >= P_MIN), en val_rep el que favorece el IC 90 % del delta si excluye 0
+    (senal, no decision). None = ninguno."""
+    from pipeline78.informe_clasificadores import SUB, _js, leer_pred, met, pareado, particion
+    from pipeline78.nnclf.experimentos import P_MIN
+    V = particion(real_dir)
+    pl, info = leer_pred(Path(out_root) / name / "pred_real_val.csv", V)
+    if pl is None:
+        raise SystemExit(f"{name}: predice clases fuera de Ia/II/Ibc (corrida de 4 clases)")
+    P = {name: pl}
+    fuera = {name: info["fuera_de_val"]}
+    for k, d in (contra or CONTRA).items():
+        p, inf_ = leer_pred(Path(runs) / d / "pred_real_val.csv", V)
+        P[k], fuera[k] = p, inf_["fuera_de_val"]
+    pares, cubre = {}, {}
+    for k in P:
+        if k == name:
+            continue
+        pares[k] = {}
+        for s in SUB:
+            a, b = P[name][P[name].subset == s], P[k][P[k].subset == s]
+            com = set(a.oid) & set(b.oid)
+            ac, bc = a[a.oid.isin(com)], b[b.oid.isin(com)]
+            c_ab, c_ba = pareado(ac, bc), pareado(bc, ac)
+            if s == "val_sel":
+                g = name if c_ab.get("p_mejora", 0) >= P_MIN else k if c_ba.get("p_mejora", 0) >= P_MIN else None
+            else:
+                lo, hi = c_ab.get("ic90_delta") or (0, 0)
+                g = name if lo > 0 else k if hi < 0 else None
+            pares[k][s] = {"n": len(com), name: met(ac, len(com)), k: met(bc, len(com)),
+                           "plantillas_menos_otro": c_ab, "otro_menos_plantillas": c_ba, "gana": g}
+    if villar in P:
+        otros = [k for k in P if k != villar]
+        for s in SUB:
+            com = set.intersection(*(set(P[k].oid[P[k].subset == s]) for k in otros))
+            cv = com & set(P[villar].oid[P[villar].subset == s])
+            cubre[s] = {"n_comun": len(com), "n_cubre_villar": len(cv), "n_no_cubre": len(com - cv)}
+            for k in P:
+                p = P[k][P[k].subset == s]
+                cubre[s][k] = {"cubre_villar": met(p[p.oid.isin(cv)], len(cv)),
+                               "no_cubre_villar": met(p[p.oid.isin(com - cv)], len(com - cv)) if k != villar else None}
+    res = _js({"plantillas": name, "contra": {k: str(Path(runs) / d) for k, d in (contra or CONTRA).items()},
+               "fuera_de_val": fuera, "p_min": P_MIN, "completo": {k: {s: met(P[k][P[k].subset == s],
+                                                                                  int((V.subset == s).sum())) for s in SUB}
+                                                                    for k in P},
+               "pares": pares, "cobertura_villar": cubre, "creada": time.strftime("%Y-%m-%d %H:%M:%S")})
+    (Path(out_root) / name / f"comparacion{'_' + tag if tag else ''}.json").write_text(json.dumps(res, indent=1))
+    lin = lambda m: (f"acc {m['acc']:.3f} bal {m['bal_acc']:.3f} [{m['bal_acc_ic95'][0]:.3f}, {m['bal_acc_ic95'][1]:.3f}]"
+                     if m.get("n") else "-")
+    for k, q in res["pares"].items():
+        for s in SUB:
+            x = q[s]
+            c = x["plantillas_menos_otro"]
+            print(f"[comparar] {name} - {k} {s} n={x['n']}: {lin(x[name])} | {lin(x[k])} | delta {c.get('delta', 0):+.3f}"
+                  f" P(pl) {c.get('p_mejora', float('nan')):.3f} P({k}) "
+                  f"{x['otro_menos_plantillas'].get('p_mejora', float('nan')):.3f} IC90 {c.get('ic90_delta')}")
+    for s, q in res["cobertura_villar"].items():
+        for k in P:
+            print(f"[comparar] {s} {k}: cubre Villar {lin(q[k]['cubre_villar'])} (n {q['n_cubre_villar']}) | no cubre "
+                  f"{lin(q[k]['no_cubre_villar']) if q[k]['no_cubre_villar'] else '-'} (n {q['n_no_cubre']})")
+    return res
+
+
+# ------------------------------------------------------------------------------------------------ sigma_mod (regla 4c)
+def log_p_verdadera(P, cls):
+    """log p de la clase verdadera por objeto, con el piso 1e-12 de clf_villar.calib_metrics."""
+    pv = P[[f"p_{c}" for c in cls]].to_numpy(float)[np.arange(len(P)), P.y_true.map(list(cls).index).to_numpy()]
+    return np.log(np.clip(pv, 1e-12, 1.0))
+
+
+def elegir_sigma(base="sigma", out_root=OUT_ROOT, grilla=SIGMA_MOD_GRID, apriori=SIGMA_MOD_APRIORI, correr=True,
+                 workers=4, **kw):
+    """Regla 4c: corre la grilla en val_sel (3 clases con z, UL y polvo por defecto) en out_root/<base>/s<valor> y
+    elige por la log-verosimilitud de la clase verdadera media por clase. La de mayor valor reemplaza a la a priori
+    solo con P >= P_MIN en el bootstrap pareado (paired_bootstrap de nnclf sobre log p por objeto, mismas oids). Escribe
+    <base>/eleccion.json. Solo lee val_sel."""
+    from pipeline78.clf_villar import calib_metrics, metrics
+    from pipeline78.nnclf.experimentos import BOOT_SEED, N_BOOT, P_MIN, paired_bootstrap
+    cls = D.classes(False)
+    out_root = Path(out_root)
+    P = {}
+    for s_ in grilla:
+        d = out_root / base / f"s{s_:.2f}"
+        if correr and not (d / "metrics.json").exists():
+            run(f"{base}/s{s_:.2f}", subset="val_sel", sig_mod=s_, workers=workers, out_root=out_root, **kw)
+        q = pd.read_csv(d / "pred_real_val.csv", dtype={"oid": str})
+        if set(q.subset) - {"val_sel"}:
+            raise ValueError(f"{d}: tiene filas fuera de val_sel")
+        P[s_] = q.set_index("oid")
+    com = sorted(set.intersection(*(set(q.index) for q in P.values())))
+    y = P[apriori].loc[com].y_true.map(cls.index).to_numpy()
+    lp, tab = {}, []
+    for s_, q in P.items():
+        q = q.loc[com].reset_index()
+        lp[s_] = log_p_verdadera(q, cls)
+        m = metrics(y, q.y_pred.map(cls.index).to_numpy(), cls)
+        tab.append(dict(sigma_mod=s_, n=len(q), logp_media=float(lp[s_].mean()),
+                        logp_media_por_clase=float(np.mean([lp[s_][y == k].mean() for k in np.unique(y)])),
+                        bal_acc=m["bal_acc"], acc=m["acc"], **calib_metrics(q[[f"p_{c}" for c in cls]].to_numpy(), y),
+                        chi2_reducido=resumen_chi2(q)))
+    cand = max(tab, key=lambda r: (r["logp_media_por_clase"], -r["sigma_mod"]))["sigma_mod"]
+    d_, p_, ic = paired_bootstrap(y, lp[cand], lp[apriori], N_BOOT, BOOT_SEED) if cand != apriori else (0.0, 0.0, (0, 0))
+    elegido = cand if cand != apriori and p_ >= P_MIN else apriori
+    res = dict(regla="4c: max log p(clase verdadera) media por clase en val_sel; reemplaza al a priori con P >= P_MIN",
+               subset="val_sel", n=len(com), a_priori=apriori, candidata=cand, p_min=P_MIN,
+               pareado=dict(delta_logp_por_clase=float(d_), p_mejora=float(p_), ic90=list(ic)), elegido=elegido,
+               tabla=tab, creada=time.strftime("%Y-%m-%d %H:%M:%S"))
+    (out_root / base / "eleccion.json").write_text(json.dumps(res, indent=1, default=float))
+    for r in tab:
+        c = r["chi2_reducido"].get("con_error_del_modelo", {})
+        print(f"[sigma] {r['sigma_mod']:.2f}: log p {r['logp_media']:.3f} (por clase {r['logp_media_por_clase']:.3f}) "
+              f"bal_acc {r['bal_acc']:.3f} ECE {r['ece']:.3f} chi2_red mediana {c.get('mediana', float('nan')):.2f}")
+    print(f"[sigma] candidata {cand} contra {apriori}: P = {p_:.3f} -> elegido {elegido}")
+    return res
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="python -m pipeline78.plantillas_clf")
     sp = ap.add_subparsers(dest="cmd", required=True)
     b = sp.add_parser("biblioteca")
     b.add_argument("--force", action="store_true")
+    c = sp.add_parser("comparar", help="contra Villar y las redes en los mismos objetos (comparacion.json)")
+    c.add_argument("--name", required=True)
+    c.add_argument("--contra", nargs="*", help="nombre=ruta relativa a RUNS (por defecto CONTRA)")
+    c.add_argument("--tag", help="comparacion_<tag>.json")
+    g = sp.add_parser("sigma", help="regla 4c: SIGMA_MOD en val_sel")
+    g.add_argument("--workers", type=int, default=4)
     r = sp.add_parser("run")
     r.add_argument("--name", required=True)
     r.add_argument("--cuatro-clases", action="store_true")
@@ -721,14 +1087,23 @@ def main(argv=None):
     r.add_argument("--subset", choices=("val", "val_sel", "val_rep"), default="val")
     r.add_argument("--limit", type=int, default=None)
     r.add_argument("--workers", type=int, default=2, help="maximo 4")
-    r.add_argument("--ul", choices=UL_MODOS, default="todos", help="UL en la verosimilitud (regla 4b)")
+    r.add_argument("--ul", choices=UL_MODOS, default=UL_MODO, help="UL en la verosimilitud (regla 4b)")
+    r.add_argument("--sigma-mod", type=float, default=SIGMA_MOD, help="error del modelo (regla 4c)")
+    r.add_argument("--ii-dust", choices=("cfg", "sudare"), default="cfg", help="polvo de las II (regla 7)")
     a = ap.parse_args(argv)
     if a.cmd == "biblioteca":
         from threadpoolctl import threadpool_limits
         with threadpool_limits(int(os.environ.get("P78_PL_THREADS", "2"))):
             print(construir_biblioteca(force=a.force))
         return
-    run(a.name, a.cuatro_clases, a.sin_z, a.subset, a.limit, a.workers, ul_modo=a.ul)
+    if a.cmd == "comparar":
+        comparar(a.name, dict(x.split("=", 1) for x in a.contra) if a.contra else None, tag=a.tag)
+        return
+    if a.cmd == "sigma":
+        elegir_sigma(workers=a.workers)
+        return
+    run(a.name, a.cuatro_clases, a.sin_z, a.subset, a.limit, a.workers, ul_modo=a.ul, sig_mod=a.sigma_mod,
+        ii_dust=a.ii_dust)
 
 
 if __name__ == "__main__":

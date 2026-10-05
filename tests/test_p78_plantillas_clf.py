@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import pandas as pd
 import pytest
+from scipy.special import logsumexp
 from scipy.stats import truncnorm
 from pipeline78 import bands as B, catalog, engine, project, runcfg, sampling
 from pipeline78 import plantillas_clf as PL
@@ -343,19 +344,73 @@ def test_corrida_sin_tocar_la_final(lib, tmp_path, monkeypatch):
     assert m["tiempo"]["n_sn"] == len(P)
 
 
-def test_filtro_de_laplace_no_cambia_la_evidencia(lib, monkeypatch):
+@pytest.mark.parametrize("sig", [0.05, 0.3])
+def test_filtro_de_laplace_y_criba_no_cambian_la_evidencia(lib, monkeypatch, sig):
     root, _, L = lib
     pri = PL.priors(L, four=True)
-    for sn in ("FIA1", "FIIP", "FIIN"):
+    for sn in ("FIA1", "FIIP", "FIIN", "FIB"):
         cur, _ = _fake_sn(root, sn, ebv=0.0)
-        a = PL.clasificar(cur, L, pri, mw=0.03)
+        a = PL.clasificar(cur, L, pri, mw=0.03, sig_mod=sig)
         monkeypatch.setattr(PL, "LAPLACE_NATS", np.inf)                  # integral completa en todas las celdas
-        b = PL.clasificar(cur, L, pri, mw=0.03)
-        monkeypatch.undo()
+        b = PL.clasificar(cur, L, pri, mw=0.03, sig_mod=sig)
         fin = np.isfinite(b["logE_plantillas"])
-        # Laplace puede errar por ~20 nats en una celda no gaussiana bajo el corte: queda < 1e-4 en log E
+        # el filtro de Laplace (a 30 nats, Laplace en el modo erra < 0.2 nats): < 1e-4 en log E de cada plantilla
         assert np.allclose(a["logE_plantillas"][fin], b["logE_plantillas"][fin], atol=1e-4, rtol=0)
         assert np.allclose(a["p"], b["p"], atol=1e-9) and a["M_post"] == pytest.approx(b["M_post"], abs=1e-6)
+        monkeypatch.setattr(PL, "CRIBA_NATS", np.inf)                    # sin la criba de la etapa 1
+        c = PL.clasificar(cur, L, pri, mw=0.03, sig_mod=sig)
+        monkeypatch.undo()
+        # la criba solo cambia plantillas muy por debajo de la mejor (sin esperanza): la mejor y P no se mueven
+        lc = c["logE_plantillas"]
+        cerca = np.isfinite(lc) & (lc > np.nanmax(lc) - 80.0)
+        assert np.allclose(a["logE_plantillas"][cerca], lc[cerca], atol=1e-4, rtol=0)
+        assert np.allclose(a["p"], c["p"], atol=1e-9) and a["best_template"] == c["best_template"]
+
+
+def test_derivadas_de_la_verosimilitud():
+    rng = np.random.default_rng(1)
+    nd = 30
+    for s2m in (0.05 ** 2, 0.3 ** 2):
+        f = 10 ** (-0.4 * rng.uniform(0, 3, nd))
+        so = (PL.K_MAG * f * rng.uniform(0.02, 0.3, nd)) ** 2
+        F = 10 ** (-0.4 * rng.uniform(0, 3, nd))
+        ll = lambda d: PL._verosim(f[:, None], so[:, None], s2m, (np.exp(-PL.K_MAG * d) * F)[:, None])[0][0]
+        for d in (-2.0, -0.3, 0.7, 2.5):
+            _, _, s1, s2 = PL._verosim(f[:, None], so[:, None], s2m, (np.exp(-PL.K_MAG * d) * F)[:, None], True)
+            h = 1e-4
+            assert -PL.K_MAG * s1[0] == pytest.approx((ll(d + h) - ll(d - h)) / (2 * h), rel=1e-6, abs=1e-6)
+            assert PL.K_MAG ** 2 * s2[0] == pytest.approx((ll(d + h) - 2 * ll(d) + ll(d - h)) / h ** 2, rel=1e-4, abs=1e-3)
+
+
+@pytest.mark.parametrize("s2m", [0.05 ** 2, 0.1 ** 2, 0.3 ** 2])
+def test_integral_en_d_contra_fuerza_bruta(s2m):
+    """Celdas al azar (la mitad con un modelo que ajusta, la mitad con formas sin relacion a los datos, que dan dos
+    modos): modos + integral por tramos contra la integral por fuerza bruta (paso 0.002 mag en +-25 mag)."""
+    rng = np.random.default_rng(7)
+    nd, n = 30, 80
+    f = 10 ** (-0.4 * rng.uniform(0, 2.5, nd))
+    so = (PL.K_MAG * f * rng.uniform(0.02, 0.2, nd)) ** 2
+    bien = rng.random(n) < 0.5
+    Fq = np.where(bien[:, None], f[None] * 10 ** (-0.4 * rng.normal(0, 0.1, (n, nd))),
+                  10 ** (-0.4 * rng.uniform(-1, 4, (n, nd)))) * 10 ** (-0.4 * rng.normal(0, 1.0, n))[:, None]
+    q0, mp, vp = np.zeros(n), rng.normal(0, 1.0, n), rng.uniform(0.1, 1.5, n) ** 2
+    lpr = lambda i, D_: -0.5 * (D_ - mp[i][:, None]) ** 2 / vp[i][:, None] - 0.5 * np.log(2 * np.pi * vp[i][:, None])
+    w = 1 / (so + s2m * f * f)
+    Fd = Fq.T[None, None]
+    with np.errstate(all="ignore"):
+        d0 = PL._centro(np.matmul(w, Fd * Fd), np.matmul(w * f, Fd), np.zeros((1, 1)), mp[None, None], vp[None, None])[0][0, 0]
+    fo, so_ = f[:, None], so[:, None]
+    todas = np.arange(n)
+    D_, S, Lm, C, Ul, V = PL._posterior_d(fo, so_, s2m, Fq.T, q0, mp, vp, d0, lambda X: lpr(todas, X),
+                                          lambda d: np.zeros_like(d))
+    I = PL._integral_modos(fo, so_, s2m, Fq, q0, D_, S, V, Ul, lpr)
+    g = np.arange(-25.0, 25.0, 0.002)
+    ref = np.array([logsumexp(PL._verosim(fo, so_, s2m, np.exp(-PL.K_MAG * g)[None, :] * Fq[i][:, None])[0]
+                              + lpr(np.array([i]), g[None])[0]) + np.log(0.002) for i in range(n)])
+    assert np.max(np.abs(I - ref)) < 0.05
+    assert np.max(np.abs(I[bien] - ref[bien])) < 1e-6
+    lap = logsumexp(np.where(V, Lm, -np.inf), axis=1)
+    assert np.max(np.abs(lap - ref)) < 0.5                                # el filtro de 30 nats queda seguro
 
 
 def _con_ul_contradictorio(cur):
@@ -380,9 +435,46 @@ def test_modos_de_ul(lib):
     assert prev.any() and np.all(malo.t[prev] < malo.t[det].min())
     with pytest.raises(ValueError):
         PL.ul_usados(malo, det, "otro")
-    limpio = PL.clasificar(cur, L, pri, mw=0.03)
-    todos = PL.clasificar(malo, L, pri, mw=0.03)
+    limpio = PL.clasificar(cur, L, pri, mw=0.03, ul_modo="todos")
+    todos = PL.clasificar(malo, L, pri, mw=0.03, ul_modo="todos")
     noche = PL.clasificar(malo, L, pri, mw=0.03, ul_modo="misma_noche")
     assert todos["logE"][0] < limpio["logE"][0] - 50                    # el UL imposible hunde a las Ia
     assert np.allclose(noche["logE"], limpio["logE"]) and noche["n_ul"] == limpio["n_ul"]
     assert PL.clasificar(malo, L, pri, mw=0.03, ul_modo="ninguno")["n_ul"] == 0
+    # por defecto (regla 4b) solo los UL previos: el UL de una noche con la SN detectada no entra
+    assert PL.UL_MODO == "previos"
+    pre = PL.clasificar(malo, L, pri, mw=0.03)
+    assert pre["n_ul"] == prev.sum() < malo.ul.sum()
+    assert np.allclose(pre["logE"], PL.clasificar(cur, L, pri, mw=0.03, ul_modo="previos")["logE"])
+
+
+def _corrida_sigma(root, s_, ok_frac, conf, seed):
+    """pred_real_val.csv falso de una corrida de la grilla de sigma_mod: acierta ok_frac, con confianza conf."""
+    rng = np.random.default_rng(seed)
+    cls = ["Ia", "II", "Ibc"]
+    y = np.repeat(cls, 40)
+    ok = rng.random(len(y)) < ok_frac
+    yp = np.where(ok, y, [cls[(cls.index(c) + 1) % 3] for c in y])
+    P = pd.DataFrame({"oid": [f"o{i:03d}" for i in range(len(y))], "subset": "val_sel", "y_true": y, "y_pred": yp,
+                      "n_det": 10, "chi2_map": 6.0 / (1 + s_), "chi2_dat_map": 12.0})
+    for c in cls:
+        P[f"p_{c}"] = np.where(P.y_pred == c, conf, (1 - conf) / 2)
+    d = root / "sigma" / f"s{s_:.2f}"
+    d.mkdir(parents=True)
+    P.to_csv(d / "pred_real_val.csv", index=False)
+
+
+def test_eleccion_de_sigma(tmp_path):
+    # 0.20 calibrada (confianza ~ su exactitud), las demas sobreconfiadas: gana 0.20 con P >= 0.9
+    for i, s_ in enumerate(PL.SIGMA_MOD_GRID):
+        _corrida_sigma(tmp_path / "a", s_, 0.75, 0.75 if s_ == 0.20 else 0.999, i)
+    r = PL.elegir_sigma(out_root=tmp_path / "a", correr=False)
+    assert r["candidata"] == 0.20 and r["elegido"] == 0.20 and r["pareado"]["p_mejora"] >= 0.9
+    assert json.loads((tmp_path / "a/sigma/eleccion.json").read_text())["elegido"] == 0.20
+    t = {x["sigma_mod"]: x for x in r["tabla"]}
+    assert t[0.20]["ece"] < t[0.05]["ece"] and "con_error_del_modelo" in t[0.20]["chi2_reducido"]
+    # todas iguales salvo ruido: la candidata no pasa la regla y queda la a priori
+    for i, s_ in enumerate(PL.SIGMA_MOD_GRID):
+        _corrida_sigma(tmp_path / "b", s_, 0.75, 0.80 + 0.001 * i, 0)
+    r = PL.elegir_sigma(out_root=tmp_path / "b", correr=False)
+    assert r["elegido"] == PL.SIGMA_MOD_APRIORI
