@@ -205,7 +205,13 @@ def test_sn_falsa_recupera_clase_y_parametros(lib, sn):
     tpl = _tpl(root, sn)
     ebv = 0.0 if tpl["clase"] == "II" else 0.1          # el polvo de las II del modelo principal es 0
     cur, v = _fake_sn(root, sn, ebv=ebv)
+    # con SIGMA_MOD (0.30, elegido en val_sel): la clase y la plantilla. La SN falsa sale de la plantilla misma (sin
+    # error del modelo): los parametros se miden con el error del modelo a priori (0.05). Con 0.30 la escala queda
+    # menos amarrada (el error del modelo crece con el modelo) y el prior de la LF la corre ~0.3 mag.
     r = PL.clasificar(cur, L, pri, mw=0.03)
+    assert pri.clases[int(np.argmax(r["p"]))] == v["cls"] and r["best_template"] == sn
+    assert abs(r["tmax_map"] - v["tmax"]) <= 3.0 and abs(r["p"].sum() - 1) < 1e-12
+    r = PL.clasificar(cur, L, pri, mw=0.03, sig_mod=PL.SIGMA_MOD_APRIORI)
     assert pri.clases[int(np.argmax(r["p"]))] == v["cls"]
     assert r["best_template"] == sn
     assert abs(r["tmax_map"] - v["tmax"]) <= 2.0
@@ -435,9 +441,10 @@ def test_modos_de_ul(lib):
     assert prev.any() and np.all(malo.t[prev] < malo.t[det].min())
     with pytest.raises(ValueError):
         PL.ul_usados(malo, det, "otro")
-    limpio = PL.clasificar(cur, L, pri, mw=0.03, ul_modo="todos")
-    todos = PL.clasificar(malo, L, pri, mw=0.03, ul_modo="todos")
-    noche = PL.clasificar(malo, L, pri, mw=0.03, ul_modo="misma_noche")
+    s0 = PL.SIGMA_MOD_APRIORI                         # con 0.30 el error del modelo en el UL lo suaviza (~7 nats)
+    limpio = PL.clasificar(cur, L, pri, mw=0.03, ul_modo="todos", sig_mod=s0)
+    todos = PL.clasificar(malo, L, pri, mw=0.03, ul_modo="todos", sig_mod=s0)
+    noche = PL.clasificar(malo, L, pri, mw=0.03, ul_modo="misma_noche", sig_mod=s0)
     assert todos["logE"][0] < limpio["logE"][0] - 50                    # el UL imposible hunde a las Ia
     assert np.allclose(noche["logE"], limpio["logE"]) and noche["n_ul"] == limpio["n_ul"]
     assert PL.clasificar(malo, L, pri, mw=0.03, ul_modo="ninguno")["n_ul"] == 0

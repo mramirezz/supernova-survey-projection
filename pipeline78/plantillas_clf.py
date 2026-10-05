@@ -67,11 +67,16 @@ REGLAS
    valor reemplaza al a priori SIGMA_MOD_APRIORI = 0.05 solo si el bootstrap pareado de nnclf (paired_bootstrap sobre
    log p por objeto) da P >= P_MIN. Se reportan tambien la exactitud balanceada, el ECE y el chi2 reducido de los mejores
    ajustes por valor (sigma/eleccion.json). El valor queda congelado en SIGMA_MOD antes de mirar val_rep.
+   Resultado (2026-10-04, 224 SNe de val_sel): log p media por clase -2.48, -2.07, -1.77, -1.52, -1.26 para 0.05 ...
+   0.30 (sube monotona: el maximo queda en el borde de la grilla), 0.30 contra 0.05 con P = 1.000: SIGMA_MOD = 0.30.
+   Exactitud balanceada 0.798, 0.801, 0.798, 0.801, 0.786 y ECE 0.184, 0.169, 0.179, 0.175, 0.145. chi2 reducido del MAP
+   con el error del modelo, mediana 0.69 -> 0.23 (> 2 en el 22 % -> 3 %); con solo el error de los datos 0.95 -> 1.98
+   (> 2 en el 28 % -> 50 %): con 0.30 los mejores ajustes dejan residuos de ~1.4 veces el error de ZTF en la mediana.
 5. Evidencia: E_tipo = sum_pl pi(pl) sum_{z,E,T} P(z) P(E) P(T) int L(d) P(d) dd, d = mu + dmag. Por bloque de celdas
    (z, E, T_max) de una plantilla:
    etapa 1 (todas): verosimilitud exacta en el punto de partida (minimos cuadrados con pesos fijos + prior gaussiano de
          d) y en la media del prior (segundo modo posible: con el error del modelo la verosimilitud se aplana a escalas
-         grandes y el prior fija el modo), Laplace con el ancho de cada uno. Las celdas a mas de CRIBA_NATS = 150 del
+         grandes y el prior fija el modo), Laplace con el ancho de cada uno. Las celdas a mas de CRIBA_NATS = 300 del
          maximo de la plantilla quedan con ese valor.
    etapa 2 (las demas): Newton con radio de confianza (derivadas analiticas) desde el punto de partida, la media del
          prior y el mejor punto de una grilla gruesa del prior (+-4 sigma); los modos a menos de 4 anchos se juntan.
@@ -79,8 +84,9 @@ REGLAS
          tramo (cortes entre modos vecinos), nodos d* + w U (paso w/2, +-8 w), extendida con el mismo paso mientras el
          borde quede a menos de BORDE_NATS del maximo.
    Verificado contra la integral por fuerza bruta (paso 0.002 mag en +-25 mag) en celdas al azar con uno y dos modos
-   (tests): error < 0.02 nats, Laplace < 0.2 nats. La criba de la etapa 1 solo cambia plantillas que quedan > 80 nats
-   bajo la mejor (P igual): test. P_tipo = E_tipo/sum E.
+   (tests): error < 0.02 nats, Laplace < 0.2 nats. La criba de la etapa 1 solo cambia plantillas muy por debajo de la
+   mejor: en el test (> 80 nats) y en 11 curvas de val_sel con SIGMA_MOD 0.05 y 0.3 contra la corrida sin criba (2026-10-04),
+   cambios solo en plantillas a >= 29 nats de la mejor, P igual a < 2e-10. P_tipo = E_tipo/sum E.
 6. Reales: solo la mitad val, con los lectores con guarda (nnclf.data.load_real_val: meta con csv linea a linea,
    pyarrow con filtro por oid; clf_villar.read_val_meta para el subset de splits.val_split). La mitad final no se lee.
    Entran las de >= MIN_DET detecciones en g + r. E(B-V)_MW de data/sfd98_cache.parquet (sampling.load_mw, el de las
@@ -132,7 +138,7 @@ Z_FLOOR = 0.001                  # borde inferior del prior de z (tres val tiene
 DMU_SUB = 0.05                   # mag: paso de mu(z) dentro de la celda de un nodo
 SIGMA_MOD_GRID = (0.05, 0.10, 0.15, 0.20, 0.30)   # error del modelo (fraccion del flujo del modelo): candidatos
 SIGMA_MOD_APRIORI = 0.05         # el piso a priori de la primera version (referencia del bootstrap pareado)
-SIGMA_MOD = 0.05                 # elegido en val_sel (regla 4c): ver sigma/eleccion.json
+SIGMA_MOD = 0.30                 # elegido en val_sel (regla 4c, 2026-10-04): ver sigma/eleccion.json
 UL_MODO = "previos"              # regla 4b (Mauricio 2026-10-04): solo los UL antes de la primera deteccion
 UL_NSIG = 5.0                    # alertas de ZTF: limite a 5 sigma
 T_PRE = 60.0                     # d: el pico puede caer hasta 60 d antes de la primera deteccion
@@ -141,7 +147,7 @@ U = np.linspace(-8.0, 8.0, 33)   # nodos de la integral en d, en unidades del an
 LAPLACE_NATS = 30.0              # celdas con Laplace mas de 30 nats bajo el maximo de la plantilla: quedan con Laplace
 N_NEWTON = 10                    # iteraciones de Newton para el modo en d
 PASO_MAX = 1.0                   # mag: radio de confianza maximo de Newton
-CRIBA_NATS = 150.0               # etapa 1 mas de esto bajo el maximo de la plantilla: sin Newton
+CRIBA_NATS = 300.0               # etapa 1 mas de esto bajo el maximo de la plantilla: sin Newton
 BORDE_NATS = 20.0                # integrando en un borde a menos de esto de su maximo: se dobla el ancho
 N_ENSANCHE = 4
 SQ2PI = math.sqrt(2.0 * math.pi)
@@ -847,6 +853,17 @@ def elegir_oids(v, subset="val", limit=None, seed=SEED):
     return o
 
 
+def fuente_sigma(sig_mod, out_root=OUT_ROOT):
+    """De donde sale el SIGMA_MOD de una corrida: la eleccion de la regla 4c (sigma/eleccion.json), el a priori o otro."""
+    f = Path(out_root) / "sigma" / "eleccion.json"
+    e = json.loads(f.read_text()) if f.exists() else {}
+    if e and abs(float(e["elegido"]) - float(sig_mod)) < 1e-12:
+        return f"elegido en val_sel (regla 4c, {f})"
+    if abs(float(sig_mod) - SIGMA_MOD_APRIORI) < 1e-12:
+        return "a priori"
+    return "fijado a mano (sensibilidad)"
+
+
 def run(name, four=False, sin_z=False, subset="val", limit=None, workers=2, real_dir=REAL_DIR, out_root=OUT_ROOT,
         lib_dir=None, store=None, mw=None, cfg_name=RUN_CFG, n_boot=1000, ul_modo=UL_MODO, sig_mod=SIGMA_MOD,
         ii_dust="cfg"):
@@ -926,6 +943,7 @@ def run(name, four=False, sin_z=False, subset="val", limit=None, workers=2, real
     ii = runcfg.RUNS_CFG[cfg_name].get("ii_dust") if ii_dust == "cfg" else ii_dust
     cfg_txt = dict(run_cfg=cfg_name, cuatro_clases=four, sin_z=sin_z, subset=subset, limit=limit, ul_modo=ul_modo,
                    sigma_mod=float(sig_mod), sigma_mod_es="fraccion del flujo del modelo, en cuadratura",
+                   sigma_mod_fuente=fuente_sigma(sig_mod, out_root),
                    ii_dust=ii, laplace_nats=LAPLACE_NATS, sigma_z=SIGMA_Z, z_floor=Z_FLOOR, ul_nsig=UL_NSIG, t_pre=T_PRE,
                    min_det=MIN_DET, n_u=len(U), u_max=float(U[-1]), dmu_sub=DMU_SUB, masa_min_z=MASA_MIN_Z,
                    masa_min_e=MASA_MIN_E, mw_const=mw_const, n_sin_mw=len(sin_mw))
