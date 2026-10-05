@@ -5,7 +5,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import numpy as np, pandas as pd
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score
 from pipeline78 import splits
-from pipeline78.clf_villar import bootstrap_ci
+from pipeline78.clf_villar import bootstrap_ci, metrics
 from pipeline78 import informe_clasificadores as I
 
 CLS = ["Ia", "II", "Ibc"]
@@ -102,6 +102,27 @@ def _villar(cv, v, features_sims):
     return p[p.oid != FINAL], m, cov
 
 
+def _plantillas(runs, v):
+    """Corrida falsa de plantillas_clf: cubre las de i % 5 != 2, se equivoca en las de i % 4 == 1."""
+    d = runs / "plantillas_clf" / "pl_fake"
+    d.mkdir(parents=True)
+    p = v[v.i % 5 != 2].copy()
+    p["y_true"] = p.cls
+    p["y_pred"] = [SIG[c] if i % 4 == 1 else c for c, i in zip(p.cls, p.i)]
+    p["n_det"] = 3 + p.i % 30
+    for c in CLS:
+        p[f"p_{c}"] = (p.y_pred == c).astype(float)
+    p[["oid", "subset", "y_true", "y_pred", "n_det"] + [f"p_{c}" for c in CLS]].to_csv(d / "pred_real_val.csv", index=False)
+    q = p[p.subset == "val_rep"]
+    y, yp = q.y_true.map(I.IX).to_numpy(), q.y_pred.map(I.IX).to_numpy()
+    m = {**metrics(y, yp, CLS), **bootstrap_ci(y, yp, CLS, 1000, splits.SEED)}
+    cov = len(q) / int((v.subset == "val_rep").sum())
+    (d / "metrics.json").write_text(json.dumps({"config": {"ul_modo": "previos", "sigma_mod": 0.2, "ii_dust": None,
+                                                           "sin_z": False},
+                                                "real": {"val_rep": m}, "cobertura": {"val_rep": {"cobertura": cov}}}))
+    return p, m, cov
+
+
 def _arbol(tmp):
     runs = tmp / "runs"
     v = _meta(runs)
@@ -111,6 +132,7 @@ def _arbol(tmp):
     pn, mn, cn = _nn_run(runs / "nnclf_fake", "gru_attnpool", v, sims_nn, "bueno")   # gana con la regla
     (runs / "nnclf_fake/pend_run").mkdir()                          # corriendo: sin metrics.json
     pv, mv, cvv = _villar(runs / "clf_villar", v, runs / "features_ztf_nuevo_x2")
+    _plantillas(runs, v)
     (runs / "clf_villar/gap_viejo").mkdir(parents=True)
     (runs / "clf_villar/gap_viejo/gap.json").write_text(json.dumps({
         "auc_sim_vs_real": 0.9123, "n_sims": 30, "n_real": 20, "peso": "wz",
@@ -128,7 +150,8 @@ def _arbol(tmp):
            "atlas": None, "url": None, "numeros": "informe/numeros.json", "nn_incumbente": "gru_base",
            "meta_bal_acc": 0.75, "bins_ndet": [3, 8, 15, 25],
            "actual": {"etiqueta": "nuevo", "nn_root": "nnclf_fake", "villar_sweep": "sw", "gap": "gap_nuevo",
-                      "sims_nn": "ztf_nuevo_x4", "sims_villar": "ztf_nuevo_x2"},
+                      "sims_nn": "ztf_nuevo_x4", "sims_villar": "ztf_nuevo_x2",
+                      "plantillas": {"name": "pl_fake", "dir": "plantillas_clf"}},
            "historia": [{"etiqueta": "viejo", "nn_root": "nnclf_viejo", "villar_sweep": "sw_viejo", "gap": "gap_viejo"}],
            "calib_obs": {"dir": "calib_obs", "figura": str(fig)}, "pendientes": ["algo a mano"]}
     (tmp / "cfg.json").write_text(json.dumps(cfg))
@@ -269,3 +292,37 @@ def test_calib_piloto_distinto_de_produccion(tmp_path):
     J, _ = I.construir(tmp_path / "cfg.json", atlas=False)
     c = J["simulacion"]["calib"]
     assert c["piloto_como_produccion"] is True and not any("repetir confirm" in p for p in J["pendientes"])
+
+
+def test_plantillas_tercer_metodo(tmp_path):
+    runs, v, (pn, mn, cn), (pv, mv, cvv) = _arbol(tmp_path)
+    pp, mp_, cp = _plantillas(tmp_path / "otro", v)                     # mismas cifras que la del arbol
+    J, _ = I.construir(tmp_path / "cfg.json", atlas=False)
+    A = J["actual"]
+    pl = A["plantillas"]
+    assert pl["estado"] == "ok" and pl["name"] == "pl_fake"
+    assert abs(pl["val_rep"]["bal_acc"] - mp_["bal_acc"]) < 1e-12 and abs(pl["val_rep"]["cobertura"] - cp) < 1e-12
+    assert np.allclose(pl["val_rep"]["bal_acc_ic95"], mp_["bal_acc_ic95"], atol=1e-12)
+    ver = [x for x in J["verificacion"] if "pl_fake" in x["fuente"]]
+    assert len(ver) == 8 and all(x["ok"] for x in ver)
+    # mismos objetos contra Villar: las oids de Villar en val_rep que clasifican las plantillas
+    R = A["respuesta_plantillas"]["val_rep"]
+    ov = set(pv.oid[pv.subset == "val_rep"]) & set(pp.oid[pp.subset == "val_rep"])
+    q = pp[pp.oid.isin(ov)]
+    assert R["contra_villar"]["n"] == len(ov)
+    assert abs(R["contra_villar"]["plantillas"]["bal_acc"] - balanced_accuracy_score(q.y_true, q.y_pred)) < 1e-12
+    assert R["contra_red"]["n"] == len(set(pp.oid[pp.subset == "val_rep"]) & set(pn.oid[pn.subset == "val_rep"]))
+    cv = R["cobertura_villar"]
+    assert cv["cubre"]["n"] + cv["no_cubre"]["n"] == R["contra_red"]["n"]
+    # decision en val_sel con la regla, contraste en val_rep
+    D = J["decision_plantillas"]
+    assert set(D) == {"villar", "red"} and D["villar"]["pos"] == "plantillas" and D["villar"]["n_sel"] > 0
+    txt = " ".join(J["conclusiones"])
+    assert "Plantillas (ajuste bayesiano" in txt and "En los mismos objetos que Villar" in txt
+    page = (tmp_path / "pagina/index.html").read_text()
+    assert "1b. Tercer m&eacute;todo" in page and "pl_fake" in page and "exactitud plantillas" in page
+    # sin la corrida: pendiente, la pagina sigue
+    import shutil
+    shutil.rmtree(runs / "plantillas_clf" / "pl_fake")
+    J, _ = I.construir(tmp_path / "cfg.json", atlas=False)
+    assert J["actual"]["plantillas"]["estado"] == "pendiente" and any("Plantillas del bloque" in x for x in J["pendientes"])

@@ -1,11 +1,12 @@
-"""Informe de los clasificadores ZTF: Villar (oficial) contra las redes, pagina del atlas generada desde los runs.
+"""Informe de los clasificadores ZTF: Villar (oficial), las redes y las plantillas, pagina del atlas generada desde los runs.
 
 POR QUE. Mauricio pidio un HTML con la comparacion y conclusiones en lenguaje simple (2026-10-04). Todo numero de la
 pagina sale de los archivos de los runs al construirla (regla numeros-tesis-con-script): nada esta escrito a mano. Las
 conclusiones son plantillas con condiciones explicitas, llenadas con los mismos numeros (numeros.json).
 
 ENTRADA. pipeline78/informe_clasificadores.json (versionado): bloque "actual" (produccion final: raiz nnclf, barrido
-clf_villar, gap) y "historia" (runs del modelo de observacion viejo). Si falta un run del bloque actual la pagina dice
+clf_villar, gap, plantillas = {name, dir} de pipeline78.plantillas_clf) y "historia" (runs del modelo de observacion
+viejo). Si falta un run del bloque actual la pagina dice
 "pendiente" y sigue. --actual-nn / --actual-villar / --actual-gap reemplazan el bloque actual (para probar la pagina con
 runs viejos; la pagina lo marca en un aviso).
 
@@ -29,6 +30,13 @@ REGLAS
 6. Calibracion: el piloto de calib_obs se compara campo a campo con las sims de produccion que espera la config
    (sims_nn, sims_villar). Si difieren, la columna y la conclusion dicen "piloto" con sus valores y piden repetir
    confirm. La figura anterior a las tablas se marca como vieja.
+7. Plantillas (tercer metodo, ajuste bayesiano como SUDARE I): la corrida del bloque "plantillas" ({name, dir}) de
+   pipeline78.plantillas_clf, con su configuracion congelada (UL previos a priori, error del modelo elegido en
+   val_sel): no hay eleccion entre corridas en la pagina. Metricas con la regla 2 y verificacion contra su
+   metrics.json. Mismos objetos contra Villar (oids de Villar) y contra la mejor red (oids comunes), con la regla de la
+   4: val_sel decide, val_rep contrasta. Exactitud en las SNe que Villar cubre y en las que no, sobre las oids que
+   clasifican las plantillas y la red. No entra al hibrido ni a la recomendacion de la regla 4 (fijados antes de
+   tenerlas).
 
 USO (desde la raiz del repo)
     PYTHONPATH=. $PY -m pipeline78.informe_clasificadores
@@ -54,7 +62,7 @@ N_BOOT_IC = 1000
 SUB = ("val_sel", "val_rep")
 N_MIN_BIN = 5                                                # en la figura por detecciones no se grafica una exactitud con menos
 COL = {"Ia": "tab:blue", "II": "tab:green", "Ibc": "tab:red", "villar": "0.15", "red": "tab:purple",
-       "hib": "tab:orange"}
+       "hib": "tab:orange", "pl": "tab:brown"}
 MODELOS_V = {"hgb": "HistGradientBoosting", "hgb_lento": "HistGradientBoosting lento", "rf": "Random Forest",
              "mlp": "MLP", "ens_hier": "ensemble jerarquico"}
 
@@ -288,6 +296,57 @@ def villar_run(sw, V):
     return r
 
 
+def que_es_plantillas(c):
+    return ("ajuste bayesiano de las 78 series espectrales como SUDARE I (Cappellaro+2015, siguiendo PSNID de "
+            "Sako+2011): evidencia por tipo marginalizando plantilla, z, E(B&minus;V) del host, T<sub>max</sub> y escala, "
+            f"con los priors de las sims ({'z plana' if c.get('sin_z') else 'z espectrosc&oacute;pica'}, UL "
+            f"{c.get('ul_modo', 'todos')}, error del modelo {c.get('sigma_mod')} del flujo, polvo II {c.get('ii_dust')})")
+
+
+def plantillas_run(pb, runs, V):
+    """Regla 7: corrida de pipeline78.plantillas_clf en <runs>/<dir>/<name> (pred_real_val.csv + metrics.json)."""
+    if not pb or not pb.get("name"):
+        return None
+    d = _p(pb.get("dir", "plantillas_clf"), runs) / pb["name"]
+    r = {"name": pb["name"], "dir": str(d)}
+    if not (d / "metrics.json").exists() or not (d / "pred_real_val.csv").exists():
+        return {**r, "estado": "pendiente"}
+    M = json.loads((d / "metrics.json").read_text())
+    p, info = leer_pred(d / "pred_real_val.csv", V)
+    if p is None:
+        return {**r, "estado": "otras clases", **info}
+    c = M.get("config") or {}
+    r.update(estado="ok", metodo="plantillas", config=c, que_es=que_es_plantillas(c), **info, _p=p, _M=M)
+    r.update(por_subset(p, V))
+    return r
+
+
+def comparar_plantillas(pl, vi, nn):
+    """Regla 7: plantillas contra Villar (oids de Villar) y contra la red (oids comunes) por subconjunto, y exactitud
+    segun cubra Villar sobre las oids que clasifican las plantillas y la red."""
+    out = {}
+    for s in SUB:
+        a = pl["_p"][pl["_p"].subset == s]
+        R = {}
+        for k, o in (("villar", vi), ("red", nn)):
+            if not ok(o):
+                continue
+            b = o["_p"][o["_p"].subset == s]
+            com = set(a.oid) & set(b.oid)
+            ac, bc = a[a.oid.isin(com)], b[b.oid.isin(com)]
+            R[f"contra_{k}"] = {"n": len(com), "plantillas": met(ac, len(com)), k: met(bc, len(com)),
+                                f"plantillas_menos_{k}": pareado(ac, bc), f"{k}_menos_plantillas": pareado(bc, ac)}
+        if ok(vi) and ok(nn):
+            b = nn["_p"][nn["_p"].subset == s]
+            com = set(a.oid) & set(b.oid)
+            cv = com & set(vi["_p"].oid[vi["_p"].subset == s])
+            R["cobertura_villar"] = {k: {"n": len(o), "plantillas": met(a[a.oid.isin(o)], len(o)),
+                                         "red": met(b[b.oid.isin(o)], len(o))}
+                                     for k, o in (("cubre", cv), ("no_cubre", com - cv))}
+        out[s] = R
+    return out
+
+
 def elegir_red(runs, inc):
     """Regla 3. Devuelve (mejor corrida, info de la eleccion)."""
     cand = [r for r in runs or [] if ok(r) and r.get("metodo") in REDES and r["val_sel"].get("n")]
@@ -334,8 +393,8 @@ def comparar(vi, nn, V):
     return out
 
 
-def por_ndet(V, vi, nn, bins):
-    """Regla 5: cobertura de Villar y exactitud por bin de detecciones g + r, en val_rep."""
+def por_ndet(V, vi, nn, bins, pl=None):
+    """Regla 5: cobertura de Villar y exactitud por bin de detecciones g + r, en val_rep (y las plantillas si estan)."""
     Vs = V[V.subset == "val_rep"].copy()
     pn, pv = nn["_p"][nn["_p"].subset == "val_rep"], vi["_p"][vi["_p"].subset == "val_rep"]
     Vs["n_det"] = Vs.oid.map(dict(zip(pn.oid, pn.n_det))) if "n_det" in pn else np.nan
@@ -343,6 +402,7 @@ def por_ndet(V, vi, nn, bins):
     lab = [f"&lt; {bins[0]} (sin red)"] + [f"{a}&ndash;{b - 1}" for a, b in zip(bins[:-1], bins[1:])] + [f"&ge; {bins[-1]}"]
     Vs["bin"] = pd.cut(Vs.n_det.fillna(-1), e, right=False, labels=range(len(lab))).astype(int)
     h, _ = hibrido(V, pv, pn, "val_rep")
+    pp = pl["_p"][pl["_p"].subset == "val_rep"] if ok(pl) else None
     acc = lambda p, o: float((p[p.oid.isin(o)].y_true == p[p.oid.isin(o)].y_pred).mean()) if p.oid.isin(o).any() else None
     rows = []
     for k, l in enumerate(lab):
@@ -352,6 +412,8 @@ def por_ndet(V, vi, nn, bins):
                      "cobertura_red": len(o & set(pn.oid)) / len(o) if o else None,
                      "acc_villar": acc(pv, ov), "acc_red_mismos": acc(pn, ov), "acc_red": acc(pn, o),
                      "acc_hibrido": acc(h, o)})
+        if pp is not None:
+            rows[-1].update(n_plantillas=len(o & set(pp.oid)), acc_plantillas=acc(pp, o))
     return rows
 
 
@@ -395,14 +457,21 @@ def bloque(b, cfg, V, inc, bins):
                 q = r["_p"][(r["_p"].subset == "val_rep") & r["_p"].oid.isin(ov)]
                 r["villar_oids_rep"] = met(q, len(ov))
     B["redes"] = nn or []
+    pl = plantillas_run(b.get("plantillas"), runs, V)
+    if pl is not None:
+        B["plantillas"] = pl
+        if ok(pl) and ok(vi):
+            pl["villar_oids_rep"] = met(pl["_p"][(pl["_p"].subset == "val_rep") & pl["_p"].oid.isin(ov)], len(ov))
     best, el = elegir_red(nn, inc)
     B["eleccion_red"] = el
     B["red"] = best if best is not None else {"estado": "pendiente"}
     B["sims_red"] = modelo_obs(best.get("sim_run")) if best is not None and best.get("sim_run") else None
     B["sims_villar"] = modelo_obs(vi.get("sim_run")) if ok(vi) and vi.get("sim_run") else None
+    if ok(pl) and (ok(vi) or best is not None):
+        B["respuesta_plantillas"] = comparar_plantillas(pl, vi, best)
     if ok(vi) and best is not None:
         B["respuesta"] = comparar(vi, best, V)
-        B["ndet"] = por_ndet(V, vi, best, bins)
+        B["ndet"] = por_ndet(V, vi, best, bins, pl)
     if best is not None:
         B["degradacion"] = degradacion(best)
     B["gap"] = leer_gap(_p(b.get("gap"), cv)) if b.get("gap") else {"estado": "sin gap en la config"}
@@ -526,6 +595,15 @@ def verificar(B):
         for i, k in enumerate(("lo", "hi")):
             add(f, f"real_none.val_rep.bal_acc_ic95.{k}", r["bal_acc_ic95"][i], (_get(M, "real_none", "val_rep", "bal_acc_ic95") or [None, None])[i])
         add(f, "cobertura.val_rep.cobertura", r.get("cobertura"), _get(M, "cobertura", "val_rep", "cobertura"))
+    pl = B.get("plantillas")
+    if ok(pl):
+        M, f = pl["_M"], str(Path(pl["dir"]) / "metrics.json")
+        for k in ("acc", "bal_acc", "f1_Ia", "f1_II", "f1_Ibc"):
+            add(f, f"real.val_rep.{k}", pl["val_rep"].get(k), _get(M, "real", "val_rep", k))
+        for i, k in enumerate(("lo", "hi")):
+            add(f, f"real.val_rep.bal_acc_ic95.{k}", pl["val_rep"]["bal_acc_ic95"][i],
+                (_get(M, "real", "val_rep", "bal_acc_ic95") or [None, None])[i])
+        add(f, "cobertura.val_rep.cobertura", pl["val_rep"].get("cobertura"), _get(M, "cobertura", "val_rep", "cobertura"))
     for q in B["redes"]:
         if ok(q):
             M, f = q["_M"], str(Path(q["dir"]) / "metrics.json")
@@ -561,7 +639,9 @@ def fig_respuesta(A, out, plt):
     v, r, R = A["villar"], A["red"], A["respuesta"]["val_rep"]
     items = [("Villar", v["val_rep"], COL["villar"]), (f"Network\n(all)", r["val_rep"], COL["red"]),
              ("Network\n(Villar objects)", R["mismos_objetos"]["red"], COL["red"]), ("Hybrid", R["hibrido"], COL["hib"])]
-    fig, ax = plt.subplots(figsize=(3.46, 2.6))
+    if ok(A.get("plantillas")):
+        items.append(("Templates", A["plantillas"]["val_rep"], COL["pl"]))
+    fig, ax = plt.subplots(figsize=(3.46 if len(items) == 4 else 4.2, 2.6))
     for i, (lab, m, c) in enumerate(items):
         lo, hi = m["bal_acc_ic95"]
         ax.bar(i, m["bal_acc"], 0.6, color=c, alpha=0.35 if i == 2 else 0.8, edgecolor=c)
@@ -672,10 +752,10 @@ def fig_aprendizaje(pts, out, plt):
 
 
 # ------------------------------------------------------------------------------------------------ conclusiones
-NOM = {"red": "la red", "villar": "Villar", "hibrido": "el h&iacute;brido"}
-A_NOM = {"red": "a la red", "villar": "a Villar", "hibrido": "al h&iacute;brido"}
-CORTO = {"red": "red", "villar": "Villar", "hibrido": "h&iacute;brido"}
-MAY = {"red": "Red", "villar": "Villar", "hibrido": "H&iacute;brido"}
+NOM = {"red": "la red", "villar": "Villar", "hibrido": "el h&iacute;brido", "plantillas": "las plantillas"}
+A_NOM = {"red": "a la red", "villar": "a Villar", "hibrido": "al h&iacute;brido", "plantillas": "a las plantillas"}
+CORTO = {"red": "red", "villar": "Villar", "hibrido": "h&iacute;brido", "plantillas": "plantillas"}
+MAY = {"red": "Red", "villar": "Villar", "hibrido": "H&iacute;brido", "plantillas": "Plantillas"}
 
 
 def _dir_rep(c):
@@ -714,6 +794,20 @@ def decidir(A, meta):
                    "alcanza": None if b is None else bool(b >= meta),
                    "ic_incluye_meta": None if None in ic else bool(ic[0] <= meta <= ic[1])})
     return {"red_vs_villar": rv, "hibrido_vs_red": hr, "recomendado": rec, "meta_bal_acc": meta, "meta": lm}
+
+
+def decidir_plantillas(A):
+    """Regla 7: plantillas contra Villar y contra la red en los mismos objetos, decision en val_sel y contraste en
+    val_rep (la misma _par de la regla 4)."""
+    S, R = (A.get("respuesta_plantillas") or {}).get("val_sel") or {}, (A.get("respuesta_plantillas") or {}).get("val_rep") or {}
+    out = {}
+    for k in ("villar", "red"):
+        s_, r_ = S.get(f"contra_{k}"), R.get(f"contra_{k}")
+        if s_ and r_:
+            out[k] = _par(s_[f"plantillas_menos_{k}"], s_[f"{k}_menos_plantillas"], r_[f"plantillas_menos_{k}"],
+                          "plantillas", k)
+            out[k]["n_sel"] = s_["n"]
+    return out
 
 
 def txt_rep(c):
@@ -822,6 +916,7 @@ def conclusiones(J, meta_bal):
         cv_, cr_ = min(fv, key=fv.get), min(fr, key=fr.get)
         out.append(f"La clase m&aacute;s dif&iacute;cil es {cv_} en Villar (F1 {f3(fv[cv_])}) y {cr_} en la red "
                    f"(F1 {f3(fr[cr_])}).")
+    out += conclusiones_plantillas(J)
     pares = [p for p in J.get("aprendizaje_pares") or [] if p["sel"].get("p_mejora") is not None]
     if pares:
         g = [p for p in pares if p["sel"]["gana"]]
@@ -859,6 +954,42 @@ def conclusiones(J, meta_bal):
     return out
 
 
+def conclusiones_plantillas(J):
+    """Regla 7: frases de las plantillas, llenadas con numeros.json."""
+    A, out = J["actual"], []
+    pl = A.get("plantillas")
+    if not pl:
+        return out
+    if pl.get("estado") != "ok":
+        return [f"Plantillas (tercer m&eacute;todo): {html.escape(str(pl.get('name')))} {pl.get('estado')}."]
+    q, c = pl["val_rep"], pl.get("config") or {}
+    out.append(f"Plantillas (ajuste bayesiano de las 78 series, como SUDARE I): en val_rep cubren el {pc(q['cobertura'])} y "
+               f"aciertan el {pc(q['acc'])}, exactitud balanceada {f3(q['bal_acc'])}{ci(q.get('bal_acc_ic95'))} "
+               f"(UL {c.get('ul_modo')}, error del modelo {c.get('sigma_mod')} del flujo del modelo, "
+               f"{html.escape(str(c.get('sigma_mod_fuente', 'sin fuente')).split(' (')[0])}).")
+    D = J.get("decision_plantillas") or {}
+    for k in ("villar", "red"):
+        x = D.get(k)
+        if not x:
+            continue
+        nom = "Villar" if k == "villar" else f"la red ({A['red']['name']})"
+        sel = (f"En los mismos objetos que {nom} la regla en val_sel elige {NOM[x['val_sel']]} "
+               f"(P(plantillas mejor) = {f3(x['p_sel_pos'], 2)}, P({CORTO[k]} mejor) = {f3(x['p_sel_neg'], 2)}, "
+               f"{x['n_sel']} objetos)." if x["val_sel"] else
+               f"En los mismos objetos que {nom} la regla en val_sel no elige (P(plantillas mejor) = "
+               f"{f3(x['p_sel_pos'], 2)}, P({CORTO[k]} mejor) = {f3(x['p_sel_neg'], 2)}, {x['n_sel']} objetos, las dos "
+               f"bajo {P_MIN}).")
+        out.append(sel + " " + txt_rep(x))
+    cv = ((A.get("respuesta_plantillas") or {}).get("val_rep") or {}).get("cobertura_villar")
+    if cv and cv["cubre"]["n"] and cv["no_cubre"]["n"]:
+        a_, b_ = cv["cubre"], cv["no_cubre"]
+        out.append(f"En val_rep, sobre las SNe que clasifican las plantillas y la red: donde Villar ajusta ({a_['n']}) las "
+                   f"plantillas aciertan el {pc(a_['plantillas']['acc'])} y la red el {pc(a_['red']['acc'])}. Donde "
+                   f"Villar no ajusta ({b_['n']}) las plantillas aciertan el {pc(b_['plantillas']['acc'])} y la red el "
+                   f"{pc(b_['red']['acc'])}.")
+    return out
+
+
 def pendientes(J, cfg):
     A, out = J["actual"], []
     if A.get("nn_estado") != "ok":
@@ -870,6 +1001,9 @@ def pendientes(J, cfg):
     if (A.get("villar") or {}).get("estado") != "ok":
         out.append(f"Villar del bloque actual: falta {A['villar_sweep']}/mejor.json (barrido sobre las features MCMC "
                    "de las sims nuevas).")
+    if A.get("plantillas") and A["plantillas"].get("estado") != "ok":
+        out.append(f"Plantillas del bloque actual: {A['plantillas'].get('dir')} {A['plantillas'].get('estado')} (sin "
+                   "metrics.json o sin pred_real_val.csv).")
     if (A.get("gap") or {}).get("estado") != "ok":
         out.append(f"Gap sim contra real del modelo nuevo: {A.get('gap', {}).get('dir', 'sin nombre')} pendiente.")
     for tag, mo in (("red", A.get("sims_red")), ("villar", A.get("sims_villar"))):
@@ -944,6 +1078,8 @@ def tabla_modelos(B):
     rows += [_fila_modelo(r, r.get("name") == best) for r in B["redes"]]
     if not B["redes"]:
         rows.append([html.escape(Path(B["nn_root"]).name), "redes", "<span class='pend'>pendiente</span>"] + [""] * 8)
+    if B.get("plantillas"):
+        rows.append(_fila_modelo(B["plantillas"], False))
     return tabla(HEAD_MOD, rows)
 
 
@@ -955,12 +1091,64 @@ def _fmt_obs(mo, pre=""):
             "s&iacute;" if mo["alertas"] else "no", f(mo["tail_min_slope"])]
 
 
+def seccion_plantillas(J):
+    """Regla 7: el tercer metodo en la pagina (mismos objetos contra Villar y la red, y segun cubra Villar)."""
+    A = J["actual"]
+    pl = A.get("plantillas")
+    h = ["<h2>1b. Tercer m&eacute;todo: ajuste bayesiano de plantillas (como SUDARE I)</h2>"]
+    if not pl:
+        return h[0] + "<p class='pend'>Sin bloque plantillas en la config.</p>"
+    if pl.get("estado") != "ok":
+        return h[0] + f"<p class='pend'>{html.escape(str(pl.get('dir')))}: {pl.get('estado')}.</p>"
+    c = pl.get("config") or {}
+    h.append(f"<p>{html.escape(pl['name'])}: {pl['que_es']}. Sin entrenamiento: las 78 series proyectadas a la curva "
+             f"observada de cada SN con los priors de las sims (LF, polvo, fracciones de subtipo). UL {c.get('ul_modo')} "
+             + ("(solo los anteriores a la primera detecci&oacute;n, decisi&oacute;n a priori), " if c.get("ul_modo") ==
+                "previos" else "(OJO: no es el modo a priori, previos), ") + "error "
+             f"del modelo {c.get('sigma_mod')} del flujo del modelo "
+             f"({html.escape(str(c.get('sigma_mod_fuente', 'sin fuente')))}). Corrida {html.escape(pl['dir'])}.</p>")
+    R = A.get("respuesta_plantillas") or {}
+    D = J.get("decision_plantillas") or {}
+    fil = []
+    for k, nom in (("villar", "Villar"), ("red", f"red ({html.escape(str((A.get('red') or {}).get('name')))})")):
+        for s_ in SUB:
+            x = (R.get(s_) or {}).get(f"contra_{k}")
+            if not x:
+                continue
+            d1, d2 = x[f"plantillas_menos_{k}"], x[f"{k}_menos_plantillas"]
+            fil.append([f"contra {nom}", s_, str(x["n"]), f"{f3(x['plantillas'].get('bal_acc'))}{ci(x['plantillas'].get('bal_acc_ic95'))}",
+                        f"{f3(x[k].get('bal_acc'))}{ci(x[k].get('bal_acc_ic95'))}",
+                        f"{d1.get('delta', float('nan')):+.3f}" if d1.get("delta") is not None else "&mdash;",
+                        f3(d1.get("p_mejora"), 3), f3(d2.get("p_mejora"), 3), ci(d1.get("ic90_delta")).strip() or "&mdash;"])
+    h.append(tabla(["comparaci&oacute;n", "subconjunto", "n (mismos objetos)", "plantillas: exact. bal. [IC 95 %]",
+                    "el otro: exact. bal. [IC 95 %]", "&Delta; plantillas &minus; otro", "P(plantillas mejor)",
+                    "P(otro mejor)", "IC 90 % del &Delta;"], fil))
+    for k in ("villar", "red"):
+        x = D.get(k)
+        if x:
+            h.append(f"<p>Contra {CORTO[k] if k == 'villar' else 'la red'}: la regla en val_sel elige "
+                     f"<b>{NOM[x['val_sel']] if x['val_sel'] else 'ninguno'}</b> (gana el que pase {P_MIN}). "
+                     f"{txt_rep(x)}</p>")
+    fil = []
+    for s_ in SUB:
+        cv = (R.get(s_) or {}).get("cobertura_villar")
+        for k, nom in (("cubre", "Villar ajusta"), ("no_cubre", "Villar no ajusta")):
+            if cv and cv[k]["n"]:
+                fil.append([s_, nom, str(cv[k]["n"]), f3(cv[k]["plantillas"].get("acc")), f3(cv[k]["plantillas"].get("bal_acc")),
+                            f3(cv[k]["red"].get("acc")), f3(cv[k]["red"].get("bal_acc"))])
+    if fil:
+        h.append("<p>Seg&uacute;n Villar pueda ajustar la SN, sobre las que clasifican las plantillas y la red:</p>"
+                 + tabla(["subconjunto", "SNe", "n", "exactitud plantillas", "exact. bal. plantillas", "exactitud red",
+                          "exact. bal. red"], fil))
+    return "".join(h)
+
+
 def pagina(J, figs, out):
     A, H, S, P = J["actual"], J.get("historia") or [], J["simulacion"], J["particion"]
     v, r = A.get("villar") or {}, A.get("red") or {}
     s = [f"<html><head><meta charset='utf-8'><title>Clasificadores ZTF v78</title><style>{CSS}</style></head>"
          "<body style='font-family:sans-serif;max-width:1300px;margin:auto'>",
-         "<h1>Clasificadores ZTF: Villar contra las redes</h1>",
+         "<h1>Clasificadores ZTF: Villar, las redes y las plantillas</h1>",
          f"<p class='nota'>Generada {J['generado']['fecha']} por pipeline78/informe_clasificadores.py (commit "
          f"{(J['generado']['git']['commit'] or '')[:8]}{', repo con cambios' if J['generado']['git']['dirty'] else ''}). "
          f"Config: {html.escape(J['generado']['config'])}. Cada n&uacute;mero sale de los archivos de los runs al construir "
@@ -1007,6 +1195,7 @@ def pagina(J, figs, out):
             n for n, x in (("Villar", v), ("la red", r)) if not ok(x)) + " del bloque actual todav&iacute;a no tienen "
                  "resultados. La comparaci&oacute;n aparece sola cuando est&eacute;n.</p>")
     s.append("<p class='nota'>" + "<br>".join(f"<b>{a}</b>: {b}" for a, b in GLOSARIO) + "</p>")
+    s.append(seccion_plantillas(J))
     # 2
     el = A.get("eleccion_red") or {}
     s.append("<h2>2. C&oacute;mo se midi&oacute;</h2><ul>"
@@ -1059,10 +1248,14 @@ def pagina(J, figs, out):
                  "detecci&oacute;n. Derecha: por n&uacute;mero de detecciones g + r de cada SN real (val_rep). Villar "
                  "no se puede ralear (necesita el ajuste completo), as&iacute; que se muestra su cobertura.</p>"
                  f"<img src='{figs['ndet']}' width='1000'>")
+        con_pl = any("acc_plantillas" in x for x in A.get("ndet") or [])
         s.append(tabla(["detecciones g + r", "n", "n Villar", "cobertura Villar", "cobertura red", "exactitud Villar",
-                        "exactitud red (mismos objetos)", "exactitud red (todas)", "exactitud h&iacute;brido"],
+                        "exactitud red (mismos objetos)", "exactitud red (todas)", "exactitud h&iacute;brido"]
+                       + (["n plantillas", "exactitud plantillas"] if con_pl else []),
                        [[x["bin"], str(x["n"]), str(x["n_villar"]), pc(x["cobertura_villar"]), pc(x["cobertura_red"]), f3(x["acc_villar"]),
-                         f3(x["acc_red_mismos"]), f3(x["acc_red"]), f3(x["acc_hibrido"])] for x in A.get("ndet") or []]))
+                         f3(x["acc_red_mismos"]), f3(x["acc_red"]), f3(x["acc_hibrido"])]
+                        + ([str(x.get("n_plantillas", "")), f3(x.get("acc_plantillas"))] if con_pl else [])
+                        for x in A.get("ndet") or []]))
     else:
         s.append("<p class='pend'>Pendiente (falta Villar o la red del bloque actual).</p>")
     s.append("<h3>Curva de aprendizaje: &iquest;m&aacute;s simulaciones ayudan?</h3>")
@@ -1195,6 +1388,7 @@ def construir(cfg_path=CFG, actual_nn=None, actual_villar=None, actual_gap=None,
          "verificacion": [x for B in [A] + H for x in verificar(B)], "meta_bal_acc": cfg.get("meta_bal_acc", 0.75)}
     J = _js(N)
     J["decision"] = decidir(J["actual"], J["meta_bal_acc"]) if J["actual"].get("respuesta") else None
+    J["decision_plantillas"] = decidir_plantillas(J["actual"]) if J["actual"].get("respuesta_plantillas") else None
     J["conclusiones"] = conclusiones(J, J["meta_bal_acc"])
     J["pendientes"] = pendientes(J, cfg)
     out = _p(cfg["pagina"], PHD)

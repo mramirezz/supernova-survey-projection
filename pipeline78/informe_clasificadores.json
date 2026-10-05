@@ -1,5 +1,5 @@
 {
- "_doc": "Config de pipeline78/informe_clasificadores.py. Rutas relativas: nn_root, real_dir, numeros y calib_obs.dir bajo runs_root (null = paths.RUNS); villar_sweep y gap bajo runs_root/clf_villar_root; pagina y calib_obs.figura bajo PHD. 'actual' = produccion final (modelo de observacion t11); 'historia' = runs del modelo viejo (m0 1.25, sin stream de alertas). sims_* son los nombres esperados: la pagina avisa si el run usa otras.",
+ "_doc": "Config de pipeline78/informe_clasificadores.py. Rutas relativas: nn_root, real_dir, numeros y calib_obs.dir bajo runs_root (null = paths.RUNS); villar_sweep y gap bajo runs_root/clf_villar_root; pagina y calib_obs.figura bajo PHD. 'actual' = produccion final (modelo de observacion t11); 'historia' = runs del modelo viejo (m0 1.25, sin stream de alertas). actual.plantillas = {name, dir} de pipeline78.plantillas_clf (dir bajo runs_root). sims_* son los nombres esperados: la pagina avisa si el run usa otras.",
  "runs_root": null,
  "real_dir": "real_ztf",
  "clf_villar_root": "clf_villar",
@@ -13,10 +13,11 @@
  "actual": {
   "etiqueta": "Produccion final: modelo de observacion t11 (alertas, m0 g -0.25 / r 0, k 0.52/0.54, piso 56Co)",
   "nn_root": "nnclf_t11",
-  "villar_sweep": "sweep_t11_mitig",
+  "villar_sweep": "sweep_t11_foco",
   "gap": "gap_t11_wz",
   "sims_nn": "ztf_v78_t11_x4",
-  "sims_villar": "ztf_v78_t11_x2"
+  "sims_villar": "ztf_v78_t11_x2",
+  "plantillas": {"name": "plantillas_t11", "dir": "plantillas_clf"}
  },
  "historia": [
   {
