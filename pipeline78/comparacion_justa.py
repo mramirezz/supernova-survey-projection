@@ -4,6 +4,11 @@
 En (b) Villar se cuenta de dos formas: sus no clasificadas como error (Villar solo) y como sistema con respaldo
 (la red; en 4 clases, sin red en TEST, las plantillas). Delta y P del bootstrap pareado de nnclf contra Villar.
 
+agrupacion_sudare: la agrupacion de SUDARE I (Cappellaro+2015 Sec. 4.1, verificado en el texto): la probabilidad de tipo
+junta II e IIn ("we merged regular type II and type IIn templates") y despues marca IIn si la plantilla de mayor
+probabilidad es IIn. Sobre las predicciones congeladas de 4 clases (sin reajustar nada): (a) 3 clases con H = II + IIn
+(VAL y TEST, plantillas y Villar), (b) 4 clases a la SUDARE contra el argmax de 4 clases (plantillas; val_sel decide).
+
     python -m pipeline78.comparacion_justa
 """
 import json
@@ -23,10 +28,14 @@ def leer(d):
     return p[["y_true", "y_pred"]], json.loads((d / "metrics.json").read_text())
 
 
-def met(y, yp):
+def met(y, yp, cls=None):
     y, yp = np.asarray(y), np.asarray(yp)
-    return dict(n=int(len(y)), acc=float(np.mean(y == yp)),
-                bal=float(np.mean([np.mean(yp[y == c] == c) for c in np.unique(y)])))
+    out = dict(n=int(len(y)), acc=float(np.mean(y == yp)),
+               bal=float(np.mean([np.mean(yp[y == c] == c) for c in np.unique(y)])))
+    if cls:
+        out.update(clases=list(cls), confusion=[[int(np.sum((y == a) & (yp == b))) for b in cls] for a in cls],
+                   recall={c: float(np.mean(yp[y == c] == c)) for c in cls if (y == c).any()})
+    return out
 
 
 def version(k, rutas):
@@ -60,11 +69,75 @@ def version(k, rutas):
         b = tv.loc[p.index]
         d, pr, ci = paired_bootstrap(y, (p.y_pred == y).to_numpy(), (b.y_pred == y).to_numpy())
         out["total"][m].update(delta_vs_villar_mas_respaldo=d, P_mejor=pr)
+    if "red" in P and "plantillas" in P:                      # las dos que clasifican casi todo, cara a cara
+        for g, ix in (("villar_alcanza", V), ("total", U)):
+            a, b = P["plantillas"][0], P["red"][0]
+            c = ix.intersection(a.index).intersection(b.index)
+            y = a.loc[c, "y_true"].to_numpy()
+            d, pr, ci = paired_bootstrap(y, (a.loc[c, "y_pred"] == y).to_numpy(), (b.loc[c, "y_pred"] == y).to_numpy())
+            out[g]["plantillas"].update(n_vs_red=int(len(c)), delta_vs_red=d, P_mejor_que_red=pr)
+    return out
+
+
+H3 = ("Ia", "H", "Ibc")
+C4 = ("Ia", "II", "Ibc", "IIn")
+
+
+def a_sudare(p):
+    """(clase real con H = II + IIn, pred de 3 clases con P(H) = P(II) + P(IIn), pred de 4 clases a la SUDARE o None
+    si no hay plantilla de mayor probabilidad)."""
+    y3 = p.y_true.replace({"II": "H", "IIn": "H"})
+    P = pd.DataFrame({"Ia": p.p_Ia, "H": p.p_II + p.p_IIn, "Ibc": p.p_Ibc})
+    p3 = P.idxmax(axis=1)
+    p4 = (p3.where(p3 != "H", np.where(p.best_template_clase == "IIn", "IIn", "II"))
+          if "best_template_clase" in p else None)
+    return y3, p3, p4
+
+
+def leer4(f):
+    return pd.read_csv(f, dtype={"oid": str}).drop_duplicates("oid").set_index("oid")
+
+
+def agrupacion_sudare():
+    pv = leer4(RUNS / "plantillas_clf" / "plantillas_t11_4c" / "pred_real_val.csv")
+    pt, vt = leer4(T / "plantillas_4c" / "pred_test.csv"), leer4(T / "villar_4c" / "pred_test.csv")
+    out = {"h3": {}, "sudare4": {}}
+    for sub, d in (("val_sel", pv[pv.subset == "val_sel"]), ("val_rep", pv[pv.subset == "val_rep"]), ("test", pt)):
+        y3, p3, p4 = a_sudare(d)
+        out["h3"].setdefault(sub, {})["plantillas"] = met(y3, p3, H3)
+        y = d.y_true.to_numpy()
+        a, b = (p4.to_numpy() == y), (d.y_pred.to_numpy() == y)
+        dl, pr, ci = paired_bootstrap(y, a, b)
+        out["sudare4"][sub] = dict(argmax=met(y, d.y_pred, C4), sudare=met(y, p4, C4), delta_sudare_menos_argmax=dl,
+                                   P_sudare_mejor=pr, ic90=ci)
+    yv3, pv3, _ = a_sudare(vt)
+    V = vt.index
+    yp3, pp3, _ = a_sudare(pt)
+    c = V.intersection(pt.index)
+    t = out["h3"]["test"]
+    t["villar_alcanza"] = {"villar": met(yv3.loc[c], pv3.loc[c], H3), "plantillas": met(yp3.loc[c], pp3.loc[c], H3)}
+    y = yp3.loc[c].to_numpy()
+    dl, pr, ci = paired_bootstrap(y, (pp3.loc[c] == y).to_numpy(), (pv3.loc[c] == y).to_numpy())
+    t["villar_alcanza"]["plantillas"].update(delta_vs_villar=dl, P_mejor_que_villar=pr)
+    h = pp3.copy()
+    h.loc[c] = pv3.loc[c]
+    t["villar_mas_respaldo"] = met(yp3, h, H3)
+    y = yp3.to_numpy()
+    dl, pr, ci = paired_bootstrap(y, (pp3 == y).to_numpy(), (h == y).to_numpy())
+    t["plantillas"].update(delta_vs_villar_mas_respaldo=dl, P_mejor=pr)
     return out
 
 
 def main():
     res = {k: version(k, r) for k, r in VERSIONES.items()}
+    S = agrupacion_sudare()
+    (T / "agrupacion_sudare.json").write_text(json.dumps(S, indent=1))
+    for sub, x in S["sudare4"].items():
+        print(f"== 4 clases {sub}: argmax bal {x['argmax']['bal']:.3f} recall {x['argmax']['recall']} | a la SUDARE bal "
+              f"{x['sudare']['bal']:.3f} recall {x['sudare']['recall']} | P(SUDARE mejor) {x['P_sudare_mejor']:.3f}")
+    for sub, x in S["h3"].items():
+        print(f"== H = II + IIn {sub}: " + " ".join(f"{m} n {v['n']} acc {v['acc']:.3f} bal {v['bal']:.3f}"
+                                                 for m, v in x.items() if "n" in v))
     (T / "comparacion_justa.json").write_text(json.dumps(res, indent=1))
     for k, r in res.items():
         print(f"== {k} clases (N {r['N']}, respaldo {r['respaldo']})")

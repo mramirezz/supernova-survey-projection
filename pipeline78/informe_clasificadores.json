@@ -43,6 +43,12 @@
  "pendientes": [
   "Fase 2/3 de nnclf sobre t11 (ablaciones, z, ensemble de 5 folds) si la fase 1 reducida lo justifica: decide Mauricio.",
   "Plantillas II: suben rapido en r y no hay II de caida rapida (gap-sintesis R2/P3). Limitacion declarada de la biblioteca.",
-  "Parrafo de la tesis con estas cifras: solo con el visto bueno de Mauricio y con las citas verificadas en ADS."
+  "Backend GPU del MCMC de Villar (mcmc_gpu.py, validado equivalente a emcee): adoptarlo o no lo decide Mauricio."
+ ],
+ "proximos_pasos": [
+  "Con el visto bueno: escribir la sección de clasificación de ZTF en la tesis (capítulo 4) con estas cifras de TEST y las citas verificadas en ADS.",
+  "Clasificar SUDARE con las mismas plantillas y las mismas 4 clases (Ia, II con IIb, Ibc, IIn). Para el Nivel 1 de las tasas no hace falta simular SUDARE.",
+  "Fijar el estimador de las fracciones por clase para las tasas: corrección con la matriz de confusión medida en VAL.",
+  "Declarar en la tesis la limitación de las plantillas II (plateaus más planos que las II de ZTF)."
  ]
 }

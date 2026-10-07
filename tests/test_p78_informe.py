@@ -320,7 +320,7 @@ def test_plantillas_tercer_metodo(tmp_path):
     txt = " ".join(J["conclusiones"])
     assert "Plantillas (ajuste bayesiano" in txt and "En los mismos objetos que Villar" in txt
     page = (tmp_path / "pagina/index.html").read_text()
-    assert "1b. Tercer m&eacute;todo" in page and "pl_fake" in page and "exactitud plantillas" in page
+    assert "Ajuste bayesiano de plantillas (como SUDARE I) en VAL" in page and "pl_fake" in page and "exactitud plantillas" in page
     # sin la corrida: pendiente, la pagina sigue
     import shutil
     shutil.rmtree(runs / "plantillas_clf" / "pl_fake")

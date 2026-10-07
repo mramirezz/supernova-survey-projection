@@ -221,9 +221,11 @@ def que_es_red(name, metodo, c):
     arq = {"gru": "GRU", "transformer": "Transformer"}.get(c.get("model"), str(c.get("model")))
     s = [f"{arq} sobre la curva cruda (magnitud, error y bandera de l&iacute;mite)"]
     if c.get("gru_pool") == "attn":
-        s.append("BiGRU con attention pooling (ORACLE-2, Shah+2026)")
+        s.append(f"{'bidireccional' if c.get('bidir') else 'unidireccional'}, con attention pooling (ORACLE-2, Shah+2026)")
     elif c.get("bidir"):
         s.append("BiGRU (control del attention pooling)")
+    if c.get("jerarquica"):
+        s.append("cabeza jer&aacute;rquica (primero Ia contra colapso del n&uacute;cleo, despu&eacute;s el subtipo)")
     if c.get("band_enc") == "lambda":
         s.append("banda codificada por su &lambda; (Gupta+2025, ORACLE-2)")
     if c.get("time_enc") == "atat":
@@ -260,8 +262,7 @@ def runs_nn(root, V):
         if "ensemble_of" in c and (Path(root) / c["ensemble_of"][0] / "config.json").exists():
             c = {**json.loads((Path(root) / c["ensemble_of"][0] / "config.json").read_text()), **c}
         p, info = leer_pred(rd / "pred_real_val.csv", V)
-        if p is None:
-            out.append({**r, "estado": "otras clases", **info})
+        if p is None:                                        # corridas de 4 o 5 clases: van en la seccion de validacion
             continue
         r.update(estado="ok", metodo=M.get("method"), use_z=M.get("use_z"), n_params=c.get("n_params"),
                  sim_run=c.get("sim_run"), que_es=que_es_red(d.name, M.get("method"), {**c, **M}), **info,
@@ -300,7 +301,7 @@ def que_es_plantillas(c):
     return ("ajuste bayesiano de las 78 series espectrales como SUDARE I (Cappellaro+2015, siguiendo PSNID de "
             "Sako+2011): evidencia por tipo marginalizando plantilla, z, E(B&minus;V) del host, T<sub>max</sub> y escala, "
             f"con los priors de las sims ({'z plana' if c.get('sin_z') else 'z espectrosc&oacute;pica'}, UL "
-            f"{c.get('ul_modo', 'todos')}, error del modelo {c.get('sigma_mod')} del flujo, polvo II {c.get('ii_dust')})")
+            f"{c.get('ul_modo', 'todos')}, error del modelo {c.get('sigma_mod')} del flujo, polvo II {c.get('ii_dust') or 'el de las sims'})")
 
 
 def plantillas_run(pb, runs, V):
@@ -901,8 +902,8 @@ def conclusiones(J, meta_bal):
             t += " OJO: val_rep contradice esta elecci&oacute;n (ver arriba). No usarla sin revisar."
         elif any(x["acuerdo"] == "no confirma" for x in base):
             t += " val_rep no la confirma con un IC 90 % que excluya 0."
-        out.append(t + " Villar sigue siendo el baseline oficial (decisi&oacute;n de Mauricio). La decisi&oacute;n "
-                   "final es de Mauricio.")
+        out.append(t + " Esta comparaci&oacute;n es de la primera etapa (Villar contra la red). La propuesta final usa "
+                   "las plantillas (secci&oacute;n 1).")
         lm = {x["metodo"]: x for x in D["meta"]}
         out.append((f"El m&eacute;todo que recomienda la regla es {NOM[rec]}. Contra la meta de exactitud balanceada "
                     f"{meta_bal} en val_rep: {txt_meta(lm[rec], meta_bal)}." if rec else
@@ -1031,8 +1032,6 @@ def pendientes(J, cfg):
     if mal:
         out.append(f"{len(mal)} cifras no coinciden con su metrics.json (ver numeros.json, verificacion).")
     out += [html.escape(s) for s in cfg.get("pendientes", [])]
-    out.append("La cifra de la tesis sale de la mitad final, con las configuraciones elegidas ac&aacute;. No se "
-               "toc&oacute;.")
     return out
 
 
@@ -1040,18 +1039,26 @@ def pendientes(J, cfg):
 CSS = ("table{border-collapse:collapse;margin:6px 0 14px}td,th{border:1px solid #999;padding:2px 7px;font-size:14px}"
        "th{background:#eee}td{text-align:left}td.n{text-align:right}.pend{color:#b00;font-weight:bold}"
        ".aviso{background:#fff3cd;border:1px solid #e0c060;padding:8px}.viejo{background:#f6e6e6;border:1px solid "
-       "#c99;padding:8px}.nota{color:#555;font-size:14px}li{margin:3px 0}details summary{cursor:pointer;font-weight:bold}")
+       "#c99;padding:8px}.nota{color:#555;font-size:14px}li{margin:3px 0}details summary{cursor:pointer;font-weight:bold;"
+       "margin:8px 0}.resumen{background:#eef6ee;border:1px solid #9c9;padding:6px 14px}.anexo{border-left:3px solid #ccc;"
+       "padding-left:12px}img{max-width:100%;height:auto}")
 GLOSARIO = [
-    ("exactitud", "fracci&oacute;n de las SNe clasificadas que quedan en su clase verdadera."),
-    ("exactitud balanceada", "promedio de los aciertos de cada clase. As&iacute; una clase grande (II) no tapa a una "
-                             "chica (Ibc). Es la m&eacute;trica con la que se elige."),
-    ("cobertura", "fracci&oacute;n de las SNe del subconjunto que el m&eacute;todo puede clasificar. Villar necesita "
-                  "un ajuste aceptado (7 detecciones y un l&iacute;mite previo); la red, 3 detecciones."),
-    ("F1 de una clase", "combina pureza (de las que digo Ibc, cu&aacute;ntas lo son) y completitud (de las Ibc, "
-                        "cu&aacute;ntas encuentro). 1 es perfecto."),
-    ("IC 95 %", "rango donde cae el valor con 95 % de confianza, sacado remuestreando las SNe (bootstrap)."),
-    ("bootstrap pareado", "se remuestrean las mismas SNe para los dos m&eacute;todos y se cuenta en qu&eacute; "
-                          "fracci&oacute;n de los remuestreos gana uno. Esa fracci&oacute;n es P."),
+    ("VAL y TEST", "las SNe de ZTF con tipo espectrosc&oacute;pico (TNS) se partieron al azar en dos mitades. VAL se "
+                   "us&oacute; para elegir. TEST se us&oacute; una sola vez, al final, con todo congelado."),
+    ("val_sel y val_rep", "VAL se parti&oacute; a su vez en dos: val_sel para elegir configuraciones y val_rep para ver "
+                          "si la elecci&oacute;n se sostiene en SNe que no participaron."),
+    ("exactitud", "fracci&oacute;n de las SNe clasificadas que quedan en su tipo correcto."),
+    ("exactitud balanceada", "promedio de los aciertos de cada clase, para que la clase m&aacute;s numerosa no tape a "
+                             "las chicas. Es la m&eacute;trica con la que se elige."),
+    ("recall de una clase", "de las SNe de esa clase, la fracci&oacute;n que se clasifica bien."),
+    ("cobertura", "fracci&oacute;n de las SNe a las que el m&eacute;todo les da una clase. Villar necesita que su ajuste "
+                  "MCMC funcione (al menos 7 detecciones y un l&iacute;mite previo a la primera); las plantillas y la "
+                  "red piden 3 detecciones."),
+    ("SNe que Villar alcanza", "las que Villar puede ajustar. Comparar ah&iacute; es lo justo para Villar."),
+    ("respaldo", "el m&eacute;todo que clasifica las SNe que Villar no alcanza, para comparar sistemas completos."),
+    ("P", "se re-sortean las mismas SNe miles de veces (bootstrap) y se cuenta en qu&eacute; fracci&oacute;n de los "
+          "sorteos un m&eacute;todo le gana al otro. P &ge; 0.9: mejor. P &le; 0.1: peor. Entre medio: empate."),
+    ("matriz de confusi&oacute;n", "filas = tipo real, columnas = tipo asignado. La diagonal son los aciertos."),
 ]
 
 
@@ -1095,7 +1102,7 @@ def seccion_plantillas(J):
     """Regla 7: el tercer metodo en la pagina (mismos objetos contra Villar y la red, y segun cubra Villar)."""
     A = J["actual"]
     pl = A.get("plantillas")
-    h = ["<h2>1b. Tercer m&eacute;todo: ajuste bayesiano de plantillas (como SUDARE I)</h2>"]
+    h = ["<h3>Ajuste bayesiano de plantillas (como SUDARE I) en VAL</h3>"]
     if not pl:
         return h[0] + "<p class='pend'>Sin bloque plantillas en la config.</p>"
     if pl.get("estado") != "ok":
@@ -1126,8 +1133,9 @@ def seccion_plantillas(J):
     for k in ("villar", "red"):
         x = D.get(k)
         if x:
-            h.append(f"<p>Contra {CORTO[k] if k == 'villar' else 'la red'}: la regla en val_sel elige "
-                     f"<b>{NOM[x['val_sel']] if x['val_sel'] else 'ninguno'}</b> (gana el que pase {P_MIN}). "
+            h.append(f"<p>Contra {CORTO[k] if k == 'villar' else 'la red'}: la regla en val_sel "
+                     + (f"elige <b>{NOM[x['val_sel']]}</b>" if x["val_sel"] else "<b>no elige</b>")
+                     + f" (gana el que pase {P_MIN}). "
                      f"{txt_rep(x)}</p>")
     fil = []
     for s_ in SUB:
@@ -1213,84 +1221,304 @@ def _recall_ii(M):
             + " (Villar solo sobre las SNe que ajusta). Es el punto d&eacute;bil de las plantillas.") if out else ""
 
 
-def seccion_validacion(J):
-    """Seccion para que el profesor guia valide la eleccion del clasificador: TEST congelado, comparacion justa y
-    matrices de confusion. Todo leido de los archivos de evaluar_test y comparacion_justa."""
+def _mx(M, k, lab):
+    """Matriz de TEST de k clases del metodo lab (o None)."""
+    return next((x for x in M.get(k, []) if x["lab"] == lab), None)
+
+
+def _fila(x, c):
+    """Fracciones de la fila de la clase c en una matriz de TEST: {clase predicha: fraccion}."""
+    m = np.array(x["conf"], float)
+    i = x["clases"].index(c)
+    return {d: m[i, j] / max(m[i].sum(), 1) for j, d in enumerate(x["clases"])}
+
+
+def _veredicto(p):
+    return "mejor" if p >= P_MIN else "peor" if p <= 1 - P_MIN else "empate"
+
+
+def _fp(p):
+    """P con 2 decimales, o 3 si al redondear quedaria pegada a un umbral (0.897 no es 0.90)."""
+    return f"{p:.3f}" if min(abs(p - P_MIN), abs(p - (1 - P_MIN))) < 0.006 else f"{p:.2f}"
+
+
+def _son(p):
+    """'las plantillas ... Villar' segun P(plantillas mejor)."""
+    return "son mejores que" if p >= P_MIN else "son peores que" if p <= 1 - P_MIN else "empatan con"
+
+
+def resumen(J):
+    """Recuadro de arriba: la propuesta y las cifras de TEST que la sostienen, todo leido de los archivos de TEST."""
     V = J.get("validacion") or {}
     jt, M = V.get("justa"), V.get("matrices") or {}
-    h = ["<h2 id='validacion'>Para validar: &iquest;qu&eacute; clasificador usa la tesis?</h2>",
-         "<p><b>Propuesta.</b> Usar el <b>ajuste bayesiano de plantillas</b> (el m&eacute;todo de SUDARE I, "
-         "Cappellaro et al. 2015 &sect;4.1, siguiendo PSNID de Sako et al. 2011, pero con nuestras 78 series espectrales) "
-         "como clasificador oficial de ZTF y de SUDARE. Villar (SPM + MCMC + clasificador entrenado con simulaciones) y la "
-         "red (transformer entrenado con simulaciones) quedan como comparaci&oacute;n. Para las tasas se usan 4 clases "
-         "(Ia, II+IIb, Ibc, IIn), como SUDARE.</p>",
-         "<p><b>C&oacute;mo se lleg&oacute;.</b> Muestra espectrosc&oacute;pica de ZTF (TNS) partida en VAL y TEST. VAL se "
-         "parte en val_sel (elegir configuraciones) y val_rep (reportar). Ning&uacute;n m&eacute;todo entrena con SNe "
-         "reales. La regla (bootstrap pareado, P &ge; 0.9 en val_sel) eligi&oacute; las plantillas antes de mirar TEST. "
-         "Despu&eacute;s se corrieron en TEST, <b>una sola vez</b>, los modelos congelados, que reprodujeron exacto sus "
-         "resultados de val. Detalle de particiones en la secci&oacute;n 0.</p>"]
+    p4, v4, p3 = _mx(M, 4, "Plantillas"), _mx(M, 4, "Villar"), _mx(M, 3, "Plantillas")
+    if not (jt and p4 and v4 and p3):
+        return "<p class='pend'>Resumen pendiente: faltan los resultados de TEST.</p>"
+    a3, a4 = jt["3"]["villar_alcanza"]["plantillas"], jt["4"]["villar_alcanza"]["plantillas"]
+    f = _fila(p4, "II")
+    return ("<div class='resumen'><b>En corto</b><ul>"
+            "<li><b>Propuesta:</b> clasificar las SNe de ZTF (y despu&eacute;s las de SUDARE) con el <b>ajuste de "
+            "plantillas</b>, el m&eacute;todo de SUDARE I, usando como plantillas nuestras 78 series espectrales. Villar "
+            "y la red neuronal quedan como comparaci&oacute;n.</li>"
+            f"<li>En TEST ({p4['N']} SNe de ZTF que no se usaron para elegir nada), con las 4 clases de las tasas (Ia, "
+            f"II, Ibc, IIn), las plantillas clasifican el {p4['cob']:.0%} de las SNe con exactitud balanceada "
+            f"{p4['bal']:.2f}. Villar clasifica el {v4['cob']:.0%}. En las SNe que Villar s&iacute; alcanza, las plantillas "
+            f"{_son(a4['P_mejor_que_villar'])} Villar (P = {a4['P_mejor_que_villar']:.2f}).</li>"
+            f"<li>Con 3 clases (Ia, II, Ibc) las plantillas {_son(a3['P_mejor_que_villar'])} Villar en "
+            f"las SNe que Villar alcanza (P = {a3['P_mejor_que_villar']:.2f}) y llegan a exactitud balanceada "
+            f"{p3['bal']:.2f} sobre el {p3['cob']:.0%} de las SNe.</li>"
+            f"<li><b>Punto d&eacute;bil:</b> las II. En 4 clases las plantillas reconocen el {f['II']:.0%} de las II; "
+            f"el resto se va a IIn ({f['IIn']:.0%}) y a Ibc ({f['Ibc']:.0%}).</li>"
+            "<li><b>Se pide validar:</b> (1) las plantillas como clasificador oficial; (2) 4 clases para las tasas, "
+            "como SUDARE; (3) corregir las fracciones por clase con la matriz de confusi&oacute;n.</li></ul></div>")
+
+
+def seccion_validacion(J):
+    """Seccion 1, para que el profesor guia valide la eleccion: TEST congelado, comparacion justa y matrices de
+    confusion. Todas las cifras se leen de los archivos de evaluar_test y comparacion_justa."""
+    V = J.get("validacion") or {}
+    jt, M = V.get("justa"), V.get("matrices") or {}
+    T = J.get("tasas") or {}
+    h = ["<h2 id='validacion'>1. Qu&eacute; clasificador usa la tesis</h2>",
+         "<p><b>Propuesta.</b> Usar el <b>ajuste de plantillas</b> (Cappellaro et al. 2015, &sect;4.1, que sigue a PSNID "
+         "de Sako et al. 2011) con nuestras 78 series espectrales como plantillas. Cada SN se compara con todas las "
+         "plantillas en todos los corrimientos al rojo, extinciones y fechas de m&aacute;ximo posibles, y la "
+         "probabilidad de cada tipo sale de qu&eacute; tan bien calzan, pesada por lo que se sabe de cada tipo "
+         "(funci&oacute;n de luminosidad, polvo y fracci&oacute;n de subtipos). No se entrena con nada. Villar (ajuste "
+         "de la curva de Villar et al. 2019 + clasificador entrenado con simulaciones) y la red (transformer entrenado "
+         "con simulaciones) quedan como comparaci&oacute;n.</p>"]
+    pv = (T.get("pares") or {}).get("val_sel") or {}
+    rp, vp = pv.get("red_vs_plantillas"), pv.get("villar_vs_plantillas")
+    cob = (T.get("por_subconjunto") or {}).get("val_sel") or {}
+    if rp and vp and cob:
+        h.append("<p><b>C&oacute;mo se eligi&oacute;.</b> Ning&uacute;n m&eacute;todo vio SNe reales para aprender. La "
+                 "regla se fij&oacute; el 2026-10-04, antes de ver val_rep y TEST: gana el que mejora con P &ge; 0.9 en val_sel; si "
+                 "empatan, el que clasifica m&aacute;s SNe por s&iacute; mismo; despu&eacute;s, el que depende menos de "
+                 f"las simulaciones. En val_sel las plantillas le ganan a la red (P = {1 - rp['P_bal']:.2f}) y empatan "
+                 f"con Villar (P = {1 - vp['P_bal']:.2f}). En el empate decide la cobertura: las plantillas clasifican "
+                 f"por s&iacute; mismas el {cob['plantillas']['cobertura_propia']:.0%} de val_sel y Villar el "
+                 f"{cob['villar']['cobertura_propia']:.0%}. Reci&eacute;n despu&eacute;s se corrieron en TEST, una sola "
+                 "vez, los tres m&eacute;todos congelados (antes de TEST cada uno reprodujo exacto sus resultados de "
+                 "VAL). Las particiones est&aacute;n en la secci&oacute;n 3.</p>")
     if jt:
-        h.append("<h3>Comparaci&oacute;n justa en TEST</h3><p>Cada celda: exactitud / exactitud balanceada. "
-                 "<i>Alcance de Villar</i> = las SNe que Villar puede ajustar (&ge; 7 detecciones por banda). "
-                 "<i>Todas</i> = todas las SNe clasificables; Villar se muestra solo (las que no ajusta cuentan como error) "
-                 "y con respaldo (la red, o las plantillas en 4 clases). P = probabilidad bootstrap de que el m&eacute;todo "
-                 "sea mejor que Villar (&ge; 0.9 = diferencia real, &le; 0.1 = Villar mejor).</p>")
-        nom = {"villar": "Villar", "red": "Red (transformer)", "plantillas": "Plantillas",
-               "villar_solo": "Villar solo", "villar_mas_respaldo": "Villar + respaldo"}
+        h.append("<h3>Comparaci&oacute;n justa en TEST</h3><p>Cada celda: exactitud / exactitud balanceada. Se compara "
+                 "de dos maneras: (a) solo en las SNe que Villar alcanza, que es lo justo para Villar; (b) en todas las "
+                 "SNe, donde Villar va solo (las que no alcanza cuentan como error) o con respaldo (la red; en 4 clases, "
+                 "las plantillas). P = probabilidad de que el m&eacute;todo sea mejor que Villar.</p>")
+        nom = {"villar": "Villar", "red": "Red (transformer)", "plantillas": "Plantillas"}
         for k in sorted(jt, key=int):
             r = jt[k]
             va, to = r["villar_alcanza"], r["total"]
             rows = []
             for m in ("villar", "red", "plantillas"):
-                if m in va:
-                    a = va[m]
-                    pa = f"{a['P_mejor_que_villar']:.2f}" if "P_mejor_que_villar" in a else "&ndash;"
-                    t = to.get(m)
-                    tt = (f"{t['acc']:.3f} / {t['bal']:.3f}" if t else "")
-                    pt = f"{t['P_mejor']:.2f}" if t and "P_mejor" in t else "&ndash;"
-                    if m == "villar":
-                        tt = (f"{to['villar_solo']['acc']:.3f} / {to['villar_solo']['bal']:.3f} (solo) &middot; "
-                              f"{to['villar_mas_respaldo']['acc']:.3f} / {to['villar_mas_respaldo']['bal']:.3f} (+ respaldo)")
-                    rows.append([f"<b>{nom[m]}</b>", f"{a['acc']:.3f} / {a['bal']:.3f}", pa, tt, pt])
-            n_va = va["villar"]["n"]
-            n_to = to["villar_mas_respaldo"]["n"]
-            h.append(f"<p><b>{k} clases</b> (TEST: {r['N']} SNe; alcance de Villar {n_va}; todas {n_to}).</p>")
-            h.append(tabla(["m&eacute;todo", f"alcance de Villar ({n_va})", "P vs Villar", f"todas ({n_to})",
-                            "P vs Villar + respaldo"], rows))
+                if m not in va:
+                    continue
+                a, t = va[m], to.get(m)
+                pa = f"{a['P_mejor_que_villar']:.2f}" if "P_mejor_que_villar" in a else "&ndash;"
+                tt = f"{t['acc']:.3f} / {t['bal']:.3f}" if t else ""
+                pt = f"{t['P_mejor']:.2f}" if t and "P_mejor" in t else "&ndash;"
+                if m == "villar":
+                    tt = (f"{to['villar_solo']['acc']:.3f} / {to['villar_solo']['bal']:.3f} (solo) &middot; "
+                          f"{to['villar_mas_respaldo']['acc']:.3f} / {to['villar_mas_respaldo']['bal']:.3f} (con respaldo)")
+                rows.append([f"<b>{nom[m]}</b>", f"{a['acc']:.3f} / {a['bal']:.3f}", pa, tt, pt])
+            n_va, n_to = va["villar"]["n"], to["villar_mas_respaldo"]["n"]
+            cl = {"3": "Ia, II, Ibc", "4": "Ia, II, Ibc, IIn", "5": "Ia, II, IIb, Ibc, IIn"}.get(str(k), "")
+            h.append(f"<p><b>{k} clases</b> ({cl}). TEST: {r['N']} SNe, Villar alcanza {n_va}, clasificables {n_to}.</p>")
+            h.append(tabla(["m&eacute;todo", f"(a) SNe que Villar alcanza ({n_va})", "P vs Villar", f"(b) todas ({n_to})",
+                            "P vs Villar con respaldo"], rows))
     else:
         h.append("<p class='pend'>Pendiente: python -m pipeline78.comparacion_justa.</p>")
     if J.get("figuras", {}).get("matrices_test"):
-        h.append("<h3>Matrices de confusi&oacute;n en TEST</h3><p>Filas = clase real, columnas = clase predicha. Cada "
-                 "celda: fracci&oacute;n de la fila y (n&uacute;mero). Fila de arriba 3 clases, al medio 4 clases (con IIn, "
-                 "la que usan las tasas), abajo 5 clases (IIb separada).</p>"
+        h.append("<h3>Matrices de confusi&oacute;n en TEST</h3><p>Filas = tipo real, columnas = tipo asignado. Cada "
+                 "celda: fracci&oacute;n de la fila y (n&uacute;mero de SNe). Arriba 3 clases, al medio 4 clases (con "
+                 "IIn, las de las tasas), abajo 5 clases (IIb aparte). Villar se muestra solo en las SNe que alcanza.</p>"
                  f"<img src='{J['figuras']['matrices_test']}' width='1000'>")
     if M:
-        rows = []
-        for k, lst in sorted(M.items()):
-            for x in lst:
-                rows.append([f"{k}", x["lab"], f"{x['n']}/{x['N']} ({x['cob']:.0%})", f"{x['acc']:.3f}",
-                             f"{x['bal']:.3f} {ci(x['ic'])}", ", ".join(f"{c} {v:.2f}" for c, v in x["f1"].items() if v is not None)])
-        h.append("<h3>M&eacute;tricas de cada m&eacute;todo solo, en TEST</h3>" + tabla(
+        rows = [[f"{k}", x["lab"], f"{x['n']}/{x['N']} ({x['cob']:.0%})", f"{x['acc']:.3f}", f"{x['bal']:.3f} {ci(x['ic'])}",
+                 ", ".join(f"{c} {v:.2f}" for c, v in x["f1"].items() if v is not None)]
+                for k, lst in sorted(M.items()) for x in lst]
+        h.append("<h3>Cada m&eacute;todo solo, en TEST</h3><p class='nota'>Cada uno sobre las SNe que clasifica (por eso "
+                 "no se comparan directo entre filas: para eso est&aacute; la tabla de arriba). F1 combina pureza y "
+                 "completitud de cada clase (1 = perfecto).</p>" + tabla(
             ["clases", "m&eacute;todo", "clasificadas", "exactitud", "exact. balanceada [IC 95 %]", "F1 por clase"], rows))
-    h.append("<h3>Por qu&eacute; las plantillas</h3><ul>"
-             "<li>En 3 clases son las mejores en el alcance de Villar (P &ge; 0.98) y sobre todas las SNe. En 4 y 5 clases "
-             "empatan con Villar en su alcance, y clasifican el 98 % de las SNe contra el 67&ndash;72 % de Villar.</li>"
-             "<li>No se entrenan: no dependen de que la simulaci&oacute;n de la observaci&oacute;n de ZTF sea perfecta (el "
-             "error de m0 que encontramos afectaba a Villar y a la red, no a las plantillas).</li>"
-             "<li>Es el m&eacute;todo de SUDARE con nuestra biblioteca: la comparaci&oacute;n de tasas del Nivel 1 cambia "
-             "solo la biblioteca, no el m&eacute;todo. Y SUDARE se clasifica sin simular SUDARE.</li>"
-             "<li>Dan probabilidades por clase (evidencia bayesiana), con un error de modelo de 0.3 del flujo elegido en "
-             "val_sel.</li></ul>"
-             "<h3>Limitaciones a declarar</h3><ul>"
-             "<li>Las plantillas II tienen plateaus m&aacute;s planos que la poblaci&oacute;n de ZTF: parte de las II reales "
-             "se va a IIn e Ibc (fila II de las matrices)." + _recall_ii(M) + "</li>"
-             "<li>IIb e Ibc no se separan bien con fotometr&iacute;a (5 clases); por eso las tasas usan 4 clases, con la IIb "
-             "dentro de II como SUDARE.</li>"
-             "<li>Las fracciones por clase sin corregir est&aacute;n sesgadas: para las tasas se corrigen con la matriz de "
-             "confusi&oacute;n (secci&oacute;n 0).</li></ul>"
-             "<p><b>Lo que se pide validar:</b> (1) usar las plantillas como clasificador oficial; (2) 4 clases para las "
-             "tasas; (3) correcci&oacute;n con la matriz de confusi&oacute;n.</p>")
+    if jt and M:
+        a3, t3 = jt["3"]["villar_alcanza"]["plantillas"], jt["3"]["total"]
+        a4, t4 = jt["4"]["villar_alcanza"]["plantillas"], jt["4"]["total"]
+        a5 = jt["5"]["villar_alcanza"]["plantillas"]
+        cp = [x["cob"] for k in M for x in M[k] if x["lab"] == "Plantillas"]
+        cv = [x["cob"] for k in M for x in M[k] if x["lab"] == "Villar"]
+        rg = lambda v: f"{min(v):.0%}" if round(min(v), 2) == round(max(v), 2) else f"{min(v):.0%}&ndash;{max(v):.0%}"
+        li_red = ""
+        if "P_mejor_que_red" in t3["plantillas"]:
+            pr = t3["plantillas"]["P_mejor_que_red"]
+            li_red = (f"<li>Plantillas contra la red, cara a cara en TEST (3 clases): {_veredicto(pr)} (P = {_fp(pr)} en "
+                      f"todas, {_fp(a3['P_mejor_que_red'])} en las que Villar alcanza)."
+                      + (f" En val_sel las plantillas {_son(1 - rp['P_bal']).replace(' que', '')} (P = "
+                         f"{_fp(1 - rp['P_bal'])}), y eso decidi&oacute; la elecci&oacute;n." if rp else "")
+                      + (" Con la misma cobertura, el empate de TEST lo resuelve el &uacute;ltimo criterio de la regla: "
+                         "las plantillas no dependen de las simulaciones." if _veredicto(pr) == "empate" else "")
+                      + "</li>")
+        h.append("<h3>Por qu&eacute; las plantillas</h3><ul>"
+                 f"<li>3 clases: en las SNe que Villar alcanza, las plantillas {_son(a3['P_mejor_que_villar'])} Villar "
+                 f"(P = {a3['P_mejor_que_villar']:.2f}). En todas las SNe tienen la cifra m&aacute;s alta "
+                 f"({t3['plantillas']['bal']:.3f} contra {t3['villar_mas_respaldo']['bal']:.3f} de Villar con respaldo y "
+                 f"{t3['red']['bal']:.3f} de la red), pero contra Villar con respaldo P = {_fp(t3['plantillas']['P_mejor'])}: "
+                 f"{_veredicto(t3['plantillas']['P_mejor'])} (la red llega a P = {_fp(t3['red']['P_mejor'])}).</li>"
+                 + li_red +
+                 f"<li>4 y 5 clases, en las SNe que Villar alcanza: 4 clases {_veredicto(a4['P_mejor_que_villar'])} "
+                 f"(P = {_fp(a4['P_mejor_que_villar'])}), 5 clases {_veredicto(a5['P_mejor_que_villar'])} "
+                 f"(P = {_fp(a5['P_mejor_que_villar'])}). En todas las SNe con 4 clases, Villar con las plantillas de respaldo "
+                 f"da {t4['villar_mas_respaldo']['bal']:.3f} y las plantillas solas {t4['plantillas']['bal']:.3f} "
+                 f"(P = {t4['plantillas']['P_mejor']:.2f}, {_veredicto(t4['plantillas']['P_mejor'])}). En el empate la "
+                 "regla prefiere el que depende menos de las simulaciones: las plantillas solas.</li>"
+                 f"<li>Cobertura: las plantillas clasifican el {rg(cp)} de las SNe; Villar el {rg(cv)}. Cada SN sin "
+                 "clasificar es una correcci&oacute;n m&aacute;s en la tasa.</li>"
+                 "<li>No se entrenan con simulaciones de ZTF: no dependen de que la simulaci&oacute;n de la "
+                 "observaci&oacute;n sea perfecta. El error que encontramos en esa simulaci&oacute;n (el umbral de "
+                 "detecci&oacute;n, anexo F) afectaba a Villar y a la red, no a las plantillas.</li>"
+                 "<li>Es el m&eacute;todo de SUDARE con nuestra biblioteca: al comparar tasas con SUDARE cambia la "
+                 "biblioteca y no el m&eacute;todo, y SUDARE se puede clasificar sin simular SUDARE.</li>"
+                 "<li>Dan una probabilidad por clase. El error que se le asigna al modelo (0.3 del flujo) se eligi&oacute; "
+                 "en val_sel.</li></ul>")
+        h.append("<h3>Limitaciones a declarar</h3><ul>"
+                 "<li>Las plantillas II tienen plateaus m&aacute;s planos que las II de ZTF: parte de las II reales se va "
+                 "a IIn e Ibc (fila II de las matrices)." + _recall_ii(M) + "</li>"
+                 "<li>IIb e Ibc no se separan bien con fotometr&iacute;a (matriz de 5 clases). Por eso las tasas usan 4 "
+                 "clases, con las IIb dentro de II, como SUDARE (secci&oacute;n 2).</li>"
+                 "<li>Las fracciones por clase sin corregir est&aacute;n sesgadas. Para las tasas se corrigen con la matriz "
+                 "de confusi&oacute;n (secci&oacute;n 4).</li></ul>"
+                 "<p><b>Lo que se pide validar:</b> (1) las plantillas como clasificador oficial; (2) 4 clases para las "
+                 "tasas; (3) correcci&oacute;n de las fracciones con la matriz de confusi&oacute;n.</p>")
     return "".join(h)
+
+
+def seccion_sudare(J):
+    """Seccion 2: como agrupa SUDARE I los tipos (verificado en el texto de Cappellaro+2015 y Botticella+2017) y la
+    prueba de su agrupacion sobre nuestras predicciones congeladas (comparacion_justa.agrupacion_sudare)."""
+    S, M = J.get("sudare"), (J.get("validacion") or {}).get("matrices") or {}
+    h = ["<h2 id='sudare'>2. C&oacute;mo agrupa SUDARE los tipos y qu&eacute; cambia para nosotros</h2>",
+         "<p><b>Lo que hace SUDARE</b> (le&iacute;do en el texto de Cappellaro et al. 2015, A&amp;A 584, A62, y Botticella "
+         "et al. 2017, A&amp;A 598, A50):</p><ul>"
+         "<li>Plantillas de Ia, Ib, Ic, IIb, IIP, IIL e IIn, m&aacute;s una superluminosa (SN 2008es) que sacaron porque "
+         "ning&uacute;n candidato calzaba (&sect;4.1).</li>"
+         "<li><b>Para calcular la probabilidad de tipo juntan II e IIn</b>: &laquo;for the purpose to assign probability, "
+         "we merged regular type II and type IIn templates&raquo;. Despu&eacute;s marcan IIn cuando la plantilla de mayor "
+         "probabilidad es una IIn (&sect;4.1).</li>"
+         "<li>Las IIb van dentro de II: la mezcla de II que usan tiene 60 % IIP, 10 % tipo 2005cs, 10 % tipo 1987A, 10 % "
+         "IIL y 10 % IIb (&sect;7.1).</li>"
+         "<li><b>Las tasas s&iacute; separan las IIn</b>: &laquo;We considered separately the following main SN types: "
+         "Ia, Ib/c, II (including IIP and IIL), IIn and SLSN&raquo; (&sect;7, Tabla 7). La tasa CC suma II + Ib/c + IIn "
+         "(&sect;8.1).</li>"
+         "<li>Declaran las IIn como lo m&aacute;s incierto: 40 % de incertidumbre en la clasificaci&oacute;n de Ib/c "
+         "e IIn, contra 10 % en Ia y 25 % en II (&sect;4.4), y a z alto pierden o clasifican mal m&aacute;s de 2/3 de las IIn (&sect;8.2).</li>"
+         "<li>SUDARE II usa la clasificaci&oacute;n del paper I. Da tasas de Ia y CC en el texto, y de II, Ibc e IIn por "
+         "separado en el ap&eacute;ndice (Tabla 5).</li></ul>"
+         "<p><b>Qu&eacute; significa para nosotros.</b> Las tasas que vamos a comparar son Ia, II (con IIb), Ibc, IIn y "
+         "CC total. Por eso el clasificador oficial es de 4 clases. SUDARE junta II e IIn solo para la probabilidad; "
+         "probamos esa misma regla con nuestras plantillas.</p>"]
+    if not S:
+        return "".join(h) + "<p class='pend'>Pendiente: python -m pipeline78.comparacion_justa (agrupacion_sudare).</p>"
+    s4 = S["sudare4"]
+    rows = []
+    for sub in ("val_sel", "val_rep", "test"):
+        x = s4[sub]
+        rows.append([sub.replace("test", "TEST"), str(x["argmax"]["n"]),
+                     f"{x['argmax']['bal']:.3f} (II {x['argmax']['recall']['II']:.2f}, IIn {x['argmax']['recall']['IIn']:.2f})",
+                     f"{x['sudare']['bal']:.3f} (II {x['sudare']['recall']['II']:.2f}, IIn {x['sudare']['recall']['IIn']:.2f})",
+                     f"{x['P_sudare_mejor']:.3f}"])
+    v = s4["val_sel"]["P_sudare_mejor"]
+    h.append("<h3>&iquest;Juntar II e IIn como SUDARE o separarlas con su propia probabilidad?</h3>"
+             "<p>Las dos maneras sobre las mismas predicciones de 4 clases, ya congeladas (no se reajust&oacute; nada). "
+             "&laquo;Separadas&raquo;: cada tipo con su probabilidad (lo que usamos). &laquo;A la SUDARE&raquo;: "
+             "probabilidad de II + IIn juntas y despu&eacute;s IIn si la plantilla de mayor probabilidad es IIn. Cada "
+             "celda: exactitud balanceada (recall de II y de IIn).</p>"
+             + tabla(["conjunto", "SNe", "separadas", "a la SUDARE", "P(SUDARE mejor)"], rows)
+             + f"<p>Decide val_sel: {'la regla de SUDARE es mejor' if v >= P_MIN else 'separadas es mejor' if v <= 1 - P_MIN else 'empate'} "
+             f"(P = {v:.3f}). " + ("val_rep y TEST lo confirman. " if all(
+                 (s4[s]["P_sudare_mejor"] <= 1 - P_MIN) == (v <= 1 - P_MIN) for s in ("val_rep", "test")) else "")
+             + ("Con nuestras plantillas la probabilidad propia de las IIn funciona mejor que la regla de SUDARE, que "
+                "manda m&aacute;s II a IIn. Nos quedamos con las clases separadas. " if v <= 1 - P_MIN else
+                "La regla de val_sel no prefiere las clases separadas: decidir con Mauricio. ")
+             + "Esta prueba se hizo despu&eacute;s de "
+             "abrir TEST, pero no cambia ning&uacute;n modelo y la elecci&oacute;n se lee en val_sel.</p>")
+    H = S["h3"]
+    t = H["test"]
+    va = t["villar_alcanza"]
+    rows = [[sub.replace("test", "TEST"), str(H[sub]["plantillas"]["n"]), f"{H[sub]['plantillas']['acc']:.3f} / "
+             f"{H[sub]['plantillas']['bal']:.3f}", f"{H[sub]['plantillas']['recall']['H']:.2f}"] for sub in ("val_sel", "val_rep", "test")]
+    h.append("<h3>Si se juntan II e IIn en una sola clase &laquo;rica en hidr&oacute;geno&raquo;</h3>"
+             "<p>Gran parte del error de las II es irse a IIn, dentro de la misma familia rica en hidr&oacute;geno. "
+             "Juntando II + IIn (3 clases: Ia, II + IIn, Ibc), las plantillas dan (exactitud / exactitud balanceada, y "
+             "recall de II + IIn):</p>" + tabla(["conjunto", "SNe", "exactitud / exact. balanceada", "recall II + IIn"], rows)
+             + f"<p>En TEST, en las {va['villar']['n']} SNe que Villar alcanza: plantillas {va['plantillas']['bal']:.3f} "
+             f"contra Villar {va['villar']['bal']:.3f} (P = {va['plantillas']['P_mejor_que_villar']:.2f}, "
+             f"{_veredicto(va['plantillas']['P_mejor_que_villar'])}). En todas: plantillas {t['plantillas']['bal']:.3f} "
+             f"contra Villar con respaldo {t['villar_mas_respaldo']['bal']:.3f} (P = {_fp(t['plantillas']['P_mejor'])}, "
+             f"{_veredicto(t['plantillas']['P_mejor'])}).</p>")
+    rows = []
+    for lab in ("Plantillas", "Villar"):
+        x = _mx(M, 4, lab)
+        if not x:
+            continue
+        c = np.array(x["conf"], float)
+        i = x["clases"].index("Ia")
+        cc = [j for j in range(len(c)) if j != i]
+        rows.append([lab + (" (solo las que alcanza)" if lab == "Villar" else ""), str(int(c.sum())),
+                     f"{c[i, i] / c[i].sum():.2f}", f"{c[np.ix_(cc, cc)].sum() / c[cc].sum():.2f}",
+                     f"{c[i, i] / c[:, i].sum():.2f}"])
+    if rows:
+        h.append("<h3>Ia contra colapso del n&uacute;cleo (lo que usan la tasa Ia y la tasa CC total)</h3>"
+                 "<p>De las matrices de 4 clases en TEST: qu&eacute; fracci&oacute;n de las Ia se reconoce como Ia, "
+                 "qu&eacute; fracci&oacute;n de las CC (II, Ibc, IIn) queda como CC, y de las que se llaman Ia, "
+                 "cu&aacute;ntas lo son.</p>" + tabla(["m&eacute;todo", "SNe", "Ia reconocidas", "CC reconocidas",
+                                                        "pureza de las Ia"], rows))
+    return "".join(h)
+
+
+def conclusiones_test(J):
+    """Conclusiones principales, de TEST y de la regla de val_sel. Frases con condiciones fijas, cifras de los archivos."""
+    V, T = J.get("validacion") or {}, J.get("tasas") or {}
+    jt, M = V.get("justa"), V.get("matrices") or {}
+    p3, p4 = _mx(M, 3, "Plantillas"), _mx(M, 4, "Plantillas")
+    if not (jt and p3 and p4):
+        return ["Pendiente: faltan los resultados de TEST."]
+    meta = J.get("meta_bal_acc", 0.75)
+    lo, hi = p3["ic"]
+    out = [f"Clasificador propuesto: el ajuste de plantillas. En TEST, con 3 clases, clasifica el {p3['cob']:.0%} de las "
+           f"SNe con exactitud balanceada {p3['bal']:.3f} [{lo:.3f}, {hi:.3f}] (IC 95 %). Contra la meta de {meta}: "
+           + ("la supera con todo el intervalo." if lo > meta else "la cifra est&aacute; sobre la meta, pero el intervalo "
+              "la incluye." if p3["bal"] >= meta else "queda bajo la meta.")
+           + f" Con las 4 clases de las tasas: {p4['bal']:.3f} [{p4['ic'][0]:.3f}, {p4['ic'][1]:.3f}] sobre el "
+           f"{p4['cob']:.0%}."]
+    a = {k: jt[k]["villar_alcanza"]["plantillas"]["P_mejor_que_villar"] for k in ("3", "4", "5")}
+    out.append("Contra Villar, en las SNe que Villar alcanza: " + ", ".join(
+        f"{k} clases {_veredicto(p)} (P = {p:.2f})" for k, p in a.items())
+        + (". Ninguna comparaci&oacute;n favorece a Villar, y las plantillas clasifican casi todas las SNe."
+           if min(a.values()) > 1 - P_MIN else ". OJO: en alguna Villar es mejor."))
+    pr = jt["3"]["total"]["plantillas"].get("P_mejor_que_red")
+    rv = ((T.get("pares") or {}).get("val_sel") or {}).get("red_vs_plantillas")
+    if pr is not None and rv:
+        out.append(f"Contra la red, que tambi&eacute;n clasifica casi todo: en val_sel las plantillas {_son(1 - rv['P_bal'])} "
+                   f"la red (P = {_fp(1 - rv['P_bal'])}) y en TEST, 3 clases, {_veredicto(pr)} (P = {_fp(pr)}). Con la misma "
+                   "cobertura, la regla prefiere el m&eacute;todo que no depende de las simulaciones: las plantillas.")
+    s = J.get("sudare")
+    if s:
+        x = s["sudare4"]["val_sel"]
+        out.append(f"La regla de SUDARE para las IIn (juntar II + IIn y separar por la mejor plantilla) es "
+                   f"{_veredicto(x['P_sudare_mejor'])} que separarlas con su propia probabilidad (val_sel, P = "
+                   f"{x['P_sudare_mejor']:.3f}). Se usan las 4 clases separadas.")
+    cr = T.get("corregidas_rep") or {}
+    if cr.get("plantillas"):
+        out.append("Para las tasas lo que importa es la fracci&oacute;n de cada tipo. Corregidas con la matriz de "
+                   "confusi&oacute;n de val_sel, el error de las fracciones en val_rep (3 clases, suma de las diferencias con las "
+                   f"fracciones reales, 0 = perfecto) es {cr['plantillas']['L1']:.3f} con las plantillas, "
+                   + ", ".join(f"{cr[k]['L1']:.3f} con {NOM[k]}" for k in ("red", "villar") if k in cr) + ".")
+    f = _fila(p4, "II")
+    out.append(f"Limitaci&oacute;n principal: en 4 clases las plantillas reconocen el {f['II']:.0%} de las II (el resto va "
+               f"a IIn {f['IIn']:.0%} y a Ibc {f['Ibc']:.0%}), porque las plantillas II tienen plateaus m&aacute;s "
+               "planos que las II de ZTF. La correcci&oacute;n con la matriz de confusi&oacute;n compensa este sesgo "
+               "en las fracciones, pero no lo elimina por SN.")
+    return out
 
 
 def particiones_conteo(real_dir):
@@ -1305,91 +1533,107 @@ def particiones_conteo(real_dir):
     return {f"{o}/{s}": {"n": n, "excluidas": e[(o, s)]} for (o, s), n in c.items()}
 
 
+def _anexo(titulo, cuerpo, intro=""):
+    return (f"<details><summary>{titulo}</summary><div class='anexo'>" + (f"<p class='nota'>{intro}</p>" if intro else "")
+            + cuerpo + "</div></details>")
+
+
 def seccion_tasas(J):
-    """Seccion 0: la regla para las tasas (pipeline78/sistema_tasas.py) y las particiones de datos."""
+    """Seccion 3: las particiones de las SNe reales y la regla de eleccion (pipeline78/sistema_tasas.py), en simple. La
+    tabla completa de VAL va plegada."""
     T, Pc = J.get("tasas"), J.get("particiones_conteo") or {}
-    h = ["<h2>0. Decisi&oacute;n para las tasas y particiones de datos</h2>"]
-    if T:
-        h.append("<p>Regla acordada con Mauricio el 2026-10-04, <b>fijada antes de ver val_rep de las plantillas</b>: cada "
-                 "m&eacute;todo se eval&uacute;a como <b>sistema completo sobre todas las SNe</b> (lo que no cubre lo "
-                 f"clasifica el respaldo, {html.escape(T['respaldo'])}). M&eacute;tricas: exactitud balanceada y error de "
-                 "las fracciones por clase (L1 = &sum;|f<sub>pred</sub> &minus; f<sub>real</sub>|, contando la clase "
-                 "predicha o sumando probabilidades). val_sel decide con el bootstrap pareado (P &ge; 0.9), val_rep "
-                 "confirma. Empate: m&aacute;s cobertura propia, despu&eacute;s menos dependencia de la simulaci&oacute;n.</p>")
-        rows = []
-        for k in ("plantillas", "villar", "red"):
-            a, b = T["por_subconjunto"]["val_sel"][k], T["por_subconjunto"]["val_rep"][k]
-            cr = T.get("corregidas_rep", {}).get(k, {})
-            rows.append([f"<b>{NOM[k]}</b> ({html.escape(T['metodos'][k])})", pc(a["cobertura_propia"]),
-                         f3(a["bal_acc"]), f3(b["bal_acc"]), f3(b["acc"]), f3(a["L1_argmax"]), f3(b["L1_argmax"]),
-                         f3(b["L1_prob"]), f"{f3(cr.get('L1'))} [{f3((cr.get('ic90') or [None, None])[0])}, "
-                         f"{f3((cr.get('ic90') or [None, None])[1])}]"])
-        h.append(tabla(["sistema", "cobertura propia (sel)", "exact. bal. sel", "exact. bal. rep", "exactitud rep",
-                        "L1 clase sel", "L1 clase rep", "L1 prob rep", "L1 rep corregida con la matriz de val_sel [IC 90]"], rows))
-        pr = T["pares"]
-        lin = []
-        for sub in ("val_sel", "val_rep"):
-            for k, v in pr[sub].items():
-                x, z = k.split("_vs_")
-                lin.append(f"<li>{sub}, {NOM[x]} contra {NOM[z]}: &Delta; exact. bal. {v['delta_bal']:+.3f} "
-                           f"(P({NOM[x]} mejor) = {v['P_bal']:.3f}); P(L1 de {NOM[x]} menor) = {v['P_L1_argmax_menor']:.3f} "
-                           f"contando clases, {v['P_L1_prob_menor']:.3f} sumando probabilidades.</li>")
-        h.append("<ul>" + "".join(lin) + "</ul>")
-        h.append("<p class='nota'>Lectura: en exactitud las plantillas le ganan a la red en las dos mitades y quedan arriba "
-                 "de Villar (sin alcanzar 0.9 en val_sel). En el error de fracciones sin corregir, el sistema de Villar sale "
-                 "mejor en val_sel pero no en val_rep. Todas las fracciones sin corregir est&aacute;n sesgadas: para las tasas "
-                 "hay que corregir con la matriz de confusi&oacute;n (&uacute;ltima columna, medida en val_sel y aplicada a "
-                 "val_rep); esa columna es informaci&oacute;n adicional, no parte de la regla fijada.</p>")
-    else:
-        h.append("<p class='pend'>Pendiente: correr python -m pipeline78.sistema_tasas.</p>")
-    lab = {"holdout/val": "Holdout ZTF, mitad val: se parte en val_sel (elegir) y val_rep (reportar), 50/50 estratificado "
-                          "por clase, semilla 20261004, la misma partici&oacute;n para los tres m&eacute;todos",
-           "holdout/final": "Holdout ZTF, mitad final: <b>intocable</b>; se usa una sola vez con el clasificador elegido "
-                            "y ese es el n&uacute;mero de la tesis",
-           "viejas/val_viejo": "Muestra vieja: calibraci&oacute;n del modelo de observaci&oacute;n (m0, ruido, alertas) "
-                               "sin tocar el holdout",
-           "viejas/final_viejo": "Muestra vieja: sin uso"}
-    h.append("<h3>Particiones de las SNe reales</h3>" + tabla(["conjunto", "SNe", "excluidas", "para qu&eacute;"], [
-        [k, str(v["n"]), str(v["excluidas"]), lab.get(k, "")] for k, v in sorted(Pc.items())]))
-    h.append("<ul><li>Las 78 plantillas no est&aacute;n en el holdout; las SLSN quedan fuera (no hay plantillas); las IIn "
-             "quedan fuera de la m&eacute;trica de 3 clases y entran en la de 4; las excluidas son las 4 dudosas que "
-             "decidi&oacute; Mauricio y las de primera detecci&oacute;n tard&iacute;a.</li>"
-             "<li>Simulaciones: entrenan Villar (80 000) y la red (160 000); su validaci&oacute;n cruzada es por plantilla "
-             "(ninguna plantilla est&aacute; a la vez en entrenamiento y prueba). El ajuste de plantillas no entrena.</li>"
-             "<li>Incidentes declarados: el ruido se calibr&oacute; primero con val y despu&eacute;s se rehizo con las "
-             "viejas; dos agentes imprimieron por error filas de metadata de la mitad final (ZTF18aacemcn, "
-             "ZTF18aaiykoz), sin fotometr&iacute;a y sin ning&uacute;n uso.</li></ul>")
+    lab = {"holdout/val": "<b>VAL</b>: para elegir. Se parte mitad y mitad (por clase, semilla 20261004) en val_sel "
+                          "(elegir) y val_rep (confirmar). La misma partici&oacute;n para los tres m&eacute;todos",
+           "holdout/final": "<b>TEST</b>: se us&oacute; una sola vez, al final, con los modelos ya congelados",
+           "viejas/val_viejo": "Otra muestra de ZTF, fuera de VAL y TEST: calibrar la simulaci&oacute;n de la "
+                               "observaci&oacute;n (umbral de detecci&oacute;n, ruido, alertas)",
+           "viejas/final_viejo": "Sin uso"}
+    h = ["<h2 id='datos'>3. Los datos y la regla para elegir</h2>",
+         "<p>Ning&uacute;n m&eacute;todo aprende de SNe reales. Villar y la red se entrenan con simulaciones (las 78 "
+         "series proyectadas a ZTF con su cadencia y sus l&iacute;mites); las plantillas no se entrenan. Las SNe reales de "
+         "ZTF con tipo espectrosc&oacute;pico (TNS) solo se usan para elegir y para medir:</p>",
+         tabla(["conjunto", "SNe", "excluidas", "para qu&eacute;"],
+               [[k, str(Pc[k]["n"]), str(Pc[k]["excluidas"]), lab.get(k, "")] for k in sorted(Pc, key=lambda k: (
+                   k not in lab, list(lab).index(k) if k in lab else 0, k))]),
+         "<ul><li>Las 78 SNe de las plantillas no est&aacute;n en VAL ni en TEST. Las superluminosas quedan fuera (no hay "
+         "plantillas de ellas). Las excluidas son 4 dudosas que decidi&oacute; Mauricio y las de primera "
+         "detecci&oacute;n tard&iacute;a.</li>"
+         f"<li>Las simulaciones de entrenamiento: {_get(J, 'actual', 'sims_villar', 'n_sims')} para Villar y "
+         f"{_get(J, 'actual', 'sims_red', 'n_sims')} para la red. Al validar con simulaciones, ninguna plantilla "
+         "est&aacute; a la vez en entrenamiento y prueba.</li>"
+         "<li>Incidentes declarados: el ruido de la simulaci&oacute;n se calibr&oacute; primero con VAL y despu&eacute;s "
+         "se rehizo con la otra muestra; dos agentes imprimieron por error filas de metadata de TEST (ZTF18aacemcn, "
+         "ZTF18aaiykoz), sin fotometr&iacute;a y sin ning&uacute;n uso.</li></ul>"]
+    if not T:
+        return "".join(h) + "<p class='pend'>Pendiente: correr python -m pipeline78.sistema_tasas.</p>"
+    h.append("<p><b>La regla para elegir</b> (acordada con Mauricio el 2026-10-04, antes de ver val_rep y TEST): cada "
+             "m&eacute;todo se mide como sistema completo sobre todas las SNe (las que no clasifica las clasifica el "
+             f"respaldo, {html.escape(T['respaldo'])}). Gana el que mejora la exactitud balanceada con P &ge; 0.9 en "
+             "val_sel. Si empatan, el que clasifica m&aacute;s SNe por s&iacute; mismo. Despu&eacute;s, el que depende "
+             "menos de las simulaciones. val_rep no elige: solo confirma.</p>")
+    rows = []
+    for k in ("plantillas", "villar", "red"):
+        a, b = T["por_subconjunto"]["val_sel"][k], T["por_subconjunto"]["val_rep"][k]
+        cr = T.get("corregidas_rep", {}).get(k, {})
+        rows.append([f"<b>{NOM[k]}</b> ({html.escape(T['metodos'][k])})", pc(a["cobertura_propia"]),
+                     f3(a["bal_acc"]), f3(b["bal_acc"]), f3(b["acc"]), f3(a["L1_argmax"]), f3(b["L1_argmax"]),
+                     f3(b["L1_prob"]), f"{f3(cr.get('L1'))} [{f3((cr.get('ic90') or [None, None])[0])}, "
+                     f"{f3((cr.get('ic90') or [None, None])[1])}]"])
+    t = [tabla(["sistema", "cobertura propia (sel)", "exact. bal. sel", "exact. bal. rep", "exactitud rep",
+                "error fracciones sel", "error fracciones rep", "error fracciones rep (probabilidades)",
+                "error fracciones rep corregidas con la matriz de val_sel [IC 90]"], rows)]
+    lin = []
+    for sub in ("val_sel", "val_rep"):
+        for k, v in T["pares"][sub].items():
+            x, z = k.split("_vs_")
+            lin.append(f"<li>{sub}, {NOM[x]} contra {NOM[z]}: &Delta; exact. bal. {v['delta_bal']:+.3f} "
+                       f"(P({NOM[x]} mejor) = {v['P_bal']:.3f}); P(error de fracciones de {NOM[x]} menor) = "
+                       f"{v['P_L1_argmax_menor']:.3f} contando clases, {v['P_L1_prob_menor']:.3f} sumando probabilidades.</li>")
+    t.append("<ul>" + "".join(lin) + "</ul>")
+    t.append("<p class='nota'>Error de fracciones = suma sobre las clases de |fracci&oacute;n estimada &minus; "
+             "fracci&oacute;n real| (0 = perfecto). Lectura: en exactitud balanceada las plantillas le ganan a la red en "
+             "las dos mitades y quedan arriba de Villar (sin alcanzar P 0.9 en val_sel). En el error de fracciones sin "
+             "corregir, el sistema de Villar sale mejor en val_sel pero no en val_rep. Todas las fracciones sin corregir "
+             "est&aacute;n sesgadas: para las tasas se corrigen con la matriz de confusi&oacute;n (&uacute;ltima "
+             "columna, medida en val_sel y aplicada a val_rep). Esa columna no es parte de la regla.</p>")
+    h.append(_anexo("Tabla completa de VAL (incluye el error de las fracciones por clase)", "".join(t)))
     return "".join(h)
 
 
 def pagina(J, figs, out):
     A, H, S, P = J["actual"], J.get("historia") or [], J["simulacion"], J["particion"]
     v, r = A.get("villar") or {}, A.get("red") or {}
-    s = [f"<html><head><meta charset='utf-8'><title>Clasificadores ZTF v78</title><style>{CSS}</style></head>"
-         "<body style='font-family:sans-serif;max-width:1300px;margin:auto'>",
-         "<h1>Clasificadores ZTF: Villar, las redes y las plantillas</h1>",
+    s = [f"<html><head><meta charset='utf-8'><title>Clasificador ZTF</title><style>{CSS}</style></head>"
+         "<body style='font-family:sans-serif;max-width:1300px;margin:auto;padding:0 16px'>",
+         "<h1>Clasificaci&oacute;n fotom&eacute;trica de las SNe de ZTF: qu&eacute; clasificador usa la tesis</h1>",
          f"<p class='nota'>Generada {J['generado']['fecha']} por pipeline78/informe_clasificadores.py (commit "
          f"{(J['generado']['git']['commit'] or '')[:8]}{', repo con cambios' if J['generado']['git']['dirty'] else ''}). "
-         f"Config: {html.escape(J['generado']['config'])}. Cada n&uacute;mero sale de los archivos de los runs al construir "
-         "la p&aacute;gina; la lista completa est&aacute; en <a href='numeros.json'>numeros.json</a>.</p>"]
+         "Cada n&uacute;mero sale de los archivos de los runs al construir la p&aacute;gina "
+         "(<a href='numeros.json'>numeros.json</a>).</p>"]
     if J.get("override"):
         s.append(f"<p class='aviso'><b>PRUEBA.</b> El bloque actual se apunt&oacute; por l&iacute;nea de comandos a "
                  f"{html.escape(str(J['override']))}. Son runs del modelo de observaci&oacute;n viejo: no es la "
                  "producci&oacute;n final.</p>")
-    s.append(f"<p>Bloque actual: <b>{html.escape(str(A.get('etiqueta')))}</b>. Redes: {html.escape(A['nn_root'])}. "
-             f"Villar: {html.escape(A['villar_sweep'])}.</p>")
+    s.append(resumen(J))
+    s.append("<h2>Palabras que se usan</h2><p class='nota'>" + "<br>".join(f"<b>{a}</b>: {b}" for a, b in GLOSARIO)
+             + "</p>")
     s.append(seccion_validacion(J))
+    s.append(seccion_sudare(J))
     s.append(seccion_tasas(J))
-    # 1
-    s.append("<h2>1. La respuesta</h2><p>Pregunta: &iquest;qu&eacute; clasifica mejor las SNe reales de ZTF, el ajuste "
-             "de Villar o una red neuronal, si los dos aprendieron <b>solo de simulaciones</b>? Todo en val_rep, la "
-             "mitad que no se us&oacute; para elegir nada.</p>")
+    s.append("<h2>4. Conclusiones</h2><ol>" + "".join(f"<li>{x}</li>" for x in J["conclusiones_test"]) + "</ol>")
+    s.append("<h2>5. Pr&oacute;ximos pasos</h2><ul>" + "".join(f"<li>{x}</li>" for x in J.get("proximos") or []) + "</ul>")
+    s.append("<h2>Anexos t&eacute;cnicos</h2><p>C&oacute;mo se lleg&oacute; hasta ac&aacute;. No hace falta leerlos para "
+             "validar. Salvo que se diga otra cosa, las cifras de los anexos son de VAL (la etapa de elegir), no de TEST, "
+             "y con 3 clases.</p>")
+    # A: Villar contra la red (primera pregunta del proyecto)
+    a = [f"<p>Bloque: {html.escape(str(A.get('etiqueta')))}. Redes: {html.escape(A['nn_root'])}. Villar: "
+         f"{html.escape(A['villar_sweep'])}.</p>"]
     if ok(v) and ok(r):
         R, Ssel = A["respuesta"]["val_rep"], A["respuesta"]["val_sel"]
         mo = R["mismos_objetos"]
         row = lambda n, q, m: [n, q, pc(m.get("cobertura")), f3(m.get("acc")),
                                f"{f3(m.get('bal_acc'))}{ci(m.get('bal_acc_ic95'))}", str(m.get("n"))]
-        s.append(tabla(["m&eacute;todo", "qu&eacute; es", "cobertura", "exactitud", "exact. balanceada [IC 95 %]", "n"], [
+        a.append(tabla(["m&eacute;todo", "qu&eacute; es", "cobertura", "exactitud", "exact. balanceada [IC 95 %]", "n"], [
             row("<b>Villar</b>", v["que_es"], v["val_rep"]),
             row(f"<b>Mejor red</b> ({html.escape(r['name'])})", r["que_es"], r["val_rep"]),
             row("Villar, mismos objetos", "las SNe que Villar puede clasificar", mo["villar"]),
@@ -1398,8 +1642,8 @@ def pagina(J, figs, out):
                 f"({R['hibrido']['n_red']}). Regla fijada antes de mirar", R["hibrido"])]))
         d, ds, D = mo["red_menos_villar"], Ssel["mismos_objetos"], J["decision"]
         rv, hr = D["red_vs_villar"], D["hibrido_vs_red"]
-        s.append(f"<ul><li>En los mismos {mo['n']} objetos la diferencia de exactitud balanceada red &minus; Villar es "
-                 f"<b>{d.get('delta', float('nan')):+.3f}</b> (intervalo 90 % {ci(d.get('ic90_delta'))}).</li>"
+        a.append(f"<ul><li>En los mismos {mo['n']} objetos (val_rep) la diferencia de exactitud balanceada red &minus; "
+                 f"Villar es <b>{d.get('delta', float('nan')):+.3f}</b> (intervalo 90 % {ci(d.get('ic90_delta'))}).</li>"
                  f"<li>Para decidir se mira val_sel ({ds['n']} objetos comunes): P(red mejor) = "
                  f"{f3(ds['red_menos_villar'].get('p_mejora'), 3)}, P(Villar mejor) = "
                  f"{f3(ds['villar_menos_red'].get('p_mejora'), 3)}. Gana el que pase {P_MIN}: "
@@ -1407,70 +1651,61 @@ def pagina(J, figs, out):
                  f"<li>H&iacute;brido contra la red sola (val_sel, objetos de la red): P(h&iacute;brido mejor) = "
                  f"{f3(hr['p_sel_pos'], 3)}, P(red mejor) = {f3(hr['p_sel_neg'], 3)}: "
                  f"<b>{NOM[hr['val_sel']] if hr['val_sel'] else 'ninguno'}</b>. {txt_rep(hr)}</li>"
-                 f"<li>M&eacute;todo que recomienda la regla: <b>{NOM[D['recomendado']] if D['recomendado'] else 'ninguno'}"
-                 "</b> (detalle en las conclusiones).</li></ul>")
+                 f"<li>Entre Villar y la red, la regla recomienda: <b>{NOM[D['recomendado']] if D['recomendado'] else 'ninguno'}"
+                 "</b>. Esa pregunta qued&oacute; superada por las plantillas (secci&oacute;n 1).</li></ul>")
         if figs.get("respuesta"):
-            s.append(f"<img src='{figs['respuesta']}' width='520'>")
+            a.append(f"<img src='{figs['respuesta']}' width='520'>")
     else:
-        s.append("<p class='pend'>Pendiente: " + " y ".join(
+        a.append("<p class='pend'>Pendiente: " + " y ".join(
             n for n, x in (("Villar", v), ("la red", r)) if not ok(x)) + " del bloque actual todav&iacute;a no tienen "
-                 "resultados. La comparaci&oacute;n aparece sola cuando est&eacute;n.</p>")
-    s.append("<p class='nota'>" + "<br>".join(f"<b>{a}</b>: {b}" for a, b in GLOSARIO) + "</p>")
-    s.append(seccion_plantillas(J))
-    # 2
+                 "resultados.</p>")
     el = A.get("eleccion_red") or {}
-    s.append("<h2>2. C&oacute;mo se midi&oacute;</h2><ul>"
+    a.append("<h3>C&oacute;mo se midi&oacute;</h3><ul>"
              f"<li>Entrenamiento: <b>solo simulaciones</b> de las 78 series espectrales proyectadas a ZTF. Red: "
              f"{html.escape(str((A.get('sims_red') or {}).get('run')))} ({(A.get('sims_red') or {}).get('n_sims')} sims). "
              f"Villar: {html.escape(str((A.get('sims_villar') or {}).get('run')))} "
              f"({(A.get('sims_villar') or {}).get('n_sims')} sims proyectadas, {v.get('n_sims_con_features')} con "
-             "features). Ninguna SN real entra al entrenamiento.</li>"
-             f"<li>Reales: SNe de ZTF con clase espectrosc&oacute;pica de TNS (holdout). Solo la mitad val: "
-             f"{P['n_val']} SNe Ia/II/Ibc (Ia {P['por_clase']['Ia']}, II {P['por_clase']['II']}, Ibc "
-             f"{P['por_clase']['Ibc']}; II incluye IIb, IIn fuera).</li>"
-             f"<li>La mitad val se parte en <b>val_sel</b> ({P['n_val_sel']}), que sirve para elegir (configuraci&oacute;n, "
-             f"temperatura, priors), y <b>val_rep</b> ({P['n_val_rep']}), que solo se usa para reportar. Semilla "
-             f"{P['semilla']}. La <b>mitad final no se carg&oacute;</b>: el script lee meta con splits.read_val_meta, "
-             "que no guarda filas de otros splits.</li>"
-             f"<li>Regla para elegir: bootstrap pareado en val_sel ({P['n_boot_pareado']} remuestreos). La candidata reemplaza a la "
-             f"incumbente m&aacute;s simple solo si P(mejora) &ge; {P['p_min']}. Si no, queda la simple.</li>"
+             "par&aacute;metros de Villar). Ninguna SN real entra al entrenamiento.</li>"
+             f"<li>Reales: VAL, {P['n_val']} SNe Ia/II/Ibc (Ia {P['por_clase']['Ia']}, II {P['por_clase']['II']}, Ibc "
+             f"{P['por_clase']['Ibc']}; II incluye IIb, IIn fuera). val_sel {P['n_val_sel']}, val_rep {P['n_val_rep']}, "
+             f"semilla {P['semilla']}. Estos scripts no leen TEST (splits.read_val_meta solo guarda VAL). TEST se "
+             "evalu&oacute; aparte, una vez, con pipeline78/evaluar_test.py.</li>"
+             f"<li>Regla: bootstrap pareado en val_sel ({P['n_boot_pareado']} remuestreos). La candidata reemplaza a la "
+             f"incumbente m&aacute;s simple solo si P(mejora) &ge; {P['p_min']}.</li>"
              f"<li>Mejor Villar: la elegida por el barrido ({html.escape(str(v.get('motivo')))}).</li>"
              f"<li>Mejor red: entre las redes de la ra&iacute;z, la primera en val_sel ({el.get('candidata')}) contra "
              f"{el.get('incumbente')}: {html.escape(str(el.get('motivo')))}"
              + (f" (P = {f3(_get(el, 'comparacion', 'p_mejora'), 3)})" if _get(el, "comparacion", "p_mejora") is not None else "")
              + ".</li>"
              f"<li>IC 95 %: bootstrap de {P['n_boot_ic']} remuestreos de las SNe (semilla {P['semilla']}).</li></ul>")
-    # 3
-    s.append("<h2>3. Todos los modelos</h2><p>Bloque actual. &#9733; = el elegido de cada familia con la regla en "
-             "val_sel (no necesariamente el de mayor cifra en val_rep). Las cifras son de "
-             "val_rep salvo la columna val_sel (la que se us&oacute; para elegir). Referencias: Villar+2019 (ApJ 884, "
-             "83), ATAT = Cabrera-Vives+2024 (A&amp;A 689, A289), ORACLE-2 = Shah+2026 (arXiv:2607.00228, preprint), "
-             "SuperNNova = M&ouml;ller &amp; de Boissi&egrave;re 2020 (MNRAS 491, 4277), Gupta+2025 (MNRAS 542, "
-             "L132).</p>")
-    s.append(tabla_modelos(A))
+    a.append("<h3>Frases de esta etapa</h3><p class='nota'>Generadas desde numeros.json con condiciones fijas. Son de "
+             "VAL y de la comparaci&oacute;n Villar contra la red; las conclusiones finales est&aacute;n en la "
+             "secci&oacute;n 4.</p><ol>" + "".join(f"<li>{x}</li>" for x in J["conclusiones"]) + "</ol>")
+    s.append(_anexo("A. Primera etapa: Villar contra la red en VAL", "".join(a)))
+    s.append(_anexo("B. Las plantillas en VAL", seccion_plantillas(J)))
+    c = ["<p>&#9733; = el elegido de cada familia con la regla en val_sel (no necesariamente el de mayor cifra en "
+         "val_rep). Las cifras son de val_rep salvo la columna val_sel. Referencias: Villar+2019 (ApJ 884, 83), ATAT = "
+         "Cabrera-Vives+2024 (A&amp;A 689, A289), ORACLE-2 = Shah+2026 (arXiv:2607.00228, preprint), SuperNNova = "
+         "M&ouml;ller &amp; de Boissi&egrave;re 2020 (MNRAS 491, 4277), Gupta+2025 (MNRAS 542, L132).</p>", tabla_modelos(A)]
     for i, B in enumerate(H):
-        s.append(f"<details><summary>Historia {i + 1}: {html.escape(str(B.get('etiqueta')))}</summary><div class='viejo'>"
+        c.append(f"<details><summary>Historia {i + 1}: {html.escape(str(B.get('etiqueta')))}</summary><div class='viejo'>"
                  "<b>Modelo de observaci&oacute;n viejo y equivocado</b> (detecci&oacute;n al 50 % 1.25 mag sobre el "
-                 "l&iacute;mite, ruido a 1 &sigma;, sin stream de alertas). Se muestra solo como historia: estas cifras "
-                 "no son las de la tesis.</div>" + tabla_modelos(B) + "</details>")
-    # 4
-    s.append("<h2>4. Matrices de confusi&oacute;n (val_rep)</h2>")
-    if figs.get("confusion"):
-        s.append(f"<p>Filas = clase verdadera, columnas = clase predicha. Cada celda: fracci&oacute;n de la fila y "
-                 f"(n&uacute;mero). Izquierda Villar, derecha {html.escape(r.get('name', ''))}.</p>"
-                 f"<img src='{figs['confusion']}' width='900'>")
-    else:
-        s.append("<p class='pend'>Pendiente.</p>")
-    # 5
-    s.append("<h2>5. D&oacute;nde gana cada uno</h2>")
+                 "l&iacute;mite, ruido a 1 &sigma;, sin stream de alertas). Solo historia: estas cifras no son las de la "
+                 "tesis.</div>" + tabla_modelos(B) + "</details>")
+    s.append(_anexo("C. Todos los modelos probados", "".join(c)))
+    s.append(_anexo("D. Matrices de confusi&oacute;n en val_rep (Villar y la red)",
+                    f"<p>Filas = tipo real, columnas = tipo asignado. Cada celda: fracci&oacute;n de la fila y "
+                    f"(n&uacute;mero). Izquierda Villar, derecha {html.escape(r.get('name', ''))}.</p>"
+                    f"<img src='{figs['confusion']}' width='900'>" if figs.get("confusion") else "<p class='pend'>Pendiente.</p>"))
+    e = []
     if figs.get("ndet"):
-        s.append("<p>Izquierda: la red con menos detecciones (misma muestra de curvas con &ge; 7 detecciones, raleada "
+        e.append("<p>Izquierda: la red con menos detecciones (misma muestra de curvas con &ge; 7 detecciones, raleada "
                  "a 3, 5, 7 o todas). Centro: la red cortando la curva 10, 20 o 50 d despu&eacute;s de la primera "
                  "detecci&oacute;n. Derecha: por n&uacute;mero de detecciones g + r de cada SN real (val_rep). Villar "
                  "no se puede ralear (necesita el ajuste completo), as&iacute; que se muestra su cobertura.</p>"
                  f"<img src='{figs['ndet']}' width='1000'>")
         con_pl = any("acc_plantillas" in x for x in A.get("ndet") or [])
-        s.append(tabla(["detecciones g + r", "n", "n Villar", "cobertura Villar", "cobertura red", "exactitud Villar",
+        e.append(tabla(["detecciones g + r", "n", "n Villar", "cobertura Villar", "cobertura red", "exactitud Villar",
                         "exactitud red (mismos objetos)", "exactitud red (todas)", "exactitud h&iacute;brido"]
                        + (["n plantillas", "exactitud plantillas"] if con_pl else []),
                        [[x["bin"], str(x["n"]), str(x["n_villar"]), pc(x["cobertura_villar"]), pc(x["cobertura_red"]), f3(x["acc_villar"]),
@@ -1478,21 +1713,21 @@ def pagina(J, figs, out):
                         + ([str(x.get("n_plantillas", "")), f3(x.get("acc_plantillas"))] if con_pl else [])
                         for x in A.get("ndet") or []]))
     else:
-        s.append("<p class='pend'>Pendiente (falta Villar o la red del bloque actual).</p>")
-    s.append("<h3>Curva de aprendizaje: &iquest;m&aacute;s simulaciones ayudan?</h3>")
+        e.append("<p class='pend'>Pendiente (falta Villar o la red del bloque actual).</p>")
+    e.append("<h3>&iquest;M&aacute;s simulaciones ayudan?</h3>")
     pts = J.get("aprendizaje") or []
     if pts:
         if figs.get("aprendizaje"):
-            s.append(f"<img src='{figs['aprendizaje']}' width='900'><p class='nota'>L&iacute;nea punteada y "
+            e.append(f"<img src='{figs['aprendizaje']}' width='900'><p class='nota'>L&iacute;nea punteada y "
                      "s&iacute;mbolo vac&iacute;o: modelo de observaci&oacute;n viejo. L&iacute;nea llena: modelo nuevo. "
                      "No mezclar los dos para leer el efecto del tama&ntilde;o.</p>")
-        s.append(tabla(["corrida", "sims", "n sims", "modelo de observaci&oacute;n", "exact. bal. val_sel",
+        e.append(tabla(["corrida", "sims", "n sims", "modelo de observaci&oacute;n", "exact. bal. val_sel",
                         "exact. bal. val_rep"],
                        [[html.escape(p["corrida"]), p["sims"], str(p["n_sims"]), p["modelo"], f3(p["bal_sel"]),
                          f3(p["bal_rep"])] for p in sorted(pts, key=lambda p: (p["corrida"], p["n_sims"] or 0))]))
         pr = J.get("aprendizaje_pares") or []
         if pr:
-            s.append("<p>Misma corrida, mismo modelo de observaci&oacute;n, m&aacute;s sims (bootstrap pareado en "
+            e.append("<p>Misma corrida, mismo modelo de observaci&oacute;n, m&aacute;s sims (bootstrap pareado en "
                      "val_sel):</p>" + tabla(["corrida", "de", "a", "&Delta; val_sel", "P(mejora)", "gana",
                                               "&Delta; val_rep"],
                                              [[html.escape(p["corrida"]), f"{p['de']} ({p['n_de']})", f"{p['a']} ({p['n_a']})",
@@ -1501,26 +1736,25 @@ def pagina(J, figs, out):
                                                f"{p['delta_rep']:+.3f}" if p["delta_rep"] is not None else "&mdash;"]
                                               for p in pr]))
     else:
-        s.append("<p class='pend'>Pendiente.</p>")
-    # 6
-    s.append("<h2>6. Lo que aprendimos de la simulaci&oacute;n</h2>")
-    s.append("<p>La primera producci&oacute;n usaba un modelo de observaci&oacute;n equivocado: la simulaci&oacute;n "
-             "detectaba una SN reci&eacute;n 1.25 mag sobre el l&iacute;mite (las reales se detectan hasta el "
-             "l&iacute;mite), sorteaba el ruido al doble del real y no imitaba el stream de alertas de ALeRCE. Un "
-             "clasificador &laquo;sim contra real&raquo; lo encontr&oacute;. Se recalibr&oacute; por &eacute;poca con "
-             "SNe que no son del holdout (val_viejo).</p>")
+        e.append("<p class='pend'>Pendiente.</p>")
+    s.append(_anexo("E. D&oacute;nde gana cada uno (n&uacute;mero de detecciones) y curva de aprendizaje", "".join(e)))
+    f = ["<p>La primera producci&oacute;n usaba un modelo de observaci&oacute;n equivocado: la simulaci&oacute;n "
+         "detectaba una SN reci&eacute;n 1.25 mag sobre el l&iacute;mite (las reales se detectan hasta el l&iacute;mite), "
+         "sorteaba el ruido al doble del real y no imitaba el stream de alertas de ALeRCE. Un clasificador &laquo;sim "
+         "contra real&raquo; lo encontr&oacute;. Se recalibr&oacute; por &eacute;poca con SNe que no son de VAL ni "
+         "TEST. Afecta a Villar y a la red (entrenados con simulaciones), no a las plantillas.</p>"]
     c = S.get("calib") or {}
     filas = [_fmt_obs(mo) for mo in S.get("modelos_obs") or []]
     pm = c.get("piloto_modelo")
     if pm and pm["dir"] not in {m["dir"] for m in S.get("modelos_obs") or []}:
         filas.append(_fmt_obs(pm, "piloto de calib_obs: "))
-    s.append(tabla(["proyecci&oacute;n", "det_m0 [mag]", "det_w [mag]", "escala del ruido k", "stream de alertas",
+    f.append(tabla(["proyecci&oacute;n", "det_m0 [mag]", "det_w [mag]", "escala del ruido k", "stream de alertas",
                     "piso de la cola [mag/d]"], filas))
     if c.get("estado") == "ok":
         pil, cp = c["etiqueta_despues"], c.get("piloto_como_produccion")
-        mu = {Path(str(c.get("piloto"))).name: pil, Path(str(c.get("base"))).name: "antes"}   # nombres de las muestras
+        mu = {Path(str(c.get("piloto"))).name: pil, Path(str(c.get("base"))).name: "antes"}
         if figs.get("calib"):
-            s.append(f"<img src='{figs['calib']}' width='1000'>" + (
+            f.append(f"<img src='{figs['calib']}' width='1000'>" + (
                 f"<p class='nota pend'>OJO, figura vieja: generada {c.get('figura_fecha')}, antes de las tablas "
                 f"confirm_* ({c.get('tablas_fecha')}). Puede mostrar otro piloto, no el de las tablas de abajo. Gris: "
                 "alertas reales. Color: el piloto con que se hizo la figura. Guiones: modelo viejo.</p>"
@@ -1528,51 +1762,48 @@ def pagina(J, figs, out):
                 f"<p class='nota'>Figura de calib_obs (generada {c.get('figura_fecha')}). Gris: alertas reales. Color: "
                 f"{pil}. Guiones: modelo viejo.</p>"))
         if cp is False:
-            s.append(f"<p class='aviso'><b>Ojo.</b> &laquo;Despu&eacute;s&raquo; es el {pil}, no la producci&oacute;n "
+            f.append(f"<p class='aviso'><b>Ojo.</b> &laquo;Despu&eacute;s&raquo; es el {pil}, no la producci&oacute;n "
                      f"({', '.join(c.get('produccion') or [])}), que usa " + ", ".join(dict.fromkeys(
                          f"{CAMPOS_OBS[x['campo']]} {_gr(x['produccion'])}" for x in c["diferencias_produccion"]))
                      + ". Falta repetir confirm con la config final.</p>")
         elif cp is None:
-            s.append("<p class='aviso'>No se pudo comparar el piloto con las sims de producci&oacute;n de la config.</p>")
-        s.append(f"<p>Blancos de la calibraci&oacute;n contra {c.get('n_real')} SNe {c.get('split')} (tablas del "
+            f.append("<p class='aviso'>No se pudo comparar el piloto con las sims de producci&oacute;n de la config.</p>")
+        f.append(f"<p>Blancos de la calibraci&oacute;n contra {c.get('n_real')} SNe {c.get('split')} (tablas del "
                  f"{c.get('tablas_fecha')}. Antes = {html.escape(Path(str(c.get('base'))).name)}, despu&eacute;s = "
                  f"{pil}). dm = m_lim &minus; m: qu&eacute; tan cerca del l&iacute;mite se detecta.</p>")
-        s.append(tabla(["banda", "blanco", "real", "antes", f"despu&eacute;s ({pil})"],
+        f.append(tabla(["banda", "blanco", "real", "antes", f"despu&eacute;s ({pil})"],
                        [[b["banda"], b["blanco"].replace("<", "&lt;"), f3(b["real"]), f3(b["antes"]), f3(b["despues"])]
                         for b in c.get("blancos") or []]))
         if c.get("puntaje"):
-            s.append(f"<p>Puntaje (suma de |sim &minus; real| / error, 0 = calce perfecto), antes &rarr; {pil}: g "
+            f.append(f"<p>Puntaje (suma de |sim &minus; real| / error, 0 = calce perfecto), antes &rarr; {pil}: g "
                      f"{c['puntaje']['g'][1]:.1f} &rarr; {c['puntaje']['g'][0]:.1f}, r {c['puntaje']['r'][1]:.1f} "
                      f"&rarr; {c['puntaje']['r'][0]:.1f}.</p>")
         if c.get("tripletes"):
-            s.append("<p>Ruido: dispersi&oacute;n de tres detecciones seguidas en unidades del error reportado (las "
+            f.append("<p>Ruido: dispersi&oacute;n de tres detecciones seguidas en unidades del error reportado (las "
                      "reales dan ~0.55: el error de ZTF sobreestima el ruido).</p>" +
                      tabla(["banda", "muestra", "dispersi&oacute;n", "error", "n"],
                            [[t["banda"], mu.get(str(t["muestra"]), html.escape(str(t["muestra"]))), f3(t["rstd"]),
                              f3(t["err"]), str(t["n"])] for t in c["tripletes"]]))
         if c.get("chequeos"):
             cols = c["chequeos_cols"]
-            s.append(tabla(["chequeo", "real"] + [mu.get(x, html.escape(x)) for x in cols],
+            f.append(tabla(["chequeo", "real"] + [mu.get(x, html.escape(x)) for x in cols],
                            [[x["chequeo"], fnum(x["real"])] + [fnum(x[k]) for k in cols] for x in c["chequeos"]]))
     else:
-        s.append("<p class='pend'>Calibraci&oacute;n: pendiente.</p>")
+        f.append("<p class='pend'>Calibraci&oacute;n: pendiente.</p>")
     ga, gd = S.get("gap_antes") or {}, A.get("gap") or {}
-    s.append("<h3>Clasificador sim contra real (AUC: 0.5 = no se distinguen, 1 = se distinguen siempre)</h3>")
-    s.append(tabla(["", "AUC", "sims", "reales", "lo que m&aacute;s delata a la simulaci&oacute;n"],
+    f.append("<h3>Clasificador sim contra real (AUC: 0.5 = no se distinguen, 1 = se distinguen siempre)</h3>")
+    f.append(tabla(["", "AUC", "sims", "reales", "lo que m&aacute;s delata a la simulaci&oacute;n"],
                    [[f"antes ({html.escape(Path(str(g.get('dir'))).name)})" if i == 0 else
                      f"despu&eacute;s ({html.escape(Path(str(g.get('dir'))).name)})",
                      f3(g.get("auc")) if g.get("estado") == "ok" else "<span class='pend'>pendiente</span>",
                      str(g.get("n_sims", "")), str(g.get("n_real", "")),
                      ", ".join(f"{t['feature']} ({t['caida_auc']:.3f})" for t in g.get("top") or [])]
                     for i, g in enumerate((ga, gd))]))
-    # 7, 8
-    s.append("<h2>7. Conclusiones</h2><p class='nota'>Frases generadas desde numeros.json con condiciones fijas: si "
-             "cambian los n&uacute;meros, cambian las frases.</p><ol>"
-             + "".join(f"<li>{x}</li>" for x in J["conclusiones"]) + "</ol>")
-    s.append("<h2>8. Pendientes</h2><ul>" + "".join(f"<li>{x}</li>" for x in J["pendientes"]) + "</ul>")
+    s.append(_anexo("F. Calibraci&oacute;n de la simulaci&oacute;n de ZTF (para Villar y la red)", "".join(f)))
+    s.append(_anexo("G. Pendientes t&eacute;cnicos", "<ul>" + "".join(f"<li>{x}</li>" for x in J["pendientes"]) + "</ul>"))
     nv = J.get("verificacion") or []
-    s.append(f"<p class='nota'>Verificaci&oacute;n: {sum(x['ok'] for x in nv)} de {len(nv)} cifras coinciden con el "
-             "metrics.json de su run (diferencia &lt; 1e-9).</p></body></html>")
+    s.append(f"<p class='nota'>Verificaci&oacute;n: {sum(x['ok'] for x in nv)} de {len(nv)} cifras de los anexos coinciden "
+             "con el metrics.json de su run (diferencia &lt; 1e-9).</p></body></html>")
     (out / "index.html").write_text("".join(s))
 
 
@@ -1612,6 +1843,13 @@ def construir(cfg_path=CFG, actual_nn=None, actual_villar=None, actual_gap=None,
     J["decision_plantillas"] = decidir_plantillas(J["actual"]) if J["actual"].get("respuesta_plantillas") else None
     J["conclusiones"] = conclusiones(J, J["meta_bal_acc"])
     J["pendientes"] = pendientes(J, cfg)
+    ft = _p(cfg.get("numeros", "informe_clasificadores/numeros.json"), cfg["_runs"]).parent / "sistema_tasas.json"
+    J["tasas"] = json.loads(ft.read_text()) if ft.exists() else None
+    J["validacion"] = leer_validacion(cfg["_runs"])
+    fs = Path(cfg["_runs"]) / "test_final" / "agrupacion_sudare.json"
+    J["sudare"] = json.loads(fs.read_text()) if fs.exists() else None
+    J["conclusiones_test"] = conclusiones_test(J)
+    J["proximos"] = [html.escape(x) for x in cfg.get("proximos_pasos", [])]
     out = _p(cfg["pagina"], PHD)
     out.mkdir(parents=True, exist_ok=True)
     plt, figs = _mpl(), {}
@@ -1625,9 +1863,6 @@ def construir(cfg_path=CFG, actual_nn=None, actual_villar=None, actual_gap=None,
         shutil.copy2(cf, out / cf.name)
         figs["calib"] = cf.name
     J["figuras"] = {k: v for k, v in figs.items() if v}
-    ft = _p(cfg.get("numeros", "informe_clasificadores/numeros.json"), cfg["_runs"]).parent / "sistema_tasas.json"
-    J["tasas"] = json.loads(ft.read_text()) if ft.exists() else None
-    J["validacion"] = leer_validacion(cfg["_runs"])
     fm = fig_matrices_test(J["validacion"], out, plt)
     if fm:
         figs["matrices_test"] = fm
