@@ -149,6 +149,10 @@ def test_sistema_test_cinco_clases():
     assert m["red_5c"]["bal_acc"] == 1.0 and m["red_5c"]["L1_argmax"] == 0.0 and set(m["red_5c"]["frac_real"]) == set(cls)
     assert abs(m["villar_5c"]["acc"] - (5 + 15) / 40) < 1e-12         # 5 IIb de las 25 + respaldo perfecto en 15
     assert r["corregidas"]["red_5c"]["L1"] < 1e-12 and r["pares"]["red_5c_vs_villar_5c"]["gana_bal"] == "red_5c"
+    V2 = {k: d.copy() for k, d in V.items()}
+    V2["villar_5c"]["y_pred"] = V2["villar_5c"].y_pred.replace("IIb", "II")    # nunca predice IIb: M singular
+    r2 = ET.sistema_test({"red_5c": red, "villar_5c": villar}, V2, "red_5c", cls)
+    assert r2["corregidas"]["villar_5c"]["L1"] is None and r2["corregidas"]["red_5c"]["L1"] < 1e-12
     from pipeline78 import sistema_tasas as ST
     ms = ET.metricas_sistema(ST.sistema(villar, red, cls), 50, cls)
     assert ms["n"] == 40 and ms["n_real"] == 50 and abs(ms["cobertura"] - 0.8) < 1e-12

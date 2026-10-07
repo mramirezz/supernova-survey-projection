@@ -475,8 +475,12 @@ def sistema_test(T, V, respaldo="red", cls=("Ia", "II", "Ibc")):
                 ic90_dL1_prob=cip, gana_bal=(x if p >= P_MIN else z if p <= 1 - P_MIN else None))
     for k, d in S.items():
         sel = SV[k][SV[k].subset == "val_sel"]
-        l1, f, cond = ST.corregidas(sel, d, cls)
-        med, ic = ST.corregidas_boot(sel, d, cls=cls)
+        try:
+            l1, f, cond = ST.corregidas(sel, d, cls)
+            med, ic = ST.corregidas_boot(sel, d, cls=cls)
+        except (np.linalg.LinAlgError, IndexError):     # M singular: una clase que el sistema nunca predice en val_sel
+            res["corregidas"][k] = dict(L1=None, motivo="matriz de val_sel singular", n_val_sel=int(len(sel)))
+            continue
         res["corregidas"][k] = dict(L1=l1, frac=f, cond_M=cond, L1_boot_mediana=med, ic90=ic,
                                     M_de="val_sel (pred_real_val.csv congelados)", n_val_sel=int(len(sel)))
     return res
