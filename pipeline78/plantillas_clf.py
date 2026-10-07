@@ -6,7 +6,8 @@ que la curva observada a cualquier z es fotometria sintetica exacta (sin tablas 
 Uso:
     python -m pipeline78.plantillas_clf biblioteca [--force]
     python -m pipeline78.plantillas_clf sigma [--workers 4]            (regla 4c, solo val_sel)
-    python -m pipeline78.plantillas_clf run --name NOMBRE [--cuatro-clases] [--sin-z] [--subset val_sel] [--limit N]
+    python -m pipeline78.plantillas_clf run --name NOMBRE [--cuatro-clases | --cinco-clases] [--sin-z] [--subset val_sel]
+                                            [--limit N]
                                             [--ul previos] [--sigma-mod S] [--ii-dust cfg|sudare]
     python -m pipeline78.plantillas_clf comparar --name NOMBRE [--contra k=ruta ...] [--tag T]
 
@@ -47,6 +48,8 @@ REGLAS
    plantilla dentro de la clase: II e IIb en la proporcion n_by_class de RUN_CFG (8:2), subtipo con
          SUBTYPE_FRACTIONS y plantillas equiprobables dentro del subtipo (run.choose_template). Sin fracciones,
          equiprobables. Clases equiprobables (el prior de entrenamiento balanceado de los otros dos metodos).
+         Con --cinco-clases (Ia, II, IIb, Ibc, IIn; nnclf.data.CLASES) la IIb es su propia clase: II e IIb quedan
+         cada una con todo el prior de la suya (el 8:2 solo reparte dentro de una clase que junte las dos).
 4. Verosimilitud en flujo (unidades 10^(-0.4 (m - m_ref)), m_ref = la deteccion mas brillante). Detecciones
    gaussianas de varianza (0.921 f_obs magerr)^2 + (SIGMA_MOD f_modelo)^2: el error de los datos mas un error del
    modelo, fraccion SIGMA_MOD del flujo del modelo, en cuadratura (regla 4c). Como la varianza depende del modelo, la
@@ -941,7 +944,9 @@ def run(name, four=False, sin_z=False, subset="val", limit=None, workers=2, real
         real[s] = r
     ts = P.t_seg.to_numpy() if len(P) else np.zeros(1)
     ii = runcfg.RUNS_CFG[cfg_name].get("ii_dust") if ii_dust == "cfg" else ii_dust
-    cfg_txt = dict(run_cfg=cfg_name, cuatro_clases=four, sin_z=sin_z, subset=subset, limit=limit, ul_modo=ul_modo,
+    n_cls = D.n_classes(four)
+    cfg_txt = dict(run_cfg=cfg_name, cuatro_clases=n_cls == 4, **({"cinco_clases": True} if n_cls == 5 else {}),
+                   sin_z=sin_z, subset=subset, limit=limit, ul_modo=ul_modo,
                    sigma_mod=float(sig_mod), sigma_mod_es="fraccion del flujo del modelo, en cuadratura",
                    sigma_mod_fuente=fuente_sigma(sig_mod, out_root),
                    ii_dust=ii, laplace_nats=LAPLACE_NATS, sigma_z=SIGMA_Z, z_floor=Z_FLOOR, ul_nsig=UL_NSIG, t_pre=T_PRE,
@@ -1101,6 +1106,7 @@ def main(argv=None):
     r = sp.add_parser("run")
     r.add_argument("--name", required=True)
     r.add_argument("--cuatro-clases", action="store_true")
+    r.add_argument("--cinco-clases", action="store_true", help="Ia, II, IIb, Ibc, IIn (pisa --cuatro-clases)")
     r.add_argument("--sin-z", action="store_true")
     r.add_argument("--subset", choices=("val", "val_sel", "val_rep"), default="val")
     r.add_argument("--limit", type=int, default=None)
@@ -1120,7 +1126,7 @@ def main(argv=None):
     if a.cmd == "sigma":
         elegir_sigma(workers=a.workers)
         return
-    run(a.name, a.cuatro_clases, a.sin_z, a.subset, a.limit, a.workers, ul_modo=a.ul, sig_mod=a.sigma_mod,
+    run(a.name, 5 if a.cinco_clases else a.cuatro_clases, a.sin_z, a.subset, a.limit, a.workers, ul_modo=a.ul, sig_mod=a.sigma_mod,
         ii_dust=a.ii_dust)
 
 

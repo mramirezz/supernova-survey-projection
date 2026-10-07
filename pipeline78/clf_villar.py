@@ -12,7 +12,10 @@ REGLAS
    reconstruido (RUNS/features_real_ztf3, 2026-10-04 13:25, --features-real). Seleccion anidada (revision B, mismo
    protocolo que nnclf): la mitad val se parte con pipeline78.splits.val_split en val_sel (elegir y ajustar todo lo
    que mira reales: S(m), wz_dr, prior EM) y val_rep (solo reportar). Columna subset de las reales.
-3. Clases. Ia, II (= II + IIb), Ibc. IIn fuera de la metrica principal (--cuatro-clases la agrega).
+3. Clases. Ia, II (= II + IIb), Ibc. IIn fuera de la metrica principal (--cuatro-clases la agrega). --cinco-clases
+   (Mauricio 2026-10-06): Ia, II (= IIP + IIL + II sin subtipo), IIb, Ibc, IIn (nnclf.data.CLASES). El argumento
+   four de las funciones acepta la bandera de siempre (False = 3, True = 4) o el numero de clases (3, 4, 5).
+   val_sel y val_rep no cambian con el modo (splits.val_split estratifica por las 4 clases de siempre).
 4. Features por banda b (r, g): m_pk_b = -2.5 log10(A_b) (pico aparente desde A), M_pk_b = m_pk_b - mu(z) (solo
    con z, LCDM plano H0 = 70, Om = 0.3 como core.utils.DL_calculator), f_b, t_rise_b, t_fall_b, gamma_b en reposo
    (divididos por 1 + z, en sims y en reales) y errores relativos err/|valor| de A, f, t_rise, t_fall, gamma.
@@ -84,6 +87,7 @@ from sklearn.preprocessing import QuantileTransformer
 from threadpoolctl import threadpool_limits
 
 from pipeline78 import splits
+from pipeline78.nnclf import data as D
 from pipeline78.nnclf.experimentos import BOOT_SEED, N_BOOT as N_BOOT_PAREADO, P_MIN, paired_bootstrap
 from pipeline78.paths import RUNS, ZLF
 
@@ -102,7 +106,6 @@ N_JOBS = int(os.environ.get("P78_CLF_THREADS", "2"))   # hilos de RF/HGB/BLAS: l
 KEYS = ["oid", "part_index", "sn_type"]
 BANDS = ("r", "g")
 SN_TYPES = ("Ia", "II", "IIb", "Ibc", "IIn")          # orden fijo: indice para el rng de los folds
-SN_TYPE_CLASS = {"Ia": "Ia", "II": "II", "IIb": "II", "Ibc": "Ibc", "IIn": "IIn"}
 PARS = ["A", "f", "t_rise", "t_fall", "gamma"]
 TIMES = ["t_rise", "t_fall", "gamma"]
 QUAL = ["n_points", "time_span", "rms"]
@@ -113,12 +116,17 @@ T_RISE_PISO = 1.05
 
 
 def classes(four=False):
-    return ("Ia", "II", "Ibc", "IIn") if four else ("Ia", "II", "Ibc")
+    """Clases del modo pedido: four False/True (3/4, la bandera de siempre) o el numero de clases (3, 4, 5)."""
+    return D.classes(four)
 
 
 def class_of(sn_type, four=False):
-    c = SN_TYPE_CLASS.get(sn_type)
-    return c if c in classes(four) else None
+    return D.class_of(sn_type, four)
+
+
+def modo(a):
+    """Modo de clases de los argumentos de la linea de comandos: 5 con --cinco-clases, si no --cuatro-clases."""
+    return 5 if getattr(a, "cinco_clases", False) else a.cuatro_clases
 
 
 def distmod(z, H0=70.0, om=0.3):
@@ -712,7 +720,7 @@ class Model:
                              for i, m in enumerate(spec["members"])]
         elif spec["kind"] == "hier":
             base = MODELS[spec["base"]]
-            first = self.first_ = list(classes(K == 4)).index(spec["first"])
+            first = self.first_ = list(classes(K)).index(spec["first"])
             y1 = (y == first).astype(int)
             # nivel 1 con prior 1/K para la primera clase: prior efectivo final uniforme sobre las K clases
             self.l1_ = _fit_base(base, self.seed, F[self.cols1].to_numpy(float), y1,
@@ -1162,8 +1170,8 @@ def finish_run(out, res, R, cls, cov, a, cfg):
 
 
 def cmd_train(a):
-    cls = classes(a.cuatro_clases)
-    S, R, v = prepare(a.features_sims, a.run_dir, a.features_real, a.real_dir, a.cuatro_clases, not a.obs_frame,
+    cls = classes(modo(a))
+    S, R, v = prepare(a.features_sims, a.run_dir, a.features_real, a.real_dir, modo(a), not a.obs_frame,
                       a.requiere, fisica=a.fset in FSETS_FISICA)
     nn = read_nn_oids(a.nn_preds, R) if a.nn_preds else None
     cfg = {"model": a.model, "fset": a.fset, "use_z": not a.no_z, "peso": a.peso, "balance": not a.sin_balance,
@@ -1182,7 +1190,7 @@ def cmd_eval(a):
     out = Path(a.out_root) / a.name
     bundle = joblib.load(out / "model.joblib")     # pickle propio, escrito por cmd_train en RUNS local: confiable
     cls = bundle["classes"]
-    Rw, v = load_real_val(a.features_real, a.real_dir, len(cls) == 4)
+    Rw, v = load_real_val(a.features_real, a.real_dir, len(cls))
     R = derive(Rw, not bundle["obs_frame"])
     if set(FIS) & set(bundle["cols"]):
         R = con_fisica(R, fisica_reales(R, v, a.features_real, a.real_dir, not bundle["obs_frame"]))
@@ -1269,6 +1277,9 @@ GRIDS = {
     # jerarquicos del ganador de foco (hier_mlp, rg_err, wz_S) combinados con la fisica (pregunta de Mauricio 2026-10-05)
     "combo": dict(fset=("rg_err", "rg_fisica", "rg_err_fisica"), model=("hier_mlp_II", "hier_mlp_Ia", "ens_hier", "hier_hgb_II"),
                   use_z=(True,), peso=("wz", "wz_S")),
+    # 5 clases (--cinco-clases, Mauricio 2026-10-06): los modelos que ganaron en 3 (foco, combo) y 4 clases (fisica_4c)
+    "cinco": dict(fset=("rg_err", "rg_fisica"), model=("hier_mlp_II", "hier_mlp_Ia", "ens_hier", "hgb"), use_z=(True,),
+                  peso=("wz", "wz_S")),
 }
 
 
@@ -1285,11 +1296,11 @@ def _one(S, R, cfg, cls, folds, seed, nn_oids=None):
 
 
 def cmd_sweep(a):
-    cls = classes(a.cuatro_clases)
+    cls = classes(modo(a))
     g = GRIDS[a.grid]
     models = a.models.split(",") if a.models else g["model"]
     fsets = a.fsets.split(",") if a.fsets else g["fset"]
-    S, R, v = prepare(a.features_sims, a.run_dir, a.features_real, a.real_dir, a.cuatro_clases, not a.obs_frame,
+    S, R, v = prepare(a.features_sims, a.run_dir, a.features_real, a.real_dir, modo(a), not a.obs_frame,
                       a.requiere, fisica=bool(set(fsets) & set(FSETS_FISICA)))
     nn = read_nn_oids(a.nn_preds, R) if a.nn_preds else None
     cov = coverage(R, v, cls, nn)
@@ -1361,8 +1372,8 @@ def cmd_gap(a):
     las FIS faltan distinto en sims y reales, HGB aprende de las sims hacia donde mandar los NaN (el modo de falla de g
     faltante, regla 4): mirarlo antes de confiar en el barrido fisica. faltan_fis en gap.json: fraccion NaN (sims con
     w) en todos y entre los que tienen r."""
-    cls = classes(a.cuatro_clases)
-    S, R, v = prepare(a.features_sims, a.run_dir, a.features_real, a.real_dir, a.cuatro_clases, not a.obs_frame,
+    cls = classes(modo(a))
+    S, R, v = prepare(a.features_sims, a.run_dir, a.features_real, a.real_dir, modo(a), not a.obs_frame,
                       a.requiere, fisica=a.fisica)
     cols = [c for c in GAP_COLS if (a.no_z is False or not c.startswith("M_pk"))]
     if a.fisica:
@@ -1466,6 +1477,7 @@ def parser():
                     help="train: nan (g faltante = NaN) o separado (modelo A con g, B solo r); sweep: la grilla")
     ap.add_argument("--requiere", default="any", choices=("any", "r"))
     ap.add_argument("--cuatro-clases", action="store_true")
+    ap.add_argument("--cinco-clases", action="store_true", help="Ia, II, IIb, Ibc, IIn (pisa --cuatro-clases)")
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--seed", type=int, default=SEED)
     ap.add_argument("--grid", default="rapido", choices=tuple(GRIDS))

@@ -41,6 +41,7 @@ class Config:
     model: str = "transformer"          # gru | transformer
     use_z: bool = False
     four_classes: bool = False
+    five_classes: bool = False          # Ia, II, IIb, Ibc, IIn (pisa four_classes; data.modo)
     use_magerr: bool = True
     max_epochs: int = 60
     patience: int = 8
@@ -174,14 +175,14 @@ def train(cfg):
     torch.manual_seed(cfg.seed)
     rng = np.random.default_rng(cfg.seed)
     device = pick_device(cfg.device)
-    cls = D.classes(cfg.four_classes)
+    cls = D.classes(D.modo(cfg))
     assert not cfg.jerarquica or cls[0] == "Ia", "la cabeza jerarquica supone la clase 0 = Ia"
     out = cfg.out
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
 
-    curves = D.load_sims(cfg.sim_run, cfg.four_classes, max_sims=cfg.max_sims or None, seed=cfg.seed)
-    pairs = D.sims_table(cfg.sim_run, cfg.four_classes)[["template", "sn_type"]].itertuples(index=False)
+    curves = D.load_sims(cfg.sim_run, D.modo(cfg), max_sims=cfg.max_sims or None, seed=cfg.seed)
+    pairs = D.sims_table(cfg.sim_run, D.modo(cfg))[["template", "sn_type"]].itertuples(index=False)
     val_tpl = D.split_templates(pairs, cfg.n_folds, cfg.fold, cfg.seed)
     tr = [c for c in curves if c.template not in val_tpl]
     va = [c for c in curves if c.template in val_tpl]

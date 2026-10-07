@@ -8,6 +8,7 @@ modulo es el UNICO camino a la final y exige el flag --mitad-final-autorizada en
     python -m pipeline78.evaluar_test red        --mitad-final-autorizada [--device mps]          (env series)
     python -m pipeline78.evaluar_test plantillas --mitad-final-autorizada [--cuatro-clases] [--workers 4] (projection)
     python -m pipeline78.evaluar_test resumen    --mitad-final-autorizada                         (cualquiera)
+    --cinco-clases en los cuatro: los congelados de 5 clases (Ia, II, IIb, Ibc, IIn) en RUNS/cinco_clases (regla 7)
 
 REGLAS
 1. Guarda. Sin el flag, main sale antes de abrir cualquier archivo. read_final_meta(path) sin autorizada=True lanza
@@ -34,8 +35,13 @@ REGLAS
    probabilidades, comparaciones pareadas (bootstrap estratificado de la exactitud balanceada y bootstrap de SNe del
    L1) y fracciones corregidas con la matriz de confusion del sistema medida en val_sel (de los pred_real_val.csv
    congelados) aplicada a test. Ademas pares de metodos solos en sus oids comunes (3 y 4 clases).
+7. Cinco clases (Mauricio 2026-10-06): Ia, II (= IIP + IIL + II sin subtipo), IIb, Ibc, IIn, congelados en val con el
+   mismo protocolo (villar_5c = clf_villar/sweep_t11_5c/mejor, red_5c = nnclf_t11/tf_base_5c, plantillas_5c =
+   plantillas_clf/plantillas_t11_5c). Sistema completo con respaldo red_5c. Por defecto salen a RUNS/cinco_clases (no
+   tocan test_final). resumen --cinco-clases agrega val_rep (de los pred_real_val.csv congelados, mismas funciones que
+   test) y escribe las matrices de confusion confusion_<metodo>_<val_rep|test>.csv.
 Salidas: RUNS/test_final/<metodo>/pred_test.csv y metrics.json (metodo = villar, red, plantillas, villar_4c,
-plantillas_4c) y RUNS/test_final/resumen.json.
+plantillas_4c) y RUNS/test_final/resumen.json. Con --cinco-clases, RUNS/cinco_clases/<metodo>_5c y resumen.json.
 """
 import argparse
 import csv
@@ -54,6 +60,7 @@ from pipeline78.paths import REPO, RUNS
 
 FLAG = "--mitad-final-autorizada"
 OUT = RUNS / "test_final"
+OUT_5C = RUNS / "cinco_clases"
 REAL_DIR = RUNS / "real_ztf"
 REAL_FEAT = RUNS / "features_real_ztf3" / "features" / "features.csv"
 SEED = 20261004
@@ -65,9 +72,27 @@ CONGELADOS = {
     "red": RUNS / "nnclf_t11" / "tf_base",
     "plantillas": RUNS / "plantillas_clf" / "plantillas_t11",
     "plantillas_4c": RUNS / "plantillas_clf" / "plantillas_t11_4c",
+    "villar_5c": RUNS / "clf_villar" / "sweep_t11_5c" / "mejor",
+    "red_5c": RUNS / "nnclf_t11" / "tf_base_5c",
+    "plantillas_5c": RUNS / "plantillas_clf" / "plantillas_t11_5c",
 }
 METODOS_3C = ("villar", "red", "plantillas")
 METODOS_4C = ("villar_4c", "plantillas_4c")
+METODOS_5C = ("villar_5c", "red_5c", "plantillas_5c")
+SUFIJO = {3: "", 4: "_4c", 5: "_5c"}
+
+
+def n_pedido(a):
+    """Clases pedidas en la linea de comandos: 5 con --cinco-clases, 4 con --cuatro-clases, 3 si no."""
+    return 5 if a.cinco_clases else 4 if a.cuatro_clases else 3
+
+
+def congelado(metodo, n):
+    """(nombre de salida, corrida congelada de val) del metodo con n clases."""
+    nombre = metodo + SUFIJO[n]
+    if nombre not in CONGELADOS:
+        raise SystemExit(f"{metodo} no tiene corrida congelada de {n} clases")
+    return nombre, CONGELADOS[nombre]
 
 
 # ------------------------------------------------------------------------------------------------ guarda y lectura
@@ -201,8 +226,7 @@ def cmd_villar(a):
     from threadpoolctl import threadpool_limits
     from pipeline78 import clf_villar as CV
     CV._silenciar_matmul()
-    nombre = "villar_4c" if a.cuatro_clases else "villar"
-    run = CONGELADOS[nombre]
+    nombre, run = congelado("villar", n_pedido(a))
     # pickle propio de clf_villar en RUNS local (confiable). Se escribio con `python -m pipeline78.clf_villar`: sus
     # clases quedaron como __main__.Model / __main__.ModeloG, asi que se exponen en __main__ antes de cargar.
     import __main__
@@ -211,8 +235,8 @@ def cmd_villar(a):
             setattr(__main__, k, getattr(CV, k))
     bundle = joblib.load(run / "model.joblib")
     cls = tuple(bundle["classes"])
-    four = len(cls) == 4
-    if four != a.cuatro_clases:
+    four = len(cls)                                    # modo de clases (nnclf.data.n_classes): 3, 4 o 5
+    if four != n_pedido(a):
         raise SystemExit(f"{run}: {len(cls)} clases")
     feat = CV.features_csv(a.features_real)
     with threadpool_limits(CV.N_JOBS):
@@ -266,17 +290,19 @@ def cmd_red(a):
     from pipeline78.nnclf import calib
     from pipeline78.nnclf.evaluate import cfg_device
     from pipeline78.nnclf.train import load_model, pick_device
-    run = CONGELADOS["red"]
+    nombre, run = congelado("red", n_pedido(a))
     model, cfg, ck = load_model(run, pick_device(a.device or cfg_device(run)))
     torch.set_num_threads(a.threads)
     dev = next(model.parameters()).device
     cls = tuple(ck["classes"])
-    four = len(cls) == 4
+    four = len(cls)
+    if four != n_pedido(a):
+        raise SystemExit(f"{run}: {len(cls)} clases")
     # regla 4: val por el lector con guarda de nnclf
     rv, _ = D.load_real_val(cfg.real_dir, four)
     kv, dv, pv = _probs_red(model, cfg, dev, rv)
     repro = comparar_val(_pred_red(kv, dv, pv, cls, "val"), run / "pred_real_val.csv", cls)
-    print(f"[test] red repro val: {repro}", flush=True)
+    print(f"[test] {nombre} repro val: {repro}", flush=True)
     if a.solo_repro:
         return repro
     v = final_meta(a.real_dir, four, autorizada=True)
@@ -287,12 +313,12 @@ def cmd_red(a):
     y = pred.y_true.map(list(cls).index).to_numpy()
     calib_test = calib._block(pt.astype(np.float64), y, cal["T"], cal["T_prior"], np.asarray(cal["log_prior_adj"]),
                               cal.get("n_bins", calib.N_BINS)) if len(pred) else None
-    res = {"metodo": "red", "congelado": str(run), "config": json.loads((run / "config.json").read_text()),
+    res = {"metodo": nombre, "congelado": str(run), "config": json.loads((run / "config.json").read_text()),
            "device": str(dev), "celda": "natural, g+r, todas las detecciones", "probabilidades": "softmax cruda",
            "clases": list(cls), "repro_val": repro, "sin_3_det_gr": sin,
            "calibracion_congelada_val_sel": {k: cal[k] for k in ("T", "T_prior", "priors_val_sel", "log_prior_adj")},
            "calibracion_test": calib_test, "test": metricas_metodo(pred, v, cls)}
-    return escribir("red", pred, res, a.out_root)
+    return escribir(nombre, pred, res, a.out_root)
 
 
 # ------------------------------------------------------------------------------------------------ plantillas
@@ -340,12 +366,11 @@ def _pred_plantillas(res, tareas, info, cls, subset):
 
 def cmd_plantillas(a):
     from pipeline78 import plantillas_clf as PC, sampling
-    nombre = "plantillas_4c" if a.cuatro_clases else "plantillas"
-    run = CONGELADOS[nombre]
+    nombre, run = congelado("plantillas", n_pedido(a))
     m = json.loads((run / "metrics.json").read_text())
     c = m["config"]
-    four = bool(c["cuatro_clases"])
-    if four != a.cuatro_clases or c["subset"] != "val" or c["limit"]:
+    four = 5 if c.get("cinco_clases") else 4 if c["cuatro_clases"] else 3
+    if four != n_pedido(a) or c["subset"] != "val" or c["limit"]:
         raise SystemExit(f"{run}: config inesperada {c}")
     lib_dir = Path(m["biblioteca"])
     cls = D.classes(four)
@@ -427,14 +452,14 @@ def pares_comunes(P, cls):
     return out
 
 
-def sistema_test(T, V, respaldo="red"):
+def sistema_test(T, V, respaldo="red", cls=("Ia", "II", "Ibc")):
     """Regla 6. T: {metodo: preds test (leer_test)}; V: {metodo: preds val (sistema_tasas.leer)}. Devuelve el bloque
-    del sistema completo en test con las fracciones corregidas con la matriz de val_sel."""
+    del sistema completo en test con las fracciones corregidas con la matriz de val_sel. cls: las clases (regla 7)."""
     from pipeline78 import sistema_tasas as ST
     from pipeline78.nnclf.experimentos import P_MIN, paired_bootstrap
-    S = {k: ST.sistema(d, T[respaldo]) for k, d in T.items()}
-    SV = {k: ST.sistema(d, V[respaldo]) for k, d in V.items()}
-    res = {"respaldo": respaldo, "metricas": {k: ST.metricas(d) for k, d in S.items()}, "pares": {},
+    S = {k: ST.sistema(d, T[respaldo], cls) for k, d in T.items()}
+    SV = {k: ST.sistema(d, V[respaldo], cls) for k, d in V.items()}
+    res = {"respaldo": respaldo, "metricas": {k: ST.metricas(d, cls) for k, d in S.items()}, "pares": {},
            "corregidas": {}}
     ks = list(S)
     for i, x in enumerate(ks):
@@ -443,15 +468,15 @@ def sistema_test(T, V, respaldo="red"):
             assert (A.index == B.index).all() and (A.y_true == B.y_true).all()
             y = A.y_true.to_numpy()
             dlt, p, ci = paired_bootstrap(y, (A.y_pred == y).to_numpy(), (B.y_pred == y).to_numpy())
-            pa, cia = ST.l1_boot(A, B, col="argmax")
-            pp, cip = ST.l1_boot(A, B, col="prob")
+            pa, cia = ST.l1_boot(A, B, col="argmax", cls=cls)
+            pp, cip = ST.l1_boot(A, B, col="prob", cls=cls)
             res["pares"][f"{x}_vs_{z}"] = dict(
                 delta_bal=dlt, P_bal=p, ic90_bal=ci, P_L1_argmax_menor=pa, ic90_dL1_argmax=cia, P_L1_prob_menor=pp,
                 ic90_dL1_prob=cip, gana_bal=(x if p >= P_MIN else z if p <= 1 - P_MIN else None))
     for k, d in S.items():
         sel = SV[k][SV[k].subset == "val_sel"]
-        l1, f, cond = ST.corregidas(sel, d)
-        med, ic = ST.corregidas_boot(sel, d)
+        l1, f, cond = ST.corregidas(sel, d, cls)
+        med, ic = ST.corregidas_boot(sel, d, cls=cls)
         res["corregidas"][k] = dict(L1=l1, frac=f, cond_M=cond, L1_boot_mediana=med, ic90=ic,
                                     M_de="val_sel (pred_real_val.csv congelados)", n_val_sel=int(len(sel)))
     return res
@@ -503,6 +528,85 @@ def cmd_resumen(a):
     return res
 
 
+CLAVES = ("n_real", "n_clasificadas", "cobertura", "cobertura_por_clase", "n_real_por_clase", "acc", "acc_ic95", "bal_acc",
+          "bal_acc_ic95", "f1_macro", "logloss", "ece", "confusion")
+
+
+def _bloque(m):
+    return {**{q: m.get(q) for q in CLAVES}, **{q: m[q] for q in m if q.startswith(("f1_", "recall_"))}}
+
+
+def _matriz(cm, cls, path):
+    """Matriz de confusion csv (filas = verdadera), el formato de clf_villar.write_run."""
+    pd.DataFrame(cm, index=[f"true_{c}" for c in cls], columns=[f"pred_{c}" for c in cls]).to_csv(path)
+
+
+def metricas_sistema(S, n_real, cls):
+    """sistema_tasas.metricas de un sistema completo + IC 95 % bootstrap, F1 y matriz (funciones de clf_villar, las de
+    los metodos). n_real: SNe de las clases del subconjunto (denominador de la cobertura del sistema)."""
+    from pipeline78 import sistema_tasas as ST
+    from pipeline78.clf_villar import bootstrap_ci, metrics
+    y, yp = (S[c].map(list(cls).index).to_numpy() for c in ("y_true", "y_pred"))
+    m = metrics(y, yp, cls)
+    return {**ST.metricas(S, cls), "n_real": int(n_real), "cobertura": float(len(S) / max(n_real, 1)),
+            **{q: m[q] for q in m if q.startswith(("f1_", "recall_")) or q == "confusion"},
+            **bootstrap_ci(y, yp, cls, N_BOOT_IC, SEED)}
+
+
+def cmd_resumen_5c(a):
+    """Regla 7. Por metodo de 5 clases: val_rep (de su pred_real_val.csv congelado; denominador = SNe val_rep de las 5
+    clases, clf_villar.read_val_meta) y test (su metrics.json), con las mismas funciones (metricas_metodo). Sistema
+    completo con respaldo red_5c en val_rep y en test (regla 6 con las 5 clases), pares de metodos solos en sus oids
+    comunes de test. Escribe <out_root>/resumen.json y confusion_<metodo | sistema_metodo>_<val_rep | test>.csv."""
+    from pipeline78 import sistema_tasas as ST
+    from pipeline78.clf_villar import read_val_meta
+    out, cls = Path(a.out_root), D.classes(5)
+    falta = [k for k in METODOS_5C if not (out / k / "metrics.json").exists()]
+    if falta:
+        raise SystemExit(f"faltan las corridas de test {falta} en {out}")
+    vv = read_val_meta(Path(a.real_dir) / "meta_real_ztf.csv", 5)
+    vrep = vv[vv.subset == "val_rep"]
+    res = {"regla": "evaluar_test regla 7 (5 clases)", "clases": list(cls), "respaldo": "red_5c",
+           "val_rep": f"pipeline78.splits.val_split (semilla {splits.SEED}), la misma particion de 3 y 4 clases",
+           "n_val_rep_por_clase": {c: int((vrep.cls == c).sum()) for c in cls}, "metodos": {}, "sistema": {},
+           "git": _git(), "creada": time.strftime("%Y-%m-%d %H:%M:%S")}
+    T, V = {}, {}
+    for k in METODOS_5C:
+        mt = json.loads((out / k / "metrics.json").read_text())
+        if tuple(mt["clases"]) != cls:
+            raise SystemExit(f"{k}: clases {mt['clases']}")
+        V[k] = ST.leer(CONGELADOS[k] / "pred_real_val.csv", cls)
+        T[k] = leer_test(k, out, cls)
+        mr = metricas_metodo(V[k][V[k].subset == "val_rep"].reset_index(), vrep, cls)
+        res["metodos"][k] = {"congelado": mt["congelado"], "repro_val": mt.get("repro_val"),
+                             "problemas": mt.get("problemas", []), "val_rep": _bloque(mr), "test": _bloque(mt["test"])}
+        _matriz(mr["confusion"], cls, out / f"confusion_{k}_val_rep.csv")
+        _matriz(mt["test"]["confusion"], cls, out / f"confusion_{k}_test.csv")
+    n_test = res["metodos"]["red_5c"]["test"]["n_real"]
+    rr = V["red_5c"][V["red_5c"].subset == "val_rep"]
+    for k in METODOS_5C:
+        b = {"val_rep": metricas_sistema(ST.sistema(V[k][V[k].subset == "val_rep"], rr, cls), len(vrep), cls),
+             "test": metricas_sistema(ST.sistema(T[k], T["red_5c"], cls), n_test, cls)}
+        res["sistema"][k] = b
+        for s, m in b.items():
+            _matriz(m["confusion"], cls, out / f"confusion_sistema_{k}_{s}.csv")
+    res["sistema_test"] = sistema_test(T, V, "red_5c", cls)
+    res["pares_metodos_test"] = pares_comunes(T, cls)
+    (out / "resumen.json").write_text(json.dumps(res, indent=1, default=float))
+    ic = lambda m: f"[{m['bal_acc_ic95'][0]:.3f}, {m['bal_acc_ic95'][1]:.3f}]"
+    for k, m in res["metodos"].items():
+        for s in ("val_rep", "test"):
+            x = m[s]
+            print(f"[test5] {k:14s} {s:7s} n {x['n_clasificadas']}/{x['n_real']} cob {x['cobertura']:.3f} acc "
+                  f"{x['acc']:.3f} bal {x['bal_acc']:.3f} IC95 {ic(x)}", flush=True)
+    for k, b in res["sistema"].items():
+        for s, x in b.items():
+            print(f"[test5] sistema {k:14s} {s:7s} n {x['n']}/{x['n_real']} propia {x['cobertura_propia']:.3f} acc "
+                  f"{x['acc']:.3f} bal {x['bal_acc']:.3f} IC95 {ic(x)} L1 {x['L1_argmax']:.3f}", flush=True)
+    print(f"[test5] -> {out / 'resumen.json'}", flush=True)
+    return res
+
+
 # ------------------------------------------------------------------------------------------------ CLI
 def parser():
     ap = argparse.ArgumentParser(prog="python -m pipeline78.evaluar_test", description=__doc__.split("\n")[0])
@@ -510,9 +614,11 @@ def parser():
     ap.add_argument(FLAG, dest="autorizada", action="store_true",
                     help="obligatorio: autoriza leer la mitad final del holdout (orden de Mauricio 2026-10-06)")
     ap.add_argument("--cuatro-clases", action="store_true", help="villar y plantillas: las corridas de 4 clases")
+    ap.add_argument("--cinco-clases", action="store_true",
+                    help="villar, red, plantillas y resumen: las corridas de 5 clases (Ia, II, IIb, Ibc, IIn)")
     ap.add_argument("--real-dir", type=Path, default=REAL_DIR)
     ap.add_argument("--features-real", type=Path, default=REAL_FEAT)
-    ap.add_argument("--out-root", type=Path, default=OUT)
+    ap.add_argument("--out-root", type=Path, default=None, help=f"por defecto {OUT} ({OUT_5C} con --cinco-clases)")
     ap.add_argument("--workers", type=int, default=4, help="plantillas: procesos (maximo 8)")
     ap.add_argument("--n-repro", type=int, default=N_REPRO, help="plantillas: SNe de val_sel para la regla 4")
     ap.add_argument("--device", default=None, help="red: por defecto el de config.json (el de la evaluacion de val)")
@@ -525,6 +631,10 @@ def main(argv=None):
     a = parser().parse_args(argv)
     if not a.autorizada:
         raise SystemExit(f"mitad final bloqueada: agregar {FLAG} (solo por orden explicita de Mauricio)")
+    if a.out_root is None:
+        a.out_root = OUT_5C if a.cinco_clases else OUT
+    if a.cmd == "resumen" and a.cinco_clases:
+        return cmd_resumen_5c(a)
     return {"villar": cmd_villar, "red": cmd_red, "plantillas": cmd_plantillas, "resumen": cmd_resumen}[a.cmd](a)
 
 

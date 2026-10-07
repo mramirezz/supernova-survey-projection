@@ -4,7 +4,10 @@ REGLAS
 1. Entrenamiento: sims de la T9 final (RUNS/ztf_v78_t9_final). Bandas g y r solamente (ZTF publico no tiene i).
    Deteccion = upperlimit 'F'. Entra la sim con >= MIN_DET detecciones en g+r (no las 7 de Villar).
 2. Clases: Ia, II (= II + IIb), Ibc. IIn fuera, salvo four_classes=True (Ia, II, Ibc, IIn). El mapeo sale de
-   sn_type y no de clf_class, porque clf_class de la T9 junta IIn con II.
+   sn_type y no de clf_class, porque clf_class de la T9 junta IIn con II. Cinco clases (Mauricio 2026-10-06): Ia,
+   II (= IIP + IIL + II sin subtipo), IIb, Ibc, IIn, con la IIb como clase propia. El argumento four_classes de todas
+   las funciones acepta la bandera de siempre (False = 3, True = 4) o el numero de clases (3, 4, 5): n_classes. Con 3
+   y 4 el resultado es el mismo de antes.
 3. Validacion real: RUNS/real_ztf, origen holdout & split val & ~excluir. meta_real_ztf.csv se lee con
    pipeline78.splits.read_val_meta (csv, solo las filas val llegan a pandas) y la fotometria filtra por oid dentro de
    pyarrow (filters), asi las filas de la mitad final nunca se materializan. No se usan las viejas ni las plantillas.
@@ -92,17 +95,35 @@ def curve_rng(seed, key, *salt):
     return np.random.default_rng([int(seed), zlib.crc32(str(key).encode()), *[int(s) for s in salt]])
 SN_TYPES = ("Ia", "II", "IIb", "Ibc", "IIn")          # orden fijo: indice para el rng del split
 SN_TYPE_CLASS = {"Ia": "Ia", "II": "II", "IIb": "II", "Ibc": "Ibc", "IIn": "IIn"}
+SN_TYPE_CLASS_5 = {**SN_TYPE_CLASS, "IIb": "IIb"}      # 5 clases: la IIb sale de II
+CLASES = {3: ("Ia", "II", "Ibc"), 4: ("Ia", "II", "Ibc", "IIn"), 5: ("Ia", "II", "IIb", "Ibc", "IIn")}
 _COLS = ["mjd", "filter", "magnitud_proyectada", "magerr", "upperlimit"]
 
 
+def n_classes(four_classes=False):
+    """Numero de clases del modo pedido (regla 2): la bandera de siempre (False o None = 3, True = 4) o el numero."""
+    if four_classes is None or isinstance(four_classes, (bool, np.bool_)):
+        return 4 if four_classes else 3
+    n = int(four_classes)
+    if n not in CLASES:
+        raise ValueError(f"modo de clases desconocido: {four_classes!r} (3, 4 o 5)")
+    return n
+
+
+def modo(cfg):
+    """Modo de clases de una train.Config: 5 con five_classes, si no la bandera four_classes de siempre."""
+    return 5 if getattr(cfg, "five_classes", False) else cfg.four_classes
+
+
 def classes(four_classes=False):
-    return ("Ia", "II", "Ibc", "IIn") if four_classes else ("Ia", "II", "Ibc")
+    return CLASES[n_classes(four_classes)]
 
 
 def class_of(sn_type, four_classes=False):
     """sn_type -> clase del clasificador, o None si queda fuera."""
-    c = SN_TYPE_CLASS.get(sn_type)
-    return c if c in classes(four_classes) else None
+    n = n_classes(four_classes)
+    c = (SN_TYPE_CLASS_5 if n == 5 else SN_TYPE_CLASS).get(sn_type)
+    return c if c in CLASES[n] else None
 
 
 def n_glob(use_z):

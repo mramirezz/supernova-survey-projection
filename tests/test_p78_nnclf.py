@@ -48,6 +48,25 @@ def test_class_map():
     assert D.class_of("SLSN-I") is None
 
 
+def test_class_map_cinco_clases():
+    """5 clases (Mauricio 2026-10-06): IIb propia, II = IIP + IIL (sn_type II). La bandera de siempre (False/True) y el
+    numero de clases (3/4) dan exactamente lo mismo: 3 y 4 clases no cambian."""
+    from pipeline78.nnclf.train import Config
+    tipos = ("Ia", "II", "IIb", "Ibc", "IIn", "SLSN-I")
+    assert D.classes(5) == ("Ia", "II", "IIb", "Ibc", "IIn")
+    assert [D.class_of(t, 5) for t in tipos] == ["Ia", "II", "IIb", "Ibc", "IIn", None]
+    for b, n in ((False, 3), (None, 3), (True, 4), (np.bool_(True), 4)):
+        assert D.classes(b) == D.classes(n) and [D.class_of(t, b) for t in tipos] == [D.class_of(t, n) for t in tipos]
+    assert D.classes(True) == ("Ia", "II", "Ibc", "IIn") and D.class_of("IIb", 4) == "II"
+    try:
+        D.classes(6)
+        raise AssertionError("6 clases no existe")
+    except ValueError:
+        pass
+    assert D.modo(Config()) is False and D.modo(Config(four_classes=True)) is True
+    assert D.modo(Config(five_classes=True)) == D.modo(Config(four_classes=True, five_classes=True)) == 5
+
+
 def test_tokenize_ventana_y_features():
     c = _curve()
     x, dt, g, b = D.tokenize(c, use_z=True)
@@ -365,6 +384,8 @@ def test_cola_jerarquica_y_cuatro_clases():
     f0, f1 = X.flags_from_config(base), X.flags_from_config({**base, "jerarquica": True, "four_classes": True})
     assert "--jerarquica" not in f0 and "--four-classes" not in f0
     assert "--jerarquica" in f1 and "--four-classes" in f1
+    f5 = X.flags_from_config({**base, "five_classes": True})
+    assert "--five-classes" in f5 and "--five-classes" not in f1
     # --only corre solo el bloque de 4 clases
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -506,6 +527,13 @@ def test_real_val_meta_via_splits():
     v = D.real_val_meta(tmp)
     assert set(v.oid) == {"ZTF00val", "ZTF02val", "ZTF03val"} and set(v.split) == {"val"}
     assert set(D.real_val_meta(tmp, four_classes=True).oid) == {"ZTF00val", "ZTF02val", "ZTF03val", "ZTF06val"}
+    v5 = D.real_val_meta(tmp, four_classes=5)
+    assert dict(zip(v5.oid, v5.cls)) == {"ZTF00val": "Ia", "ZTF02val": "II", "ZTF03val": "IIb", "ZTF06val": "IIn"}
+    curves5, _ = D.load_real_val(tmp, 5)
+    assert {c.key: D.classes(5)[c.y] for c in curves5} == dict(zip(v5.oid, v5.cls))
+    # la particion val_sel / val_rep es la misma con 3, 4 y 5 clases (splits.val_split estratifica por las 4 de siempre)
+    from pipeline78.nnclf.evaluate import val_subsets
+    assert val_subsets(tmp, 5) == val_subsets(tmp, True)
 
 
 def test_bootstrap_pareado():

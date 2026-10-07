@@ -190,7 +190,8 @@ def flags_from_config(cfg, use_z=None):
     return (["--model", cfg["model"], "--band-enc", cfg["band_enc"], "--time-enc", cfg["time_enc"],
              "--gru-pool", cfg["gru_pool"], "--trunc", cfg["trunc"], "--p-trunc", str(cfg.get("p_trunc", 1.0))]
             + (["--bidir"] if cfg["bidir"] else []) + (["--jerarquica"] if cfg.get("jerarquica") else [])
-            + (["--four-classes"] if cfg.get("four_classes") else []) + (["--use-z"] if use_z else []))
+            + (["--four-classes"] if cfg.get("four_classes") else [])
+            + (["--five-classes"] if cfg.get("five_classes") else []) + (["--use-z"] if use_z else []))
 
 
 def n_params(out_root, prefix, name):

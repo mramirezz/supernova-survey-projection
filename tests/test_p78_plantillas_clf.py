@@ -197,6 +197,40 @@ def test_prior_de_plantillas(lib):
     assert list(p4.lf_dust) == list(L.tab.clase == "IIn")
 
 
+def test_prior_de_plantillas_cinco_clases(lib):
+    """5 clases: la IIb es su propia clase (prior 1 dentro de ella), las II se reparten IIP/IIL como antes. Con 3 y 4
+    clases, la bandera de siempre y el numero de clases dan los mismos priors."""
+    _, _, L = lib
+    p4, p5 = PL.priors(L, four=True), PL.priors(L, four=5)
+    t = L.tab.set_index("sn")
+    lp = dict(zip(L.tab.sn, np.exp(p5.log_pi)))
+    assert p5.clases == ("Ia", "II", "IIb", "Ibc", "IIn")
+    assert np.isclose(lp["FIIP"], 0.875) and np.isclose(lp["FIIL"], 0.125) and np.isclose(lp["FIIB"], 1.0)
+    assert np.isclose(lp["FIA1"], 0.5) and np.isclose(lp["FIIN"], 1.0) and np.isclose(lp["FIB"], 1.0)
+    assert [p5.clases[p5.cls_idx[t.index.get_loc(s)]] for s in ("FIA1", "FIIP", "FIIL", "FIIB", "FIB", "FIIN")] == \
+        ["Ia", "II", "II", "IIb", "Ibc", "IIn"]
+    for k in ("log_pe", "lf", "lf_dust"):
+        assert np.array_equal(getattr(p5, k), getattr(p4, k))
+    for b_, n in ((False, 3), (True, 4)):
+        x, y = PL.priors(L, four=b_), PL.priors(L, four=n)
+        assert x.clases == y.clases and np.array_equal(x.cls_idx, y.cls_idx) and np.array_equal(x.log_pi, y.log_pi)
+
+
+def test_cinco_clases_evidencia_consistente_con_cuatro(lib):
+    """La evidencia por plantilla no depende del modo: con 4 clases E_II = 0.8 E_II(5) + 0.2 E_IIb(5) (n_by_class 8:2)
+    y las otras clases quedan iguales. La IIb falsa sale IIb con 5 clases."""
+    root, _, L = lib
+    p4, p5 = PL.priors(L, four=True), PL.priors(L, four=5)
+    for sn in ("FIIB", "FIIP"):
+        cur, _ = _fake_sn(root, sn, ebv=0.0 if sn == "FIIP" else 0.1)
+        r4, r5 = PL.clasificar(cur, L, p4, mw=0.03), PL.clasificar(cur, L, p5, mw=0.03)
+        l4, l5 = dict(zip(p4.clases, r4["logE"])), dict(zip(p5.clases, r5["logE"]))
+        assert np.isclose(l4["II"], np.logaddexp(np.log(0.8) + l5["II"], np.log(0.2) + l5["IIb"]), atol=1e-9)
+        for c in ("Ia", "Ibc", "IIn"):
+            assert np.isclose(l4[c], l5[c], atol=1e-9)
+        assert p5.clases[int(np.argmax(r5["p"]))] == {"FIIB": "IIb", "FIIP": "II"}[sn]
+
+
 # ----------------------------------------------------------------------------- clasificacion
 @pytest.mark.parametrize("sn", [s[0] for s in FAKES])
 def test_sn_falsa_recupera_clase_y_parametros(lib, sn):
@@ -332,7 +366,15 @@ def test_corrida_sin_tocar_la_final(lib, tmp_path, monkeypatch):
     monkeypatch.setattr(pd, "read_csv", csv_vigilado)
     out = PL.run("prueba", real_dir=rd, out_root=tmp_path / "out", lib_dir=d, mw={}, workers=1, n_boot=50)
     out4 = PL.run("prueba4", four=True, real_dir=rd, out_root=tmp_path / "out", lib_dir=d, mw={}, workers=1, n_boot=50)
+    out5 = PL.run("prueba5", four=5, real_dir=rd, out_root=tmp_path / "out", lib_dir=d, mw={}, workers=1, n_boot=50)
     monkeypatch.undo()
+    P5, m5 = pd.read_csv(out5 / "pred_real_val.csv"), json.loads((out5 / "metrics.json").read_text())
+    assert m5["clases"] == ["Ia", "II", "IIb", "Ibc", "IIn"] and m5["config"]["cinco_clases"] is True
+    assert m5["config"]["cuatro_clases"] is False and "cinco_clases" not in json.loads((out4 / "metrics.json")
+                                                                                       .read_text())["config"]
+    assert dict(zip(P5.oid, P5.y_true)) == {o: {"IIb": "IIb"}.get(st, st) for o, st in zip(meta.oid, meta.sn_type)
+                                            if o in set(P5.oid)}
+    assert np.allclose(P5[[f"p_{c}" for c in m5["clases"]]].sum(1), 1)
     assert vistos and not set(vistos) & final
     P, P4 = pd.read_csv(out / "pred_real_val.csv"), pd.read_csv(out4 / "pred_real_val.csv")
     val = set(meta.oid[(meta.split == "val") & ~meta.excluir])

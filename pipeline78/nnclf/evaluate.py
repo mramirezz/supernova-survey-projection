@@ -454,14 +454,14 @@ def run_eval(out_dir, n_draws=5, device=None, threads=None):
         torch.set_num_threads(threads)
     dev = next(model.parameters()).device
     classes = tuple(ck["classes"])
-    real, skipped = D.load_real_val(cfg.real_dir, cfg.four_classes)
+    real, skipped = D.load_real_val(cfg.real_dir, D.modo(cfg))
     split = json.loads((out / "split.json").read_text())
-    sims = D.load_sims(cfg.sim_run, cfg.four_classes, sim_ids=[int(k) for k in split["val_keys"]])
+    sims = D.load_sims(cfg.sim_run, D.modo(cfg), sim_ids=[int(k) for k in split["val_keys"]])
     prob = nn_prob_fn(model, cfg, dev)
     tab = pd.concat([predict_table(prob, real, classes, "real", n_draws, cfg.seed, fixed=True),
                      predict_table(prob, sims, classes, "sims", n_draws, cfg.seed, fixed=False)], ignore_index=True)
-    subsets = val_subsets(cfg.real_dir, cfg.four_classes)
-    res, agg = summarize(tab, classes, len(real) + len(skipped), villar_oids_or_none(cfg.real_dir, cfg.four_classes),
+    subsets = val_subsets(cfg.real_dir, D.modo(cfg))
+    res, agg = summarize(tab, classes, len(real) + len(skipped), villar_oids_or_none(cfg.real_dir, D.modo(cfg)),
                          subsets)
     extra = {"method": "nn", "model": cfg.model, "use_z": cfg.use_z, "band_enc": cfg.band_enc,
              "time_enc": cfg.time_enc, "gru_pool": cfg.gru_pool, "bidir": cfg.bidir, "trunc": cfg.trunc,

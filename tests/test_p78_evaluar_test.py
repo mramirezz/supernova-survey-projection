@@ -111,3 +111,45 @@ def test_sistema_test_perfecto_y_respaldo():
     assert m["villar"]["n"] == 30 and abs(m["villar"]["cobertura_propia"] - 20 / 30) < 1e-12
     assert abs(m["villar"]["acc"] - (7 + 10) / 30) < 1e-12              # 7 Ia de las 20 + respaldo perfecto en 10
     assert r["corregidas"]["red"]["L1"] < 1e-12 and r["pares"]["red_vs_villar"]["gana_bal"] == "red"
+
+
+# ----------------------------------------------------------------------------- 5 clases (regla 7)
+def test_cinco_clases_final_y_congelados(tmp_path):
+    _fake_real(tmp_path)
+    v5 = ET.final_meta(tmp_path, four=5, autorizada=True)
+    assert dict(zip(v5.oid, v5.cls)) == {"ZTF01final": "Ia", "ZTF03final": "IIb", "ZTF05final": "IIn"}
+    curves, sin = ET.load_final_curves(v5, tmp_path, four=5)
+    assert {c.key: D.classes(5)[c.y] for c in curves} == dict(zip(v5.oid, v5.cls)) and not sin
+    for b, n in ((False, 3), (True, 4)):                       # la bandera de siempre y el numero dan lo mismo
+        pd.testing.assert_frame_equal(ET.final_meta(tmp_path, four=b, autorizada=True),
+                                      ET.final_meta(tmp_path, four=n, autorizada=True))
+    a = ET.parser().parse_args(["villar", ET.FLAG, "--cinco-clases"])
+    assert ET.n_pedido(a) == 5 and ET.congelado("plantillas", 5)[0] == "plantillas_5c"
+    assert ET.congelado("red", 5) == ("red_5c", ET.CONGELADOS["red_5c"]) and ET.congelado("red", 3)[0] == "red"
+    with pytest.raises(SystemExit, match="congelada de 4"):
+        ET.congelado("red", 4)
+
+
+def _preds5(oids, y, yp, subset):
+    cls = D.classes(5)
+    p = np.array([[0.8 if c == q else 0.05 for c in cls] for q in yp])
+    return pd.DataFrame({"subset": subset, "y_true": y, "y_pred": yp, **{f"p_{c}": p[:, i] for i, c in enumerate(cls)}},
+                        index=pd.Index(oids, name="oid"))
+
+
+def test_sistema_test_cinco_clases():
+    cls = D.classes(5)
+    y = list(cls) * 8
+    V = {k: _preds5([f"v{i}" for i in range(40)], y, y, ["val_sel", "val_rep"] * 20) for k in ("red_5c", "villar_5c")}
+    red = _preds5([f"t{i}" for i in range(40)], y, y, "test")
+    villar = red.iloc[:25].copy()
+    villar["y_pred"] = "IIb"                                    # villar dice IIb en todo lo que cubre
+    r = ET.sistema_test({"red_5c": red, "villar_5c": villar}, V, "red_5c", cls)
+    m = r["metricas"]
+    assert m["red_5c"]["bal_acc"] == 1.0 and m["red_5c"]["L1_argmax"] == 0.0 and set(m["red_5c"]["frac_real"]) == set(cls)
+    assert abs(m["villar_5c"]["acc"] - (5 + 15) / 40) < 1e-12         # 5 IIb de las 25 + respaldo perfecto en 15
+    assert r["corregidas"]["red_5c"]["L1"] < 1e-12 and r["pares"]["red_5c_vs_villar_5c"]["gana_bal"] == "red_5c"
+    from pipeline78 import sistema_tasas as ST
+    ms = ET.metricas_sistema(ST.sistema(villar, red, cls), 50, cls)
+    assert ms["n"] == 40 and ms["n_real"] == 50 and abs(ms["cobertura"] - 0.8) < 1e-12
+    assert np.array(ms["confusion"]).shape == (5, 5) and ms["bal_acc_ic95"][0] <= ms["bal_acc"] <= ms["bal_acc_ic95"][1]

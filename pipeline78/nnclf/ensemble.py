@@ -29,13 +29,13 @@ def run_ensemble(names, out_name, out_root=D.OUT_ROOT, n_draws=5, threads=2):
     classes = tuple(loaded[0][2]["classes"])
     for (_, c, ck), r in zip(loaded, runs):
         assert tuple(ck["classes"]) == classes, f"{r.name}: clases distintas"
-        for k in ("use_z", "band_enc", "seed", "four_classes", "sim_run", "real_dir", "n_folds"):
+        for k in ("use_z", "band_enc", "seed", "four_classes", "five_classes", "sim_run", "real_dir", "n_folds"):
             assert getattr(c, k) == getattr(cfgs[0], k), f"{r.name}: {k} distinto"
     folds = [c.fold for c in cfgs]
     assert len(set(folds)) == len(folds), f"folds repetidos en el ensemble: {folds}"
     assert all(0 <= f < cfgs[0].n_folds for f in folds), f"fold fuera de rango: {folds}"
     cfg = cfgs[0]
-    real, skipped = D.load_real_val(cfg.real_dir, cfg.four_classes)
+    real, skipped = D.load_real_val(cfg.real_dir, D.modo(cfg))
     meta, dcs = enumerate_cells(real, n_draws, cfg.seed, fixed=True)
     P = np.stack([nn_prob_fn(m, c, "cpu")(dcs) for m, c, _ in loaded])          # [n_mod, n, K]
     meta.insert(1, "dataset", "real")
@@ -45,7 +45,7 @@ def run_ensemble(names, out_name, out_root=D.OUT_ROOT, n_draws=5, threads=2):
     parts = [meta]
     for (m, c, _), r in zip(loaded, runs):                                       # sims fuera de fold
         keys = json.loads((r / "split.json").read_text())["val_keys"]
-        sims = D.load_sims(c.sim_run, c.four_classes, sim_ids=[int(k) for k in keys])
+        sims = D.load_sims(c.sim_run, D.modo(c), sim_ids=[int(k) for k in keys])
         ms, ds_ = enumerate_cells(sims, n_draws, c.seed, fixed=False)
         p = nn_prob_fn(m, c, "cpu")(ds_)
         ms.insert(1, "dataset", "sims")
@@ -54,8 +54,8 @@ def run_ensemble(names, out_name, out_root=D.OUT_ROOT, n_draws=5, threads=2):
         ms["fold_run"] = r.name
         parts.append(ms)
     tab = pd.concat(parts, ignore_index=True)
-    subsets = val_subsets(cfg.real_dir, cfg.four_classes)
-    res, agg = summarize(tab, classes, len(real) + len(skipped), villar_oids_or_none(cfg.real_dir, cfg.four_classes),
+    subsets = val_subsets(cfg.real_dir, D.modo(cfg))
+    res, agg = summarize(tab, classes, len(real) + len(skipped), villar_oids_or_none(cfg.real_dir, D.modo(cfg)),
                          subsets)
     out = Path(out_root) / out_name
     res = write_outputs(out, tab, res, agg, classes, {"method": "nn_ensemble", "members": list(names),

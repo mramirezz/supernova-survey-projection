@@ -11,6 +11,9 @@ delta de L1 (bootstrap simple de SNe: las fracciones dependen de la mezcla). Reg
 val_sel; si empatan, el de mayor cobertura propia; despues el que depende menos de la simulacion.
 
     python -m pipeline78.sistema_tasas [--red tf_base] [--plantillas plantillas_t11] [--villar sweep_t11_foco]
+
+Las funciones toman cls (por defecto las 3 clases): evaluar_test las usa tambien con las 5 clases (Ia, II, IIb, Ibc,
+IIn), con la red de 5 clases de respaldo.
 """
 import argparse, json
 from pathlib import Path
@@ -23,75 +26,75 @@ CLS = ("Ia", "II", "Ibc")
 OUT = RUNS / "informe_clasificadores"
 
 
-def leer(f):
+def leer(f, cls=CLS):
     d = pd.read_csv(f, dtype={"oid": str})
-    d = d[d.y_true.isin(CLS)].drop_duplicates("oid").set_index("oid")
-    return d[["subset", "y_true", "y_pred"] + [f"p_{c}" for c in CLS]]
+    d = d[d.y_true.isin(cls)].drop_duplicates("oid").set_index("oid")
+    return d[["subset", "y_true", "y_pred"] + [f"p_{c}" for c in cls]]
 
 
-def sistema(prim, resp):
+def sistema(prim, resp, cls=CLS):
     """Predicciones del sistema sobre las oids del respaldo: las del metodo donde cubre, las del respaldo si no."""
     s = resp.copy()
     s["propia"] = s.index.isin(prim.index)
     com = s.index[s.propia]
-    s.loc[com, ["y_pred"] + [f"p_{c}" for c in CLS]] = prim.loc[com, ["y_pred"] + [f"p_{c}" for c in CLS]].values
+    s.loc[com, ["y_pred"] + [f"p_{c}" for c in cls]] = prim.loc[com, ["y_pred"] + [f"p_{c}" for c in cls]].values
     return s
 
 
-def fracciones(d):
-    real = np.array([(d.y_true == c).mean() for c in CLS])
-    arg = np.array([(d.y_pred == c).mean() for c in CLS])
-    p = d[[f"p_{c}" for c in CLS]].to_numpy(float)
+def fracciones(d, cls=CLS):
+    real = np.array([(d.y_true == c).mean() for c in cls])
+    arg = np.array([(d.y_pred == c).mean() for c in cls])
+    p = d[[f"p_{c}" for c in cls]].to_numpy(float)
     prob = (p / p.sum(1, keepdims=True)).mean(0)
     return real, arg, prob
 
 
-def metricas(d):
+def metricas(d, cls=CLS):
     y, yp = d.y_true.to_numpy(), d.y_pred.to_numpy()
-    real, arg, prob = fracciones(d)
+    real, arg, prob = fracciones(d, cls)
     return dict(n=int(len(d)), cobertura_propia=float(d.propia.mean()), acc=float(np.mean(y == yp)),
-                bal_acc=float(np.mean([np.mean(yp[y == c] == c) for c in CLS])),
-                frac_real=dict(zip(CLS, real.round(4))), frac_argmax=dict(zip(CLS, arg.round(4))),
-                frac_prob=dict(zip(CLS, prob.round(4))),
+                bal_acc=float(np.mean([np.mean(yp[y == c] == c) for c in cls])),
+                frac_real=dict(zip(cls, real.round(4))), frac_argmax=dict(zip(cls, arg.round(4))),
+                frac_prob=dict(zip(cls, prob.round(4))),
                 L1_argmax=float(np.abs(arg - real).sum()), L1_prob=float(np.abs(prob - real).sum()))
 
 
-def l1_boot(a, b, n_boot=2000, seed=20261004, col="argmax"):
+def l1_boot(a, b, n_boot=2000, seed=20261004, col="argmax", cls=CLS):
     """P(L1_a < L1_b) re-sorteando SNe (las mismas en los dos sistemas)."""
     rng = np.random.default_rng(seed)
     n = len(a)
     ya = a.y_true.to_numpy()
     def l1(d, ix):
-        real = np.array([(ya[ix] == c).mean() for c in CLS])
+        real = np.array([(ya[ix] == c).mean() for c in cls])
         if col == "argmax":
-            f = np.array([(d.y_pred.to_numpy()[ix] == c).mean() for c in CLS])
+            f = np.array([(d.y_pred.to_numpy()[ix] == c).mean() for c in cls])
         else:
-            p = d[[f"p_{c}" for c in CLS]].to_numpy(float)[ix]
+            p = d[[f"p_{c}" for c in cls]].to_numpy(float)[ix]
             f = (p / p.sum(1, keepdims=True)).mean(0)
         return np.abs(f - real).sum()
     d = np.array([l1(a, ix) - l1(b, ix) for ix in (rng.integers(0, n, n) for _ in range(n_boot))])
     return float(np.mean(d < 0)), (float(np.percentile(d, 5)), float(np.percentile(d, 95)))
 
 
-def corregidas(sel, rep):
+def corregidas(sel, rep, cls=CLS):
     """Fracciones de val_rep corregidas con la matriz de confusion medida en val_sel (Nivel 2 de las tasas):
     M[i, j] = P(pred i | real j) en val_sel, f = M^-1 f_pred(rep), negativos a 0 y renormalizado. -> L1 contra la real."""
-    M = np.array([[np.mean(sel.y_pred[sel.y_true == j] == i) for j in CLS] for i in CLS])
-    fp = np.array([(rep.y_pred == c).mean() for c in CLS])
+    M = np.array([[np.mean(sel.y_pred[sel.y_true == j] == i) for j in cls] for i in cls])
+    fp = np.array([(rep.y_pred == c).mean() for c in cls])
     f = np.clip(np.linalg.solve(M, fp), 0, None)
     f = f / f.sum()
-    real = np.array([(rep.y_true == c).mean() for c in CLS])
-    return float(np.abs(f - real).sum()), dict(zip(CLS, f.round(4))), float(np.linalg.cond(M))
+    real = np.array([(rep.y_true == c).mean() for c in cls])
+    return float(np.abs(f - real).sum()), dict(zip(cls, f.round(4))), float(np.linalg.cond(M))
 
 
-def corregidas_boot(sel, rep, n_boot=1000, seed=20261004):
+def corregidas_boot(sel, rep, n_boot=1000, seed=20261004, cls=CLS):
     rng = np.random.default_rng(seed)
     out = []
     for _ in range(n_boot):
         a = sel.iloc[rng.integers(0, len(sel), len(sel))]
         b = rep.iloc[rng.integers(0, len(rep), len(rep))]
         try:
-            out.append(corregidas(a, b)[0])
+            out.append(corregidas(a, b, cls)[0])
         except np.linalg.LinAlgError:
             pass
     return float(np.median(out)), (float(np.percentile(out, 5)), float(np.percentile(out, 95)))

@@ -21,6 +21,7 @@ def main(argv=None):
     t.add_argument("--model", choices=["gru", "transformer"], default="transformer")
     t.add_argument("--use-z", action="store_true", help="z y M_ref como features globales")
     t.add_argument("--four-classes", action="store_true", help="Ia, II, Ibc, IIn")
+    t.add_argument("--five-classes", action="store_true", help="Ia, II, IIb, Ibc, IIn (IIb propia)")
     t.add_argument("--no-magerr", action="store_true", help="anula la columna magerr de los tokens")
     t.add_argument("--max-epochs", type=int, default=60)
     t.add_argument("--patience", type=int, default=8)

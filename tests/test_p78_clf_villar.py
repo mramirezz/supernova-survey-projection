@@ -685,3 +685,68 @@ def test_cli_g_modo_y_grilla_mitig(tmp_path):
     assert list(resumen.columns) == C.RESUMEN_COLS
     assert set(resumen[resumen.name == "mt"].g_modo) == {"nan", "separado"}
     assert set(resumen[resumen.name == "m1"].g_modo) == {"separado"}
+
+
+# ----------------------------------------------------------------------------- 5 clases (Mauricio 2026-10-06)
+TIPOS = ("Ia", "II", "IIb", "Ibc", "IIn", "SLSN-I")
+
+
+def test_cinco_clases_mapeo_y_3_4_identicos(tmp_path):
+    """--cinco-clases: IIb propia, II = IIP + IIL (sn_type II). Con 3 y 4 clases, la bandera de siempre y el numero de
+    clases dan las mismas tablas (3 y 4 no cambian). La particion val_sel / val_rep es la misma en los tres modos."""
+    assert C.classes(5) == ("Ia", "II", "IIb", "Ibc", "IIn")
+    assert [C.class_of(t, 5) for t in TIPOS] == ["Ia", "II", "IIb", "Ibc", "IIn", None]
+    assert [C.class_of(t) for t in TIPOS] == ["Ia", "II", "II", "Ibc", None, None]
+    assert [C.class_of(t, True) for t in TIPOS] == ["Ia", "II", "II", "Ibc", "IIn", None]
+    fd, rd, fr, real = _fake_world(tmp_path)
+    T = {k: C.prepare(fd, rd, fr, real, four=k) for k in (False, 3, True, 4, 5)}
+    for b, n in ((False, 3), (True, 4)):
+        for x, y in zip(T[b], T[n]):
+            pd.testing.assert_frame_equal(x, y)
+    S5, R5, v5 = T[5]
+    assert (S5.cls == S5.sn_type).all() and (R5.cls == R5.sn_type).all()            # cada tipo es su clase
+    assert dict(zip(S5.cls, S5.y)) == {c: i for i, c in enumerate(C.classes(5))}
+    S4, _, v4 = T[4]
+    assert len(S5) == len(S4) and set(S4.cls[S4.sn_type == "IIb"]) == {"II"}
+    m = v5.merge(v4, on="oid", suffixes=("5", "4"), validate="one_to_one")
+    assert len(m) == len(v5) == len(v4) and (m.subset5 == m.subset4).all()
+
+
+def test_cinco_clases_jerarquicos_y_prior_uniforme(tmp_path):
+    """hier_*_II / _Ia con K = 5: la primera clase sale de classes(5) y el prior efectivo queda uniforme (1/5)."""
+    y = np.repeat([0, 1, 2, 3, 4], [300, 150, 60, 90, 40])
+    cols = ["f_r", "t_fall_r"]
+    F = pd.DataFrame(0.0, index=range(len(y)), columns=cols)
+    for name in ("hgb", "hier_hgb_II", "hier_hgb_Ia"):
+        m = C.Model(name, cols, cols, 5, seed=1).fit(F, y, np.ones(len(y)))
+        P = m.predict_proba(F)
+        assert P.shape == (len(y), 5) and np.allclose(P.mean(0), 1 / 5, atol=0.02), (name, P.mean(0))
+        if name != "hgb":
+            assert C.classes(5)[m.first_] == name.split("_")[-1]
+    fd, rd, fr, real = _fake_world(tmp_path)
+    S, R, _ = C.prepare(fd, rd, fr, real, four=5)
+    c1, c2 = C.fset_cols("rg_err", True)
+    for name in ("hier_mlp_II", "hier_mlp_Ia", "ens_hier"):
+        P = C.Model(name, c1, c2, 5, seed=1).fit(S, S.y.to_numpy(), S.w_z.to_numpy()).predict_proba(R)
+        assert P.shape == (len(R), 5) and np.allclose(P.sum(1), 1) and (P >= 0).all()
+        assert (P.argmax(1) == R.y.to_numpy()).mean() > 0.7, name
+
+
+def test_cli_cinco_clases(tmp_path):
+    fd, rd, fr, real = _fake_world(tmp_path)
+    out = tmp_path / "out"
+    common = ["--features-sims", str(fd), "--run-dir", str(rd), "--features-real", str(fr), "--real-dir", str(real),
+              "--out-root", str(out), "--folds", "3", "--cinco-clases"]
+    tab = C.main(["sweep", "--name", "sw5", "--grid", "cinco", "--models", "hgb", "--fsets", "rg_err"] + common)
+    assert set(tab.peso) == {"wz", "wz_S"} and tab.es_base.sum() == 2
+    best = json.loads((out / "sw5" / "mejor.json").read_text())
+    met = json.loads((out / "sw5" / "mejor" / "metrics.json").read_text())
+    assert met["real_none"]["val"]["n"] == 75 and len(met["real_none"]["val"]["confusion"]) == 5   # 15 x 5 tipos
+    pred = pd.read_csv(out / "sw5" / "mejor" / "pred_real_val.csv")
+    assert set(pred.y_true) == set(C.classes(5)) and {f"p_{c}" for c in C.classes(5)} <= set(pred.columns)
+    conf = pd.read_csv(out / "sw5" / "mejor" / "confusion_none_rep.csv", index_col=0)
+    assert list(conf.index) == [f"true_{c}" for c in C.classes(5)]
+    assert best["elegida"]["fset"] in ("rg_err", "rg")
+    ev = C.main(["eval", "--name", "sw5/mejor", "--features-real", str(fr), "--real-dir", str(real), "--out-root",
+                 str(out)])
+    assert np.isclose(ev["real_none"]["val_rep"]["acc"], met["real_none"]["val_rep"]["acc"])
