@@ -1143,6 +1143,156 @@ def seccion_plantillas(J):
     return "".join(h)
 
 
+TEST_MATRICES = {3: [("Villar", "test_final/villar"), ("Red (transformer)", "test_final/red"),
+                     ("Plantillas", "test_final/plantillas")],
+                 4: [("Villar", "test_final/villar_4c"), ("Plantillas", "test_final/plantillas_4c")],
+                 5: [("Villar", "cinco_clases/villar_5c"), ("Red (transformer)", "cinco_clases/red_5c"),
+                     ("Plantillas", "cinco_clases/plantillas_5c")]}
+
+
+def leer_validacion(runs):
+    """TEST congelado (evaluar_test), comparacion justa (comparacion_justa) y 5 clases, para la seccion de validacion."""
+    def js(p):
+        p = Path(runs) / p
+        return json.loads(p.read_text()) if p.exists() else None
+    mats = {}
+    for k, lst in TEST_MATRICES.items():
+        for lab, d in lst:
+            m = js(f"{d}/metrics.json")
+            if m:
+                t = m.get("test", m)
+                mats.setdefault(k, []).append(dict(lab=lab, clases=m["clases"], conf=t["confusion"], acc=t["acc"],
+                                                   bal=t["bal_acc"], ic=t.get("bal_acc_ic95"), cob=t["cobertura"],
+                                                   n=t["n_clasificadas"], N=t["n_real"],
+                                                   f1={c: t.get(f"f1_{c}") for c in m["clases"]}))
+    return dict(justa=js("test_final/comparacion_justa.json"), resumen3=js("test_final/resumen.json"),
+                resumen5=js("cinco_clases/resumen.json"), matrices=mats)
+
+
+def fig_matrices_test(V, out, plt):
+    """Matrices de confusion en TEST: filas 3, 4 y 5 clases; columnas los metodos. Fraccion de la fila y conteo."""
+    M = V["matrices"]
+    if not M:
+        return None
+    nr, nc = len(M), max(len(v) for v in M.values())
+    fig, axs = plt.subplots(nr, nc, figsize=(3.1 * nc, 3.0 * nr), squeeze=False)
+    for i, (k, lst) in enumerate(sorted(M.items())):
+        for j in range(nc):
+            ax = axs[i][j]
+            if j >= len(lst):
+                ax.axis("off")
+                continue
+            x = lst[j]
+            c = np.array(x["conf"], float)
+            f = c / np.maximum(c.sum(1, keepdims=True), 1)
+            ax.imshow(f, cmap="Blues", vmin=0, vmax=1)
+            for a in range(len(c)):
+                for b in range(len(c)):
+                    ax.text(b, a, f"{f[a, b]:.2f}\n({int(c[a, b])})", ha="center", va="center", fontsize=6.5,
+                            color="white" if f[a, b] > 0.55 else "black")
+            ax.set_xticks(range(len(c)), x["clases"])
+            ax.set_yticks(range(len(c)), x["clases"])
+            ax.minorticks_off()
+            ax.tick_params(top=False, right=False)
+            ax.set_title(f"{x['lab']}, {k} clases\nacc {x['acc']:.3f}, bal {x['bal']:.3f}, cob {x['cob']:.0%}")
+            if j == 0:
+                ax.set_ylabel("clase real")
+            ax.set_xlabel("clase predicha")
+    fig.tight_layout()
+    return _save(fig, out, "fig_matrices_test", plt)
+
+
+def _recall_ii(M):
+    """Recall de II en 4 clases (TEST) de cada metodo, leido de las matrices: es la clase mas debil de las plantillas."""
+    out = []
+    for x in M.get(4, []):
+        c = np.array(x["conf"], float)
+        i = x["clases"].index("II")
+        out.append(f"{x['lab']} {c[i, i] / max(c[i].sum(), 1):.2f}")
+    return (" En 4 clases, que es lo que usan las tasas, el recall de II es " + ", ".join(out)
+            + " (Villar solo sobre las SNe que ajusta). Es el punto d&eacute;bil de las plantillas.") if out else ""
+
+
+def seccion_validacion(J):
+    """Seccion para que el profesor guia valide la eleccion del clasificador: TEST congelado, comparacion justa y
+    matrices de confusion. Todo leido de los archivos de evaluar_test y comparacion_justa."""
+    V = J.get("validacion") or {}
+    jt, M = V.get("justa"), V.get("matrices") or {}
+    h = ["<h2 id='validacion'>Para validar: &iquest;qu&eacute; clasificador usa la tesis?</h2>",
+         "<p><b>Propuesta.</b> Usar el <b>ajuste bayesiano de plantillas</b> (el m&eacute;todo de SUDARE I, "
+         "Cappellaro et al. 2015 &sect;4.1, siguiendo PSNID de Sako et al. 2011, pero con nuestras 78 series espectrales) "
+         "como clasificador oficial de ZTF y de SUDARE. Villar (SPM + MCMC + clasificador entrenado con simulaciones) y la "
+         "red (transformer entrenado con simulaciones) quedan como comparaci&oacute;n. Para las tasas se usan 4 clases "
+         "(Ia, II+IIb, Ibc, IIn), como SUDARE.</p>",
+         "<p><b>C&oacute;mo se lleg&oacute;.</b> Muestra espectrosc&oacute;pica de ZTF (TNS) partida en VAL y TEST. VAL se "
+         "parte en val_sel (elegir configuraciones) y val_rep (reportar). Ning&uacute;n m&eacute;todo entrena con SNe "
+         "reales. La regla (bootstrap pareado, P &ge; 0.9 en val_sel) eligi&oacute; las plantillas antes de mirar TEST. "
+         "Despu&eacute;s se corrieron en TEST, <b>una sola vez</b>, los modelos congelados, que reprodujeron exacto sus "
+         "resultados de val. Detalle de particiones en la secci&oacute;n 0.</p>"]
+    if jt:
+        h.append("<h3>Comparaci&oacute;n justa en TEST</h3><p>Cada celda: exactitud / exactitud balanceada. "
+                 "<i>Alcance de Villar</i> = las SNe que Villar puede ajustar (&ge; 7 detecciones por banda). "
+                 "<i>Todas</i> = todas las SNe clasificables; Villar se muestra solo (las que no ajusta cuentan como error) "
+                 "y con respaldo (la red, o las plantillas en 4 clases). P = probabilidad bootstrap de que el m&eacute;todo "
+                 "sea mejor que Villar (&ge; 0.9 = diferencia real, &le; 0.1 = Villar mejor).</p>")
+        nom = {"villar": "Villar", "red": "Red (transformer)", "plantillas": "Plantillas",
+               "villar_solo": "Villar solo", "villar_mas_respaldo": "Villar + respaldo"}
+        for k in sorted(jt, key=int):
+            r = jt[k]
+            va, to = r["villar_alcanza"], r["total"]
+            rows = []
+            for m in ("villar", "red", "plantillas"):
+                if m in va:
+                    a = va[m]
+                    pa = f"{a['P_mejor_que_villar']:.2f}" if "P_mejor_que_villar" in a else "&ndash;"
+                    t = to.get(m)
+                    tt = (f"{t['acc']:.3f} / {t['bal']:.3f}" if t else "")
+                    pt = f"{t['P_mejor']:.2f}" if t and "P_mejor" in t else "&ndash;"
+                    if m == "villar":
+                        tt = (f"{to['villar_solo']['acc']:.3f} / {to['villar_solo']['bal']:.3f} (solo) &middot; "
+                              f"{to['villar_mas_respaldo']['acc']:.3f} / {to['villar_mas_respaldo']['bal']:.3f} (+ respaldo)")
+                    rows.append([f"<b>{nom[m]}</b>", f"{a['acc']:.3f} / {a['bal']:.3f}", pa, tt, pt])
+            n_va = va["villar"]["n"]
+            n_to = to["villar_mas_respaldo"]["n"]
+            h.append(f"<p><b>{k} clases</b> (TEST: {r['N']} SNe; alcance de Villar {n_va}; todas {n_to}).</p>")
+            h.append(tabla(["m&eacute;todo", f"alcance de Villar ({n_va})", "P vs Villar", f"todas ({n_to})",
+                            "P vs Villar + respaldo"], rows))
+    else:
+        h.append("<p class='pend'>Pendiente: python -m pipeline78.comparacion_justa.</p>")
+    if J.get("figuras", {}).get("matrices_test"):
+        h.append("<h3>Matrices de confusi&oacute;n en TEST</h3><p>Filas = clase real, columnas = clase predicha. Cada "
+                 "celda: fracci&oacute;n de la fila y (n&uacute;mero). Fila de arriba 3 clases, al medio 4 clases (con IIn, "
+                 "la que usan las tasas), abajo 5 clases (IIb separada).</p>"
+                 f"<img src='{J['figuras']['matrices_test']}' width='1000'>")
+    if M:
+        rows = []
+        for k, lst in sorted(M.items()):
+            for x in lst:
+                rows.append([f"{k}", x["lab"], f"{x['n']}/{x['N']} ({x['cob']:.0%})", f"{x['acc']:.3f}",
+                             f"{x['bal']:.3f} {ci(x['ic'])}", ", ".join(f"{c} {v:.2f}" for c, v in x["f1"].items() if v is not None)])
+        h.append("<h3>M&eacute;tricas de cada m&eacute;todo solo, en TEST</h3>" + tabla(
+            ["clases", "m&eacute;todo", "clasificadas", "exactitud", "exact. balanceada [IC 95 %]", "F1 por clase"], rows))
+    h.append("<h3>Por qu&eacute; las plantillas</h3><ul>"
+             "<li>En 3 clases son las mejores en el alcance de Villar (P &ge; 0.98) y sobre todas las SNe. En 4 y 5 clases "
+             "empatan con Villar en su alcance, y clasifican el 98 % de las SNe contra el 67&ndash;72 % de Villar.</li>"
+             "<li>No se entrenan: no dependen de que la simulaci&oacute;n de la observaci&oacute;n de ZTF sea perfecta (el "
+             "error de m0 que encontramos afectaba a Villar y a la red, no a las plantillas).</li>"
+             "<li>Es el m&eacute;todo de SUDARE con nuestra biblioteca: la comparaci&oacute;n de tasas del Nivel 1 cambia "
+             "solo la biblioteca, no el m&eacute;todo. Y SUDARE se clasifica sin simular SUDARE.</li>"
+             "<li>Dan probabilidades por clase (evidencia bayesiana), con un error de modelo de 0.3 del flujo elegido en "
+             "val_sel.</li></ul>"
+             "<h3>Limitaciones a declarar</h3><ul>"
+             "<li>Las plantillas II tienen plateaus m&aacute;s planos que la poblaci&oacute;n de ZTF: parte de las II reales "
+             "se va a IIn e Ibc (fila II de las matrices)." + _recall_ii(M) + "</li>"
+             "<li>IIb e Ibc no se separan bien con fotometr&iacute;a (5 clases); por eso las tasas usan 4 clases, con la IIb "
+             "dentro de II como SUDARE.</li>"
+             "<li>Las fracciones por clase sin corregir est&aacute;n sesgadas: para las tasas se corrigen con la matriz de "
+             "confusi&oacute;n (secci&oacute;n 0).</li></ul>"
+             "<p><b>Lo que se pide validar:</b> (1) usar las plantillas como clasificador oficial; (2) 4 clases para las "
+             "tasas; (3) correcci&oacute;n con la matriz de confusi&oacute;n.</p>")
+    return "".join(h)
+
+
 def particiones_conteo(real_dir):
     """Conteos por origen/split/excluir de meta_real_ztf.csv (solo esas columnas, sin fotometria ni clases)."""
     import csv
@@ -1228,6 +1378,7 @@ def pagina(J, figs, out):
                  "producci&oacute;n final.</p>")
     s.append(f"<p>Bloque actual: <b>{html.escape(str(A.get('etiqueta')))}</b>. Redes: {html.escape(A['nn_root'])}. "
              f"Villar: {html.escape(A['villar_sweep'])}.</p>")
+    s.append(seccion_validacion(J))
     s.append(seccion_tasas(J))
     # 1
     s.append("<h2>1. La respuesta</h2><p>Pregunta: &iquest;qu&eacute; clasifica mejor las SNe reales de ZTF, el ajuste "
@@ -1476,6 +1627,11 @@ def construir(cfg_path=CFG, actual_nn=None, actual_villar=None, actual_gap=None,
     J["figuras"] = {k: v for k, v in figs.items() if v}
     ft = _p(cfg.get("numeros", "informe_clasificadores/numeros.json"), cfg["_runs"]).parent / "sistema_tasas.json"
     J["tasas"] = json.loads(ft.read_text()) if ft.exists() else None
+    J["validacion"] = leer_validacion(cfg["_runs"])
+    fm = fig_matrices_test(J["validacion"], out, plt)
+    if fm:
+        figs["matrices_test"] = fm
+        J["figuras"]["matrices_test"] = fm
     J["particiones_conteo"] = particiones_conteo(_p(cfg.get("real_dir", "real_ztf"), cfg["_runs"]))
     pagina(J, figs, out)
     txt = json.dumps(J, indent=1, ensure_ascii=False)
